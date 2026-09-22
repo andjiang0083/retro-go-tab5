@@ -60,6 +60,15 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
     do { (lx) = (py); (ly) = (RG_TOUCH_PHYS_W - 1) - (px); } while (0)
 #endif
 static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
+
+/* 把键位表暴露给显示层（可视层用） */
+const rg_keymap_touch_t *rg_input_get_touch_keymap(size_t *count)
+{
+    if (count)
+        *count = RG_COUNT(keymap_touch);
+    return keymap_touch;
+}
+
 static esp_lcd_touch_handle_t touch_handle = NULL;
 /* Tab5 BSP 的 I2C 句柄（声明在 bsp/m5stack_tab5.h，那个 umbrella 头会拉 lvgl.h，故手写 extern） */
 extern esp_err_t bsp_i2c_init(void);

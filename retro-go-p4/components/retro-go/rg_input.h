@@ -87,6 +87,11 @@ typedef struct
     int16_t w, h;   // Size
 } rg_keymap_touch_t;
 
+// 显示层要用它把虚拟按键画到屏幕上（否则按键是"盲区"，用户不知道点哪里）
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+const rg_keymap_touch_t *rg_input_get_touch_keymap(size_t *count);
+#endif
+
 // FIXME: Create a single unified keymap...
 // ...
 

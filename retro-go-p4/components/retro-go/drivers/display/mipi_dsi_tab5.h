@@ -26,6 +26,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
+#include "rg_input.h"            /* 虚拟按键可视层要读键位表 */
 /* 注意：不要 #include "bsp/m5stack_tab5.h" —— 它的 umbrella 头会拉 lvgl.h
  * （retro-go 不编 LVGL）。需要什么就手写 extern，见下。 */
 
@@ -48,6 +49,83 @@ static inline uint16_t tab5_swap16(uint16_t v)
 {
     return (uint16_t)((v << 8) | (v >> 8));
 }
+
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+/* ---- 虚拟按键可视层（在推送前合成，按键永远在最上层）------------------------
+ * 为什么必须放在这里、而不是 rg_display.c：
+ *   本驱动没有整屏帧缓冲 —— lcd_send_buffer() 是"算一块推一块"，lcd_sync() 是空函数；
+ *   而 GUI 是立即模式，随时可能重画任意区域。在显示层"每帧末尾叠加"会被随后的 GUI
+ *   绘制覆盖 => 实机表现为按键闪烁。放在推给面板之前的最后一步合成，才是稳定的。
+ * scratch 里已经是面板格式（小端 565），所以这里直接写普通 RGB565 值。 */
+static inline uint16_t tab5_overlay_dim(uint16_t c)
+{
+    return (uint16_t)((c >> 1) & 0x7BEF);   /* RGB565 每通道减半 => 同色系暗填充 */
+}
+
+/* 没有文字标签，靠"颜色 + 位置"辨认，所以每个按键给一个可区分的颜色 */
+static uint16_t tab5_overlay_color(rg_key_t key)
+{
+    switch (key)
+    {
+        case RG_KEY_UP:     return 0x07E0;  /* 绿 */
+        case RG_KEY_DOWN:   return 0x07FF;  /* 青 */
+        case RG_KEY_LEFT:   return 0xF800;  /* 红 */
+        case RG_KEY_RIGHT:  return 0xFD20;  /* 橙 */
+        case RG_KEY_A:      return 0xF81F;  /* 品红 */
+        case RG_KEY_B:      return 0xFFE0;  /* 黄 */
+        case RG_KEY_X:      return 0x001F;  /* 蓝 */
+        case RG_KEY_Y:      return 0x781F;  /* 紫 */
+        case RG_KEY_L:      return 0xC618;  /* 浅灰 */
+        case RG_KEY_R:      return 0x8410;  /* 深灰 */
+        case RG_KEY_SELECT: return 0xAFE0;  /* 橄榄 */
+        case RG_KEY_START:  return 0xFC00;  /* 琥珀 */
+        case RG_KEY_MENU:   return 0xFFFF;  /* 白 */
+        default:            return 0xFFFF;
+    }
+}
+
+static void tab5_overlay_blit(uint16_t *scratch, int x0, int y0, int rows, int w)
+{
+    size_t count = 0;
+    const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&count);
+    if (!map || !count)
+        return;
+
+    const int border = 3;
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        const rg_keymap_touch_t *btn = &map[i];
+        const int lx0 = btn->x - btn->w / 2;
+        const int ly0 = btn->y - btn->h / 2;
+        /* 逻辑 -> 物理：px = (PHYS_W-1) - ly, py = lx（与上面的转置映射一致） */
+        const int bx0 = TAB5_PHYS_W - ly0 - btn->h;
+        const int by0 = lx0;
+        const int bw = btn->h, bh = btn->w;
+
+        const int ix0 = RG_MAX(bx0, x0), ix1 = RG_MIN(bx0 + bw, x0 + rows);
+        const int iy0 = RG_MAX(by0, y0), iy1 = RG_MIN(by0 + bh, y0 + w);
+        if (ix0 >= ix1 || iy0 >= iy1)
+            continue;
+
+        const uint16_t col = tab5_overlay_color(btn->key);
+        const uint16_t fill = tab5_overlay_dim(col);
+
+        for (int py = iy0; py < iy1; ++py)
+        {
+            const int ry = py - by0;
+            uint16_t *dst = scratch + (size_t)(py - y0) * rows;
+            for (int px = ix0; px < ix1; ++px)
+            {
+                const int rx = px - bx0;
+                const bool edge = (rx < border || ry < border ||
+                                   rx >= bw - border || ry >= bh - border);
+                dst[px - x0] = edge ? col : fill;
+            }
+        }
+    }
+}
+#endif /* RG_GAMEPAD_TOUCH_MAP */
 
 /* DPI panel 在 use_dma2d=1 时 draw_bitmap 是异步的：忙时返回 ESP_ERR_INVALID_STATE，
  * 一帧内连续推送时会正常出现，等一下就重试（不是错误，别当故障处理）。 */
@@ -183,6 +261,10 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 
     const int x0 = TAB5_PHYS_W - tab5_win_top - rows;
     const int y0 = tab5_win_left;
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 虚拟按键在推给面板前的最后一刻合成（避免被 GUI 立即模式的重绘覆盖 => 不闪） */
+    tab5_overlay_blit(tab5_scratch, x0, y0, rows, w);
+#endif
     esp_err_t err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
     if (err != ESP_OK)
         RG_LOGE("draw failed (err=0x%x) at phys <%d,%d %d,%d>\n", err, x0, y0, x0 + rows, y0 + w);
