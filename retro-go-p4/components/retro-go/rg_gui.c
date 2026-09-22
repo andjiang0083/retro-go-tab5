@@ -350,13 +350,25 @@ static size_t get_glyph(uint32_t *output, const rg_font_t *font, int points, int
     }
 }
 
+/* 字形宽度按当前字号等比缩放。注意只缩放纵向（旧行为）会让放大的字变成"瘦高"很难看，
+ * 所以横向必须用同一个比例：points / font->height。 */
+static inline int glyph_width_at(const rg_font_t *font, int points, int c)
+{
+    int width = get_glyph(NULL, font, points, c);
+    if (points > 0 && font->height > 0 && points != font->height)
+        width = (width * points + font->height / 2) / font->height;
+    return width;
+}
+
 rg_rect_t rg_gui_draw_text(int x_pos, int y_pos, int width, const char *text, // const rg_font_t *font,
                            rg_color_t color_fg, rg_color_t color_bg, uint32_t flags)
 {
     const rg_font_t *font = gui.style.font;
     int padding = (flags & RG_TEXT_NO_PADDING) ? 0 : 1;
     int font_height = (flags & RG_TEXT_BIGGER) ? gui.style.font_height * 2 : gui.style.font_height;
-    int monospace = ((flags & RG_TEXT_MONOSPACE) || font->type == 0) ? font->width : 0;
+    /* 横向缩放比 = font_height / font->height（纵向早就在用，横向以前漏了） */
+    int fs_num = font_height, fs_den = font->height ? font->height : font_height;
+    int monospace = ((flags & RG_TEXT_MONOSPACE) || font->type == 0) ? (font->width * fs_num / fs_den) : 0;
     int line_height = font_height + padding * 2;
     int line_count = 0;
     // int16_t line_breaks[64], line_width_cache[64];
@@ -371,7 +383,7 @@ rg_rect_t rg_gui_draw_text(int x_pos, int y_pos, int width, const char *text, //
         for (const char *ptr = text; *ptr;)
         {
             int chr = rg_utf8_get_codepoint(&ptr);
-            line_width += monospace ?: get_glyph(NULL, font, font_height, chr);
+            line_width += monospace ?: glyph_width_at(font, font_height, chr);
 
             if (chr == '\n' || *ptr == 0)
             {
@@ -405,7 +417,7 @@ rg_rect_t rg_gui_draw_text(int x_pos, int y_pos, int width, const char *text, //
             while (x_offset < draw_width && *line && *line != '\n')
             {
                 int chr = rg_utf8_get_codepoint(&line);
-                int width = monospace ?: get_glyph(NULL, font, font_height, chr);
+                int width = monospace ?: glyph_width_at(font, font_height, chr);
                 if (draw_width - x_offset < width) // Do not truncate glyphs
                     break;
                 x_offset += width;
@@ -426,7 +438,9 @@ rg_rect_t rg_gui_draw_text(int x_pos, int y_pos, int width, const char *text, //
             uint32_t bitmap[font_height];
             const char *prev_ptr = ptr;
             int glyph_width = get_glyph(bitmap, font, font_height, rg_utf8_get_codepoint(&ptr));
-            int width = monospace ?: glyph_width;
+            /* 缩放后的字形宽度（横向与纵向同比例） */
+            int glyph_scaled = (fs_den > 0) ? (glyph_width * fs_num / fs_den) : glyph_width;
+            int width = monospace ?: glyph_scaled;
 
             if (draw_width - x_offset < width) // Do not truncate glyphs
             {
@@ -443,8 +457,21 @@ rg_rect_t rg_gui_draw_text(int x_pos, int y_pos, int width, const char *text, //
                     if (row != 0) // get_draw_buffer fills the bg color, nothing to do if row empty
                     {
                         uint16_t *output = &draw_buffer[(draw_width * (y + padding)) + x_offset];
+                        /* 横向同样按比例缩放：输出第 x 列采样源第 (x * glyph_width / glyph_scaled) 列。
+                         * 非等宽字体时 width == glyph_scaled（铺满单元格）；
+                         * 等宽字体时字形缩放到 glyph_scaled 后左对齐在 width 宽的单元格里，
+                         * 右侧补底色。glyph_scaled == glyph_width（无缩放）时 sx == x，行为与旧版完全一致。 */
+                        int gw = glyph_scaled > 0 ? glyph_scaled : width;
                         for (int x = 0; x < width; x++)
-                            output[x] = ((row >> x) & 1) ? color_fg : color_bg;
+                        {
+                            if (x >= gw)
+                            {
+                                output[x] = color_bg;
+                                continue;
+                            }
+                            int sx = (gw == glyph_width) ? x : (x * glyph_width / gw);
+                            output[x] = ((row >> sx) & 1) ? color_fg : color_bg;
+                        }
                     }
                 }
             }
