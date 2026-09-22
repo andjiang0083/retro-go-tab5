@@ -128,7 +128,13 @@ void rg_storage_init(void)
     host_config.max_freq_khz = RG_STORAGE_SDMMC_SPEED;
     host_config.do_transaction = &sdcard_do_transaction;
 
-#ifdef CONFIG_IDF_TARGET_ESP32P4
+    /* 片上 LDO 给 SD 卡槽供电：ESP32-P4 通用板需要，Tab5 不需要。
+     * ⚠ Tab5 实测坑：在显示初始化之前申请片上 LDO 通道，会让 LDO 单元进入坏状态 ——
+     *   后续 DSI PHY 上电（bsp_enable_dsi_phy_power，走 LDO chan3 2500mV）会卡死不返回，
+     *   现象是启动日志停在 "Setting LCD backlight" 之后、"MIPI DSI PHY Powered on" 之前。
+     *   而且该状态跨 CPU 复位保留（"voltage value 0 out of range" 那句只在首次出现）。
+     *   Tab5 卡槽是固定供电，卡本来就读得到（只是 exFAT 不被 FatFS 认），故直接关闭。 */
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && (!defined(RG_STORAGE_SDMMC_ONCHIP_LDO) || RG_STORAGE_SDMMC_ONCHIP_LDO)
     sd_pwr_ctrl_ldo_config_t ldo_config = {
         .ldo_chan_id = 4,
     };

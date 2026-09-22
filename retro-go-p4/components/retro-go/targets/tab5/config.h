@@ -17,6 +17,9 @@
 #define RG_STORAGE_ROOT             "/sd"
 #define RG_STORAGE_SDMMC_HOST       SDMMC_HOST_SLOT_1
 #define RG_STORAGE_SDMMC_SPEED      SDMMC_FREQ_HIGHSPEED
+/* Tab5 不做 SD 卡槽的片上 LDO 供电申请（卡槽固定供电，本来就读得到卡）。
+ * 原因见 rg_storage.c 里那段注释：显示初始化前申请片上 LDO 会卡死 DSI PHY 上电。 */
+#define RG_STORAGE_SDMMC_ONCHIP_LDO 0
 #define RG_GPIO_SDMMC_CLK           GPIO_NUM_43
 #define RG_GPIO_SDMMC_CMD           GPIO_NUM_44
 #define RG_GPIO_SDMMC_D0            GPIO_NUM_39
@@ -72,6 +75,11 @@
  *   FIT 会变成 1080x720（上下零 margin）——这两种模式下按键都会压到画面。      *
  * （launcher 菜单是全屏 UI，那时按键压到菜单是正常的、也是必需的。）          *
  ****************************************************************************/
+/* P2 触摸虚拟手柄总开关：P1 显示验证阶段置 0，避免触摸初始化的问题干扰显示判定；
+ * 一次刷机 = 一个可见变化。P2 阶段改成 1 即可。 */
+#define RG_ENABLE_TOUCH_GAMEPAD 0
+
+#if RG_ENABLE_TOUCH_GAMEPAD
 #define RG_GAMEPAD_TOUCH_MAP { \
     /* 十字键：左侧 margin 竖列，单区 92x92，中心 (140,420) */ \
     {RG_KEY_UP,    140, 328,  92, 92}, \
@@ -94,6 +102,7 @@
 /* 若真机上触摸方向不对（点左选中右之类），改这个变换，不用动读点逻辑 */
 #define RG_TOUCH_PHYS_W 720
 #define RG_TOUCH_PHYS_H 1280
+#endif /* RG_ENABLE_TOUCH_GAMEPAD */
 
 
 /****************************************************************************

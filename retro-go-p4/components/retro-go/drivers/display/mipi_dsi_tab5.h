@@ -25,12 +25,12 @@
 #include "freertos/task.h"
 #include "esp_lcd_panel_ops.h"
 #include "bsp/display.h"
+#include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
 /* 注意：不要 #include "bsp/m5stack_tab5.h" —— 它的 umbrella 头会拉 lvgl.h
  * （retro-go 不编 LVGL）。需要什么就手写 extern，见下。 */
 
 /* BSP 里这几个函数的声明被关在头文件的 LVGL 段内（BSP_CONFIG_NO_GRAPHIC_LIB=1
  * 把它们编译掉了），所以照 snowveil 的做法手写 extern 声明。 */
-extern const char *bsp_display_get_panel_ic(void);
 extern esp_err_t bsp_display_new_with_handles(
     const bsp_display_config_t *config, bsp_lcd_handles_t *ret_handles);
 extern esp_err_t bsp_display_new_with_handles_to_st7123(
@@ -78,16 +78,43 @@ static void lcd_init(void)
     bsp_display_brightness_init();
     bsp_display_brightness_set(0);
 
-    const char *ic = bsp_display_get_panel_ic();
+    /* ⚠⚠ 关键一步：Tab5 的 LCD_RST(P4) / TP_RST(P5) 由挂在 I2C 上的 IO 扩展器
+     * PI4IOE5V6416 驱动，而这个初始化 BSP 自己不调用（必须由 app 调，M5 的例程在 app_main 里调）。
+     * 不调它 → 扩展器上电默认输出寄存器全 0 → LCD_RST=0 / TP_RST=0：
+     *   - 触摸 IC(0x55) 在 I2C 上不应答 → bsp_detect_display_type() 探不到屏型
+     *     （日志表现：No known touch controller detected, defaulting to ILI9881C）
+     *   - 面板被按在复位里 → 面板初始化不完成、屏幕全黑（背光也没用）
+     * 扩展器是独立芯片，寄存器状态跨 ESP 复位保留，所以"真断电"后必须由固件重新初始化它。
+     * 必须放在 _to_st7123 之前，否则探测拿不到 ST7123 会走错分支。 */
+    {
+        extern esp_err_t bsp_i2c_init(void);
+        extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
+        extern void bsp_io_expander_pi4ioe_init(i2c_master_bus_handle_t bus_handle);
+        if (bsp_i2c_init() == ESP_OK) {
+            bsp_io_expander_pi4ioe_init(bsp_i2c_get_handle());
+            RG_LOGI("PI4IOE expander init: LCD_RST/TP_RST released\n");
+        } else {
+            RG_LOGE("bsp_i2c_init failed, expander NOT initialized (panel/touch stay in reset)\n");
+        }
+    }
+
+    /* ⚠ 绝对不要用 bsp_display_get_panel_ic() 先做"屏型识别"再选初始化路径！
+     * 它内部会 i2c_master_probe 触摸 IC(0x55) 来推断屏型，实测在显示/I2C 尚未就绪时
+     * 探测必然失败 -> 返回 ILI9881C -> 走进 ILI9881C 路径后 abort()，
+     * 真机表现是"背光一闪 + 崩溃重启循环"，日志特征：
+     *   W M5STACK_TAB5: No known touch controller detected, defaulting to ILI9881C
+     *   W ledc: GPIO 22 is not usable ... / abort() was called
+     * （自检固件 M2a/M2c 之所以能亮，就是因为它直接调下面这个 _to_st7123，没做探测。）
+     * 本机面板是 ST7123 一体屏，直接走 ST7123 初始化路径。 */
     bsp_lcd_handles_t handles = {0};
-    esp_err_t err;
-    if (ic && (strstr(ic, "ST7123") || strstr(ic, "ST7121")))
-        err = bsp_display_new_with_handles_to_st7123(NULL, &handles);
-    else
-        err = bsp_display_new_with_handles(NULL, &handles);   /* ILI9881C 分支（本机未实测） */
+    esp_err_t err = bsp_display_new_with_handles_to_st7123(NULL, &handles);
+    if (err != ESP_OK || !handles.panel) {
+        RG_LOGW("st7123 path failed (err=0x%x), trying generic path\n", err);
+        err = bsp_display_new_with_handles(NULL, &handles);   /* 其它屏型（本机未实测） */
+    }
 
     if (err != ESP_OK || !handles.panel) {
-        RG_LOGE("Tab5 display init FAILED (err=0x%x, ic=%s)\n", err, ic ? ic : "?");
+        RG_LOGE("Tab5 display init FAILED (err=0x%x)\n", err);
         bsp_display_brightness_set(60);   /* 失败也点背光：区分"通路没起来"和"屏没亮" */
         return;
     }
@@ -96,8 +123,8 @@ static void lcd_init(void)
     RG_SCREEN_INIT();   /* 约定钩子：显示初始化必须经这个宏（历史教训：漏掉 = 黑屏） */
 
     lcd_set_backlight(80);
-    RG_LOGI("Tab5 DSI ready: panel=%s, logical %dx%d -> physical %dx%d (90CW map)\n",
-            ic ? ic : "?", RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, TAB5_PHYS_W, TAB5_PHYS_H);
+    RG_LOGI("Tab5 DSI ready (ST7123 path): logical %dx%d -> physical %dx%d (90CW map)\n",
+            RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, TAB5_PHYS_W, TAB5_PHYS_H);
 }
 
 static void lcd_deinit(void)

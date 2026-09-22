@@ -1352,9 +1352,12 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
     esp_lcd_dsi_bus_handle_t mipi_dsi_bus = NULL;
     bsp_display_type_t display_type       = bsp_detect_display_type();
     bool is_st7121                        = (display_type == BSP_DISPLAY_TYPE_ST7121);
+    ESP_LOGI(TAG, "LOCALDBG[1] enter: detect=%d is_st7121=%d", (int)display_type, (int)is_st7121); /* LOCAL PATCH: debug */
 
     ESP_RETURN_ON_ERROR(bsp_display_brightness_init(), TAG, "Brightness init failed");
+    ESP_LOGI(TAG, "LOCALDBG[2] brightness ok"); /* LOCAL PATCH: debug */
     ESP_RETURN_ON_ERROR(bsp_enable_dsi_phy_power(), TAG, "DSI PHY power failed");
+    ESP_LOGI(TAG, "LOCALDBG[3] dsi phy power ok"); /* LOCAL PATCH: debug */
 
     /* create MIPI DSI bus first, it will initialize the DSI PHY as well */
     esp_lcd_dsi_bus_config_t bus_config = {
@@ -1363,7 +1366,9 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
         .phy_clk_src        = MIPI_DSI_PHY_CLK_SRC_DEFAULT,
         .lane_bit_rate_mbps = 965,  // ST7123/ST7121 lane bitrate
     };
+    ESP_LOGI(TAG, "LOCALDBG[4a] creating dsi bus..."); /* LOCAL PATCH: debug */
     ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus), TAG, "New DSI bus init failed");
+    ESP_LOGI(TAG, "LOCALDBG[4b] dsi bus ok"); /* LOCAL PATCH: debug */
 
     ESP_LOGI(TAG, "Install MIPI DSI LCD control panel for ST712x");
     // we use DBI interface to send LCD commands and parameters
@@ -1373,6 +1378,7 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
         .lcd_param_bits  = 8,  // according to the LCD spec
     };
     ESP_GOTO_ON_ERROR(esp_lcd_new_panel_io_dbi(mipi_dsi_bus, &dbi_config, &io), err, TAG, "New panel IO failed");
+    ESP_LOGI(TAG, "LOCALDBG[5] panel io ok"); /* LOCAL PATCH: debug */
 
     ESP_LOGI(TAG, "Install LCD driver of %s", is_st7121 ? "ST7121" : "ST7123");
     esp_lcd_dpi_panel_config_t dpi_config = {
@@ -1427,9 +1433,13 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
                           "New LCD panel ST7123 failed");
     }
 
+    ESP_LOGI(TAG, "LOCALDBG[6a] creating st7123 panel driver..."); /* LOCAL PATCH: debug */
     ESP_GOTO_ON_ERROR(esp_lcd_panel_reset(disp_panel), err, TAG, "LCD panel reset failed");
+    ESP_LOGI(TAG, "LOCALDBG[6b] panel reset ok"); /* LOCAL PATCH: debug */
     ESP_GOTO_ON_ERROR(esp_lcd_panel_init(disp_panel), err, TAG, "LCD panel init failed");
+    ESP_LOGI(TAG, "LOCALDBG[6c] panel init ok"); /* LOCAL PATCH: debug */
     ESP_GOTO_ON_ERROR(esp_lcd_panel_disp_on_off(disp_panel, true), err, TAG, "LCD panel display on failed");
+    ESP_LOGI(TAG, "LOCALDBG[7] panel display on ok"); /* LOCAL PATCH: debug */
 
     /* Return all handles */
     ret_handles->io           = io;
