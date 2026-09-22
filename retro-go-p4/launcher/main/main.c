@@ -450,6 +450,16 @@ void app_main(void)
     app->configNs = "launcher";
     app->isLauncher = true;
 
+    /* ⚠ 大屏 target（如 tab5 1280x720）专属问题：target 的编译期默认缩放
+     * （RG_DISPLAY_DEFAULT_SCALING/CUSTOM_ZOOM = ZOOM 3.0）是给模拟器游戏用的
+     * （GBA 240x160 -> 3x = 720x480，四周留出虚拟按键区）。
+     * 但 launcher 的 UI 本身是"满屏源"，若也吃这个默认值，菜单会被放大 3 倍，
+     * 屏幕上只剩画面正中心的一小块（表现为"巨大的色块/黑屏"）。
+     * launcher 的菜单必须永远 1:1；缩放只对游戏生效。
+     * 注意此处已设置 app->configNs="launcher"，所以只写 launcher 自己的命名空间，
+     * 不会影响 gbsp 等模拟器的缩放设置。 */
+    rg_display_set_scaling(RG_DISPLAY_SCALING_OFF);
+
     if (!rg_storage_ready())
     {
         rg_display_clear(C_SKY_BLUE);
