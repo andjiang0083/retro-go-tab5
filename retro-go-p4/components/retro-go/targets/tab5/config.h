@@ -84,6 +84,15 @@
  * 重绘覆盖 => 不闪）；颜色在 tab5_overlay_color()，每个按键一个可区分的颜色。 */
 #define RG_TOUCH_OVERLAY 1
 
+/* 每帧"算一块推一块"的块大小（像素）。默认 RG_SCREEN_WIDTH*4=4 行 => 一帧 180 次推送，
+ * 播游戏时面板 DMA 会持续忙、触发 tab5_draw 的重试风暴。这里放到 16 行（一帧 45 次）。
+ * 内存代价：驱动里两个 LCD_BUFFER_LENGTH 大小的缓冲 = 2 × 40KB。 */
+#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 16)
+
+/* GUI 字体放大倍数：默认字体 VeraBold11 渲染高度 13px，在 1280x720 上太小（实机反馈）。
+ * 3 倍 = 39px。改这里即可调整（2 = 26px，3 = 39px）。 */
+#define RG_GUI_FONT_SCALE 3
+
 #if RG_ENABLE_TOUCH_GAMEPAD
 #define RG_GAMEPAD_TOUCH_MAP { \
     /* 十字键：左侧 margin 竖列，单区 92x92，中心 (140,420) */ \

@@ -132,12 +132,23 @@ static void tab5_overlay_blit(uint16_t *scratch, int x0, int y0, int rows, int w
 static esp_err_t tab5_draw(int x0, int y0, int x1, int y1, const uint16_t *data)
 {
     esp_err_t err = ESP_FAIL;
-    for (int tries = 0; tries < 500; ++tries) {
+    /* DMA 忙时 draw_bitmap 返回 ESP_ERR_INVALID_STATE —— 这是正常背压，不是故障。
+     * ⚠ 但别把它当"等一会儿就好"无限等：旧代码重试 500 次 × vTaskDelay(1)=10ms
+     *   => 单个区块最多阻塞 5 秒；播游戏（CPU 100%、DMA 持续忙）时会连续触发 =>
+     *   主循环整段卡在 vTaskDelay 里（日志特征：BUSY 掉到 0%、FPS 归零）=> 被
+     *   retro-go 的"应用无响应"看门狗 RG_PANIC("Application terminated!") 杀掉。
+     * 现在只等有限时间，超时就【丢掉这一块】（下一帧会重画，宁可掉一块也不能卡死），
+     * 并限频告警，好让 crash.log 里能看到丢块频率。 */
+    const int max_tries = 8;   /* 8 × 1 tick(10ms) = 最多 80ms */
+    for (int tries = 0; tries < max_tries; ++tries) {
         err = esp_lcd_panel_draw_bitmap(tab5_panel, x0, y0, x1, y1, data);
         if (err != ESP_ERR_INVALID_STATE)
             return err;
         vTaskDelay(1);
     }
+    static uint32_t dropped;
+    if ((dropped++ % 60) == 0)
+        RG_LOGW("draw busy: dropped block <%d,%d %d,%d> (total dropped=%u)\n", x0, y0, x1, y1, (unsigned)dropped);
     return err;
 }
 

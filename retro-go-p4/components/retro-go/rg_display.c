@@ -4,7 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4) // In pixels
+#ifndef LCD_BUFFER_LENGTH
+// In pixels. 大屏 target（如 tab5 1280 宽）可覆盖它来减少每帧的推送次数：本驱动是"算一块推一块"，
+// 4 行/次意味着一帧推 180 次，播游戏时面板 DMA 会持续处于繁忙态，触发下面的重试。
+#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 4)
+#endif
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;

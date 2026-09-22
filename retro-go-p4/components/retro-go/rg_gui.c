@@ -216,6 +216,12 @@ const char *rg_gui_get_theme_name(void)
     return gui.theme_name[0] ? gui.theme_name : NULL;
 }
 
+#ifndef RG_GUI_FONT_SCALE
+/* 字体放大倍数（大屏 target 用，如 tab5 1280x720 上默认 13px 的字太小）。
+ * 渲染器本身支持任意 font_height（get_glyph 按 font_height 缩放字形），所以这里是纯缩放。 */
+#define RG_GUI_FONT_SCALE 1
+#endif
+
 bool rg_gui_set_font(int index)
 {
     if (index < 0 || index > RG_FONT_MAX - 1)
@@ -225,7 +231,7 @@ bool rg_gui_set_font(int index)
 
     gui.font_index = index;
     gui.style.font = font;
-    gui.style.font_height = (index < 3) ? (8 + index * 4) : font->height;
+    gui.style.font_height = ((index < 3) ? (8 + index * 4) : font->height) * RG_GUI_FONT_SCALE;
 
     rg_settings_set_number(NS_GLOBAL, SETTING_FONTTYPE, index);
 
