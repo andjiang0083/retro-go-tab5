@@ -77,7 +77,7 @@
  ****************************************************************************/
 /* P2 触摸虚拟手柄总开关：P1 显示验证阶段置 0，避免触摸初始化的问题干扰显示判定；
  * 一次刷机 = 一个可见变化。P2 阶段改成 1 即可。 */
-#define RG_ENABLE_TOUCH_GAMEPAD 0
+#define RG_ENABLE_TOUCH_GAMEPAD 1
 
 #if RG_ENABLE_TOUCH_GAMEPAD
 #define RG_GAMEPAD_TOUCH_MAP { \

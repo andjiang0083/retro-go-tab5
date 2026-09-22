@@ -93,6 +93,9 @@ static void lcd_init(void)
         if (bsp_i2c_init() == ESP_OK) {
             bsp_io_expander_pi4ioe_init(bsp_i2c_get_handle());
             RG_LOGI("PI4IOE expander init: LCD_RST/TP_RST released\n");
+            /* 复位释放后给触摸 IC 一点时间再探测：否则紧随其后的屏型探测会探不到 ST7123
+             * （BSP 探测只是决定 ST7121/ST7123，探不到会退回 ILI9881C 分支）。 */
+            vTaskDelay(pdMS_TO_TICKS(150));
         } else {
             RG_LOGE("bsp_i2c_init failed, expander NOT initialized (panel/touch stay in reset)\n");
         }

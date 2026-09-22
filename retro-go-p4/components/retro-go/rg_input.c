@@ -105,6 +105,36 @@ static esp_err_t rg_touch_init(void)
     }
     return ESP_OK;
 }
+
+/* 触摸懒加载 + 重试：
+ * Tab5 的 TP_RST 由 I2C 上的 IO 扩展器控制，而扩展器是在**显示初始化**里才被初始化的
+ * （见 drivers/display/mipi_dsi_tab5.h），可 rg_input_init() 跑在那之前 —— 那时触摸 IC
+ * 还在复位里，探测/创建必然失败。所以改成"第一次真正读手柄时才创建"，并且失败允许重试
+ * （复位释放后 IC 需要上百毫秒才在 I2C 上应答）。 */
+#define RG_TOUCH_MAX_ATTEMPTS 20
+static int touch_init_attempts = 0;
+static int64_t touch_last_attempt = 0;
+
+static bool rg_touch_ensure(void)
+{
+    if (touch_handle)
+        return true;
+    if (touch_init_attempts >= RG_TOUCH_MAX_ATTEMPTS)
+        return false;
+    /* 重试间隔 50ms（rg_system_timer 单位是微秒），避免在 IC 没醒时把 I2C 刷爆 */
+    int64_t now = rg_system_timer();
+    if (touch_last_attempt && (now - touch_last_attempt) < 50 * 1000)
+        return false;
+    touch_last_attempt = now;
+    touch_init_attempts++;
+    esp_err_t err = rg_touch_init();
+    if (err != ESP_OK) {
+        RG_LOGW("Touch init attempt %d/%d failed (0x%x)\n", touch_init_attempts, RG_TOUCH_MAX_ATTEMPTS, err);
+        return false;
+    }
+    RG_LOGI("Touch ready (after %d attempt(s)).\n", touch_init_attempts);
+    return true;
+}
 #endif
 static bool input_task_running = false;
 static uint32_t gamepad_state = -1; // _Atomic
@@ -246,7 +276,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #endif
 
 #if defined(RG_GAMEPAD_TOUCH_MAP)
-    if (touch_handle && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
+    if (rg_touch_ensure() && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
     {
         uint16_t px[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
         uint16_t py[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
@@ -448,16 +478,10 @@ void rg_input_init(void)
 
     // The first read returns bogus data in some drivers, waste it.
 #if defined(RG_GAMEPAD_TOUCH_MAP)
-    RG_LOGI("Initializing touch gamepad driver (ST7123 @0x55)...");
-    if (rg_touch_init() == ESP_OK)
-    {
-        UPDATE_GLOBAL_MAP(keymap_touch);
-        RG_LOGI("Touch ready.\n");
-    }
-    else
-    {
-        RG_LOGE("Touch init failed, virtual gamepad disabled.\n");
-    }
+    /* 只登记"这些虚拟按键存在"，真正的触摸 IC 创建推迟到第一次读手柄时（懒加载）：
+     * 此刻 TP_RST 还没释放（扩展器在显示初始化里才初始化），现在创建必然失败。 */
+    RG_LOGI("Virtual touch gamepad registered (ST7123 @0x55, lazy init).\n");
+    UPDATE_GLOBAL_MAP(keymap_touch);
 #endif
 
     rg_input_read_gamepad_raw(NULL);
