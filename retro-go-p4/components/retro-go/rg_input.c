@@ -38,6 +38,74 @@ static rg_keymap_serial_t keymap_serial[] = RG_GAMEPAD_SERIAL_MAP;
 #ifdef RG_GAMEPAD_VIRT_MAP
 static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #endif
+
+#ifdef RG_GAMEPAD_TOUCH_MAP
+#include "esp_lcd_touch.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_touch_st7123.h"
+#ifndef CONFIG_ESP_LCD_TOUCH_MAX_POINTS
+#define CONFIG_ESP_LCD_TOUCH_MAX_POINTS 5
+#endif
+/* 触摸 IC 报的是面板物理坐标（竖屏原生 720x1280），与显示驱动的 90° 映射互逆 */
+#ifndef RG_TOUCH_PHYS_W
+#define RG_TOUCH_PHYS_W 720
+#endif
+#ifndef RG_TOUCH_PHYS_H
+#define RG_TOUCH_PHYS_H 1280
+#endif
+/* 物理 -> 逻辑。默认：逻辑 lx = 物理 py，逻辑 ly = (PHYS_W-1) - 物理 px。
+ * 若真机上出现镜像/换轴错误，只改这一个宏即可（不用动读点逻辑）。 */
+#ifndef RG_TOUCH_LOGICAL_FROM_PHYS
+#define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly) \
+    do { (lx) = (py); (ly) = (RG_TOUCH_PHYS_W - 1) - (px); } while (0)
+#endif
+static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
+static esp_lcd_touch_handle_t touch_handle = NULL;
+/* Tab5 BSP 的 I2C 句柄（声明在 bsp/m5stack_tab5.h，那个 umbrella 头会拉 lvgl.h，故手写 extern） */
+extern esp_err_t bsp_i2c_init(void);
+extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
+
+/* 照抄 BSP 的 ST7123 触摸初始化（bsp_display_indev_init_to_st7123）：
+ * 一体化屏的触摸 IC 就是 ST7123，I2C 地址 0x55，x_max/y_max 用面板物理尺寸。
+ * 注意 BSP 只对外暴露了 GT911 版本的 bsp_touch_new()，所以这里自己建 panel io。 */
+static esp_err_t rg_touch_init(void)
+{
+    esp_err_t err = bsp_i2c_init();
+    if (err != ESP_OK)
+        return err;
+
+    esp_lcd_panel_io_handle_t io = NULL;
+    esp_lcd_panel_io_i2c_config_t io_config = {
+        .dev_addr = 0x55,
+        .control_phase_bytes = 1,
+        .dc_bit_offset = 0,
+        .lcd_cmd_bits = 16,
+        .flags = {
+            .disable_control_phase = 1,
+        },
+    };
+    io_config.scl_speed_hz = 100000;
+    err = esp_lcd_new_panel_io_i2c_v2(bsp_i2c_get_handle(), &io_config, &io);
+    if (err != ESP_OK)
+        return err;
+
+    const esp_lcd_touch_config_t tp_config = {
+        .x_max = RG_TOUCH_PHYS_W,
+        .y_max = RG_TOUCH_PHYS_H,
+        .rst_gpio_num = -1,   // NC on Tab5
+        .int_gpio_num = 23,
+        .levels = { .reset = 0, .interrupt = 0 },
+        .flags = { .swap_xy = 0, .mirror_x = 0, .mirror_y = 0 },
+    };
+    err = esp_lcd_touch_new_i2c_st7123(io, &tp_config, &touch_handle);
+    if (err != ESP_OK || touch_handle == NULL) {
+        esp_lcd_panel_io_del(io);
+        touch_handle = NULL;
+        return err != ESP_OK ? err : ESP_FAIL;
+    }
+    return ESP_OK;
+}
+#endif
 static bool input_task_running = false;
 static uint32_t gamepad_state = -1; // _Atomic
 static uint32_t gamepad_mapped = 0;
@@ -175,6 +243,30 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #else
 #warning "not implemented"
 #endif
+#endif
+
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+    if (touch_handle && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
+    {
+        uint16_t px[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
+        uint16_t py[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
+        uint8_t count = 0;
+        if (esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS))
+        {
+            for (int t = 0; t < count; ++t)
+            {
+                int lx = 0, ly = 0;
+                RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
+                {
+                    const rg_keymap_touch_t *mapping = &keymap_touch[i];
+                    if (lx >= mapping->x - mapping->w / 2 && lx <= mapping->x + mapping->w / 2 &&
+                        ly >= mapping->y - mapping->h / 2 && ly <= mapping->y + mapping->h / 2)
+                        state |= mapping->key;
+                }
+            }
+        }
+    }
 #endif
 
 #if defined(RG_GAMEPAD_SERIAL_MAP)
@@ -355,6 +447,19 @@ void rg_input_init(void)
 #endif
 
     // The first read returns bogus data in some drivers, waste it.
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+    RG_LOGI("Initializing touch gamepad driver (ST7123 @0x55)...");
+    if (rg_touch_init() == ESP_OK)
+    {
+        UPDATE_GLOBAL_MAP(keymap_touch);
+        RG_LOGI("Touch ready.\n");
+    }
+    else
+    {
+        RG_LOGE("Touch init failed, virtual gamepad disabled.\n");
+    }
+#endif
+
     rg_input_read_gamepad_raw(NULL);
 
     // Start background polling
@@ -367,6 +472,13 @@ void rg_input_init(void)
 void rg_input_deinit(void)
 {
     input_task_running = false;
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+    if (touch_handle)
+    {
+        esp_lcd_touch_del(touch_handle);
+        touch_handle = NULL;
+    }
+#endif
     // while (gamepad_state != -1)
     //     rg_task_yield();
     RG_LOGI("Input terminated.\n");

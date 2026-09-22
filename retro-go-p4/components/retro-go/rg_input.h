@@ -77,6 +77,16 @@ typedef struct
     uint32_t src;
 } rg_keymap_virt_t;
 
+// #define RG_GAMEPAD_TOUCH_MAP {{}, ...} to use a touchscreen as a virtual gamepad
+// Coordinates are the CENTER of the hit region, in the display's *logical* space
+// (ie the rotated 1280x720 space the user actually sees, same as RG_SCREEN_WIDTH/HEIGHT).
+typedef struct
+{
+    rg_key_t key;
+    int16_t x, y;   // Center
+    int16_t w, h;   // Size
+} rg_keymap_touch_t;
+
 // FIXME: Create a single unified keymap...
 // ...
 
