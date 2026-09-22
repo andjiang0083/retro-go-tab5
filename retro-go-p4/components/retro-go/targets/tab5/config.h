@@ -48,6 +48,15 @@
 /* 无 SPI 命令序列：面板初始化在驱动里走 Tab5 BSP（lcd_init 会调用本宏） */
 #define RG_SCREEN_INIT()
 
+/* 游戏缩放的默认值：3x 整数缩放（240x160 -> 720x480 居中）。
+ * 这是"触摸按键不压画面"的前提：按 3x 计算游戏区占 x[280,1000) y[120,600)，
+ * 四周正好空出 margin 给虚拟按键（见下方 RG_GAMEPAD_TOUCH_MAP）。
+ * ⚠ 必须用 ZOOM：FIT 会变成 1080x720（上下零 margin）、FULL 直接拉满 1280x720，
+ *   这两种模式按键都会压在游戏画面上。custom_zoom 上限也要放开（上游硬夹 2.0）。 */
+#define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 3.0
+#define RG_DISPLAY_MAX_CUSTOM_ZOOM     4.0
+
 
 /****************************************************************************
  * Input — Tab5 只有 Reset/Boot，没有用户按键；用触摸屏当虚拟手柄            *

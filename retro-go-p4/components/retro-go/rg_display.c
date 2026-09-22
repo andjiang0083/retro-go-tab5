@@ -22,6 +22,18 @@ static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
 #define FLOAT_TO_INT(x) ((int)((x) + 0.1f))
 
 static const char *SETTING_BACKLIGHT = "DispBacklight";
+/* 目标可在 target config.h 里覆盖这两个默认值（例：tab5 用 3x 整数缩放给触摸按键留 margin）。
+ * custom_zoom 的上限同理：默认仍是 2.0，只有需要的 target 才放开。 */
+#ifndef RG_DISPLAY_DEFAULT_SCALING
+#define RG_DISPLAY_DEFAULT_SCALING RG_DISPLAY_SCALING_FIT
+#endif
+#ifndef RG_DISPLAY_DEFAULT_CUSTOM_ZOOM
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 1.0
+#endif
+#ifndef RG_DISPLAY_MAX_CUSTOM_ZOOM
+#define RG_DISPLAY_MAX_CUSTOM_ZOOM 2.0
+#endif
+
 static const char *SETTING_SCALING = "DispScaling";
 static const char *SETTING_FILTER = "DispFilter";
 static const char *SETTING_ROTATION = "DispRotation";
@@ -387,7 +399,7 @@ display_scaling_t rg_display_get_scaling(void)
 
 void rg_display_set_custom_zoom(double factor)
 {
-    config.custom_zoom = RG_MIN(RG_MAX(0.1, factor), 2.0);
+    config.custom_zoom = RG_MIN(RG_MAX(0.1, factor), RG_DISPLAY_MAX_CUSTOM_ZOOM);
     rg_settings_set_number(NS_APP, SETTING_CUSTOM_ZOOM, config.custom_zoom);
     display.changed = true;
 }
@@ -595,11 +607,11 @@ void rg_display_init(void)
     // TO DO: We probably should call the setters to ensure valid values...
     config = (rg_display_config_t){
         .backlight = rg_settings_get_number(NS_GLOBAL, SETTING_BACKLIGHT, 80),
-        .scaling = rg_settings_get_number(NS_APP, SETTING_SCALING, RG_DISPLAY_SCALING_FIT),
+        .scaling = rg_settings_get_number(NS_APP, SETTING_SCALING, RG_DISPLAY_DEFAULT_SCALING),
         .filter = rg_settings_get_number(NS_APP, SETTING_FILTER, RG_DISPLAY_FILTER_BOTH),
         .rotation = rg_settings_get_number(NS_APP, SETTING_ROTATION, RG_DISPLAY_ROTATION_AUTO),
         .border_file = rg_settings_get_string(NS_APP, SETTING_BORDER, NULL),
-        .custom_zoom = rg_settings_get_number(NS_APP, SETTING_CUSTOM_ZOOM, 1.0),
+        .custom_zoom = rg_settings_get_number(NS_APP, SETTING_CUSTOM_ZOOM, RG_DISPLAY_DEFAULT_CUSTOM_ZOOM),
     };
     display = (rg_display_t){
         .screen.real_width = RG_SCREEN_WIDTH,
