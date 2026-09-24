@@ -193,6 +193,19 @@ E (5878) lcd.dsi: dpi_panel_draw_bitmap(547): previous draw operation is not fin
 **临时结论**：这不是游戏 ROM 的问题（ROM 头部与能正常运行的《火纹》逐字节一致，8MB vs 16MB 都能跑），
 也不是模拟器内核问题，而是**我们自己的显示通路**要优化。
 
+**2026-09-25 补充（修完崩溃 bug 后重抓开机日志）**：这个瓶颈**不限于 GBA 游戏，launcher 里一样存在** ——
+刚开机、什么都没操作的 launcher 也是：
+
+```
+[debug] STACK:38780, HEAP:205+25178 (132+25088), BUSY:56%, FPS:59 (29+21+8), BATT:0
+[info] tab5_perf_report: PERF: display=206.00ms/1856ms (transpose=205.78 submit=0.22) blocks=256
+E (20320) lcd.dsi: dpi_panel_draw_bitmap(547): previous draw operation is not finished
+```
+
+所以它不是"某个游戏触发的"，而是**整个显示通路的固有问题**（每秒 200~430ms 花在 CPU 转置、DSI 持续报未完成）。
+这也解释了"卡死"为什么因画面内容而异：静态画面（如汉化组的声明页）推不上去就是完全冻住，
+动态画面只是卡顿。**修的时候可以直接拿 launcher 复现，不必进游戏** —— 这条对后续定位很关键。
+
 
 ## 十、已修：模拟器选项崩溃 + 肩键/Turbo 键失灵（2026-09-25）
 
@@ -223,3 +236,15 @@ X/Y 同理 —— 而核心把 X/Y 定义为 **Turbo A / Turbo B**（`gpsp_turbo
 
 **顺带**：`touch_layout.h` 是键位的单一数据源，但它只解决"画什么"，**"传不传得下去"是每个核心自己的映射表** ——
 以后加键位，两处都要动（这条已记进 skill）。
+
+### 真机验证（2026-09-25，刷入 `dist/retro-go-p2.6.2-fix-options-lr.img`）
+
+刷机回读校验：launcher 与 gbsp 两个分区与镜像**逐字节一致**（脚本自带回读比对）。
+
+| 验证项 | 结果 |
+|---|---|
+| 进「Emulator options」 | ✅ 弹出「此程序没有可调整的选项。」，不再崩溃 |
+| 游戏里按 L / R | ✅ 可用（火纹里切换单位/翻页） |
+| X / Y 的 Turbo A / B | ✅ 按住连发生效 |
+
+用户确认三项全部正常。
