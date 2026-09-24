@@ -45,8 +45,11 @@ extern esp_err_t bsp_display_new_with_handles_to_st7123(
 #define TAB5_PHYS_H 1280   /* 面板物理（竖屏）高 */
 
 static esp_lcd_panel_handle_t tab5_panel = NULL;
-static uint16_t tab5_line_buffer[LCD_BUFFER_LENGTH];   /* retro-go 收集逻辑行用 */
-static uint16_t tab5_scratch[LCD_BUFFER_LENGTH];       /* 转置后的物理块 */
+/* ⚠ 这两个缓冲必须 128 字节对齐：PPA 硬件路径有硬性要求（见下方 lcd_send_buffer 的条件判断），
+ * 不对齐时它会**静默**退回 CPU 转置 —— 2026-09-25 就是栽在这里：日志打了 "PPA SRM ready"，
+ * 实际每次都在走 CPU 路径，白跑一整轮 A/B。链接后的地址是 0x...bbc（低 7 位非零），所以必须显式声明。 */
+static uint16_t tab5_line_buffer[LCD_BUFFER_LENGTH] __attribute__((aligned(128)));  /* retro-go 收集逻辑行用 */
+static uint16_t tab5_scratch[LCD_BUFFER_LENGTH] __attribute__((aligned(128)));      /* 转置后的物理块 */
 static int tab5_win_left = 0, tab5_win_top = 0, tab5_win_width = 0;
 
 /* PPA 硬件旋转路径（详见文件后半的说明）；任一步失败则为 NULL → 退回 CPU 转置 */
@@ -155,16 +158,18 @@ static void lcd_init(void)
      * 任何一步失败都只是退回 CPU 转置路径，不影响功能。 */
     {
         void *fb = NULL;
-        /* 运行时开关（免刷机 A/B）：默认**不启用** PPA（走已知可用的 CPU 转置路径）。
-         * 想试 PPA 就在 SD 根目录放一个 ppa_on 文件，删掉即退回。
-         * 原因：PPA 是硬件 master，写帧缓冲时可能与模拟器抢 PSRAM 带宽，
-         * 实测出现过进游戏后卡死，需要先定位再决定是否默认开启。 */
+        /* ⛔ PPA 硬件旋转：2026-09-25 实测**比 CPU 转置慢约 25 倍**，无条件禁用。
+         * 数据（同一台设备、同一段开机渲染负载，唯一变量是这条路径）：
+         *   CPU 转置 : 每 block 0.6~0.9ms，每秒 display 47~300ms，DSI 拒收报错 317 条
+         *   PPA SRM  : 每 block ~25ms，每秒 display 500~1040ms，画面掉到 1~2fps
+         *              （DSI 拒收报错归零 —— 说明 PPA 确实在执行，不是又一次静默退回）
+         * 根因判断：PPA 写 DPI 帧缓冲时与 DPI 以 88MB/s 持续扫描读取同一片 PSRAM 抢带宽
+         * （即当年注释里的猜测，现在有实测数据）；且 PPA_TRANS_MODE_BLOCKING 下 CPU 还要
+         * 等硬件搬完，省下的 CPU 时间被等待加倍还回去。
+         * 重开前必读：① 先确认 tab5_line_buffer/tab5_scratch 仍是 128 字节对齐（曾经不对齐
+         * 导致**静默**退回，白跑一整轮 A/B，见上方声明处注释）；② /sd/ppa_on 这个文件开关已
+         * 废除（太容易被 macOS 建成 ppa_on.command，且无法反映真实执行路径）。 */
         bool ppa_allowed = false;
-        FILE *on = fopen("/sd/ppa_on", "r");
-        if (on) {
-            ppa_allowed = true;
-            fclose(on);
-        }
         if (esp_lcd_dpi_panel_get_frame_buffer(tab5_panel, 1, &fb) == ESP_OK && fb && ppa_allowed) {
             tab5_fb = (uint16_t *)fb;
             ppa_client_config_t ppa_cfg = {
@@ -178,7 +183,7 @@ static void lcd_init(void)
                 RG_LOGW("ppa_register_client failed -> CPU transpose path\n");
             }
         } else {
-            RG_LOGW("PPA disabled (default; put /sd/ppa_on to enable) -> CPU transpose path\n");
+            RG_LOGW("PPA disabled (measured ~25x slower than CPU transpose) -> CPU transpose path\n");
         }
     }
 
@@ -344,6 +349,19 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         done = (err == ESP_OK);
         if (!done)
             RG_LOGW("PPA SRM failed (0x%x), falling back to CPU transpose\n", err);
+    }
+    else if (tab5_ppa && tab5_fb)
+    {
+        /* 条件不满足（源缓冲未 128 字节对齐）时**必须说话**：静默退回是 2026-09-25 白跑
+         * 一整轮 A/B 的元凶 —— 日志里只有 "PPA SRM ready"，看起来一切正常，实际每次都在
+         * 走 CPU 转置。只报一次，避免刷屏。 */
+        static bool warned_misaligned = false;
+        if (!warned_misaligned)
+        {
+            warned_misaligned = true;
+            RG_LOGW("PPA skipped: source %p not 128-byte aligned (low 7 bits must be zero) -> CPU transpose\n",
+                    (void *)buffer);
+        }
     }
 
     /* ---- 回退：CPU 转置 + 面板推送（原路径）---- */
