@@ -28,6 +28,8 @@
 #include "driver/ppa.h"          /* PPA SRM 硬件旋转：替代 CPU 转置，省掉 cache 写回 */
 #include "esp_cache.h"           /* esp_cache_msync：按键叠加层写帧缓冲后的失效/写回 */
 #include "esp_timer.h"           /* 性能打点：区分"显示路径"与"模拟器核心"的 CPU 占用 */
+#include "hal/axi_icm_ll.h"      /* AXI-ICM QoS：给 CPU cache 写回 / DMA2D 拷贝提权（见 lcd_init） */
+#include "soc/icm_sys_struct.h"  /* 读 QoS 默认值：LL 只有 setter 没有 getter，直接读寄存器结构体 */
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
 #include "rg_touch_overlay.h"    /* 虚拟按键可视层（标签/透明度/按下反馈） */
@@ -40,6 +42,35 @@ extern esp_err_t bsp_display_new_with_handles(
     const bsp_display_config_t *config, bsp_lcd_handles_t *ret_handles);
 extern esp_err_t bsp_display_new_with_handles_to_st7123(
     const bsp_display_config_t *config, bsp_lcd_handles_t *ret_handles);
+
+/* ---- AXI-ICM QoS 调优（2026-09-25 夜；完整证据链见 docs/NIGHT-2026-09-25-DISPLAY.md）----
+ *
+ * 起因：IDF 在 DSI 欠载中断里的官方提示就是"用 AXI-ICM 优化内存带宽"。P4 上确实有这套 QoS 硬件，
+ * 我们的两条关键路径对应：
+ *   AXI_ICM_MASTER_CACHE (1)   ← CPU 转置后的 cache 写回
+ *   AXI_ICM_MASTER_DMA2D (10)  ← 推送用的异步拷贝（esp_async_fbcpy）
+ * 面板扫描则走 DW-GDMA（AXI_ICM_MASTER_DW_GDMA_M0/M1）。
+ *
+ * 症状是"延迟被饿死"而非吞吐不够：面板持续 ~100MB/s 读 PSRAM（1280x720x2B @ ~54Hz），
+ * 我们只要 ~12MB/s，但实测每次推送 0.6~1.0ms，且约一半绘制被 DMA2D 拒收丢弃
+ * （日志 "previous draw operation is not finished" 每秒几十上百条）。
+ *
+ * 本函数只做**保守**一步：抬高我们自己两条主设备的读写 QoS。
+ * **刻意不动面板的优先级/突发限制** —— 给视频流降权或限突发有过冲导致 underrun（画面变蓝）的风险，
+ * 要等真机分档实测后再决定。
+ * 默认值先打日志：LL 只有 setter 没有 getter，直接读寄存器结构体拿初值，便于判断还有多少提权空间。 */
+static void tab5_axi_icm_tune(void)
+{
+    const uint32_t cache_aw = AXI_ICM.mst_awqos_reg0.reg_cache_awqos;
+    const uint32_t cache_ar = AXI_ICM.mst_arqos_reg0.reg_cache_arqos;
+    const uint32_t dma2d_aw = AXI_ICM.mst_awqos_reg0.reg_dma2d_awqos;
+    const uint32_t dma2d_ar = AXI_ICM.mst_arqos_reg0.reg_dma2d_arqos;
+    RG_LOGI("AXI-ICM qos defaults: cache w/r=%u/%u dma2d w/r=%u/%u\n",
+            (unsigned)cache_aw, (unsigned)cache_ar, (unsigned)dma2d_aw, (unsigned)dma2d_ar);
+    axi_icm_ll_set_cache_qos_arbiter_prio(15, 15);   /* CPU cache 读写提权 */
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(15, 15);   /* 推送拷贝读写提权 */
+    RG_LOGI("AXI-ICM qos raised: cache w/r=15/15 dma2d w/r=15/15\n");
+}
 
 #define TAB5_PHYS_W 720    /* 面板物理（竖屏）宽 */
 #define TAB5_PHYS_H 1280   /* 面板物理（竖屏）高 */
@@ -141,6 +172,9 @@ static void lcd_init(void)
      * （自检固件 M2a/M2c 之所以能亮，就是因为它直接调下面这个 _to_st7123，没做探测。）
      * 本机面板是 ST7123 一体屏，直接走 ST7123 初始化路径。 */
     bsp_lcd_handles_t handles = {0};
+    /* AXI-ICM QoS：先把 CPU cache 写回与 DMA2D 拷贝的优先级提起来（面板不动，理由见函数注释） */
+    tab5_axi_icm_tune();
+
     esp_err_t err = bsp_display_new_with_handles_to_st7123(NULL, &handles);
     if (err != ESP_OK || !handles.panel) {
         RG_LOGW("st7123 path failed (err=0x%x), trying generic path\n", err);
@@ -253,6 +287,13 @@ static uint64_t tab5_pf_tr_us, tab5_pf_sub_us;                 /* 当前 1 秒�
 static uint64_t tab5_pf_tot_tr_us, tab5_pf_tot_sub_us;         /* 整场累计 */
 static int64_t  tab5_pf_win_start, tab5_pf_sess_start;
 static uint32_t tab5_pf_blocks, tab5_pf_tot_blocks;
+/* 2026-09-25 夜：把 transpose= 这一坨拆开，定位那 0.6~1.0ms/次到底花在哪一段。
+ * 三个候选：CPU 转置访存 / 虚拟键合成 / DMA 提交与 cache 同步。
+ * 同时统计平均每次推送的行数（rows_avg/max），确认分块有没有被滤波或缓冲上限削碎。 */
+static uint64_t tab5_pf_xp_us, tab5_pf_ov_us, tab5_pf_dr_us;
+static uint64_t tab5_pf_tot_xp_us, tab5_pf_tot_ov_us, tab5_pf_tot_dr_us;
+static uint32_t tab5_pf_px, tab5_pf_tot_px;                     /* 窗口内推送的像素数 */
+static uint32_t tab5_pf_rows_max;
 
 static void tab5_perf_report(void)
 {
@@ -265,12 +306,23 @@ static void tab5_perf_report(void)
     if (elapsed < 1000000)
         return;
     uint64_t total = tab5_pf_tr_us + tab5_pf_sub_us;
-    RG_LOGI("PERF: display=%u.%02ums/%ums (transpose=%u.%02u submit=%u.%02u) blocks=%u\n",
+    /* rows_avg：平均每次推送的行数（像素数 / 块数 / 当前逻辑宽）。用于判断分块是否被削碎。 */
+    unsigned rows_avg10 = (tab5_pf_blocks && tab5_win_width > 0)
+                        ? (unsigned)((uint64_t)tab5_pf_px * 10 / tab5_pf_blocks / (uint64_t)tab5_win_width) : 0;
+    RG_LOGI("PERF: display=%u.%02ums/%ums (transpose=%u.%02u submit=%u.%02u) blocks=%u"
+            " [xpose=%u.%02u ovl=%u.%02u draw=%u.%02u] rows=%u.%u max=%u\n",
         (unsigned)(total / 1000), (unsigned)((total % 1000) / 10), (unsigned)(elapsed / 1000),
         (unsigned)(tab5_pf_tr_us / 1000), (unsigned)((tab5_pf_tr_us % 1000) / 10),
         (unsigned)(tab5_pf_sub_us / 1000), (unsigned)((tab5_pf_sub_us % 1000) / 10),
-        (unsigned)tab5_pf_blocks);
+        (unsigned)tab5_pf_blocks,
+        (unsigned)(tab5_pf_xp_us / 1000), (unsigned)((tab5_pf_xp_us % 1000) / 10),
+        (unsigned)(tab5_pf_ov_us / 1000), (unsigned)((tab5_pf_ov_us % 1000) / 10),
+        (unsigned)(tab5_pf_dr_us / 1000), (unsigned)((tab5_pf_dr_us % 1000) / 10),
+        rows_avg10 / 10, rows_avg10 % 10, (unsigned)tab5_pf_rows_max);
     tab5_pf_tr_us = tab5_pf_sub_us = 0;
+    tab5_pf_xp_us = tab5_pf_ov_us = tab5_pf_dr_us = 0;
+    tab5_pf_px = 0;
+    tab5_pf_rows_max = 0;
     tab5_pf_blocks = 0;
     tab5_pf_win_start = now;
 }
@@ -366,20 +418,35 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 
     /* ---- 回退：CPU 转置 + 面板推送（原路径）---- */
     if (!done) {
+        int64_t t_x0 = esp_timer_get_time();
         for (int i = 0; i < rows; ++i) {
             const uint16_t *src = buffer + (size_t)i * w;
             const int a = rows - 1 - i;
             for (int j = 0; j < w; ++j)
                 tab5_scratch[(size_t)j * rows + a] = tab5_swap16(src[j]);
         }
+        int64_t t_x1 = esp_timer_get_time();
+        int64_t t_o1;
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
         /* 虚拟按键在推给面板前的最后一刻合成（避免被 GUI 立即模式的重绘覆盖 => 不闪） */
         rg_overlay_blit_cw90(tab5_scratch, rows, x0, y0, rows, w, TAB5_PHYS_W);
+        t_o1 = esp_timer_get_time();
+#else
+        t_o1 = t_x1;
 #endif
         err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
+        int64_t t_d1 = esp_timer_get_time();
         if (err != ESP_OK)
             RG_LOGE("draw failed (err=0x%x) at phys <%d,%d %d,%d>\n", err, x0, y0, x0 + rows, y0 + w);
+        /* 三段分开记账：定位那 0.6~1.0ms/次落在哪一段 */
+        tab5_pf_xp_us += (uint64_t)(t_x1 - t_x0);
+        tab5_pf_ov_us += (uint64_t)(t_o1 - t_x1);
+        tab5_pf_dr_us += (uint64_t)(t_d1 - t_o1);
     }
+    /* 本次推送的像素数与最大行数（不分路径都统计，用于判断分块是否被削碎） */
+    tab5_pf_px += (uint32_t)(rows * w);
+    if ((uint32_t)rows > tab5_pf_rows_max)
+        tab5_pf_rows_max = (uint32_t)rows;
     int64_t t_tr1 = esp_timer_get_time();
 
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
