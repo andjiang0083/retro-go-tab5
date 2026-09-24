@@ -19,7 +19,16 @@ static rg_task_t *display_task_queue;
  * （DSI/PSRAM 总线仲裁饿死，与 PPA 直写帧缓冲那次同一类）。故强制保持 1。
  * 若将来要再试：必须同时给出限流方案（不要整屏突发），并做成运行时开关，见移植笔记。 */
 #ifndef RG_DISPLAY_QUEUE_LEN
-#define RG_DISPLAY_QUEUE_LEN 1
+/* ⚠ 深度 1 是**安全默认**：rg_task_send 用 portMAX_DELAY，队列满时模拟器线程无限阻塞，
+ *   于是"模拟器生产"与"显示推送"被串行化 —— 这正是满屏负载只有 ~15fps 的机制。
+ *   实测把深度提到 2 能让真正画出来的帧数翻倍（15→30/秒），但当年会周期性把显示路径楔死
+ *   （画面定格、只能断电；DSI/PSRAM 总线饿死那一类），故一直保持 1。
+ *   2026-09-25 夜查清了背后机制（见 docs/NIGHT-2026-09-25-DISPLAY.md）：IDF 的 DPI 驱动在
+ *   DMA2D 忙时是**丢弃**本次绘制（不是等待），丢帧率一度达 51%；同时找到了官方指路的
+ *   AXI-ICM QoS 提权（已实施）。于是"深度 2"值得再试一次 —— 但仍必须配限流/上限，
+ *   所以做成**独立镜像**（dist/retro-go-p2.6.8-depth2.img）而不是改默认值：
+ *   dist/p2.6.7 = QoS + 有界重试（安全档）；dist/p2.6.8 = 在前者之上再把本值设为 2（实验档）。 */
+#define RG_DISPLAY_QUEUE_LEN 1   /* 安全默认；实验档见上方注释（dist/retro-go-p2.6.8-depth2.img） */
 #endif
 static rg_display_counters_t counters;
 static rg_display_config_t config;
