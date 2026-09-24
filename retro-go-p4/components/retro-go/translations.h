@@ -1035,5 +1035,10 @@ static const char *translations[][RG_LANG_MAX] =
         [RG_LANG_FR] = "Erreur sauvegarde",
         [RG_LANG_ZH] = "保存失败",
     },
+    {
+        [RG_LANG_EN] = "This app has no adjustable options.",
+        [RG_LANG_FR] = "Cette application n'a aucune option réglable.",
+        [RG_LANG_ZH] = "此程序没有可调整的选项。",
+    },
     // end of rg_system.c
 };

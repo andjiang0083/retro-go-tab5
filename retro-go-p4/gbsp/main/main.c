@@ -104,6 +104,14 @@ int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id)
     if (joystick & RG_KEY_SELECT) val |= (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
     if (joystick & RG_KEY_B) val |= (1 << RETRO_DEVICE_ID_JOYPAD_B);
     if (joystick & RG_KEY_A) val |= (1 << RETRO_DEVICE_ID_JOYPAD_A);
+    /* GBA 的肩键：之前这里漏了，导致触摸虚拟手柄上的 L/R 画得出来、按了没反应
+     * （RG_KEY_L/R 在 rg_input.h 有定义、touch_layout.h 也画了，但没人往核心里传）。 */
+    if (joystick & RG_KEY_L) val |= (1 << RETRO_DEVICE_ID_JOYPAD_L);
+    if (joystick & RG_KEY_R) val |= (1 << RETRO_DEVICE_ID_JOYPAD_R);
+    /* 核心把 X/Y 定义为 Turbo A / Turbo B（gpsp_turbo_period 真的实现了），
+     * 触摸手柄上画了这两颗键，同样需要在这里传下去。 */
+    if (joystick & RG_KEY_X) val |= (1 << RETRO_DEVICE_ID_JOYPAD_X);
+    if (joystick & RG_KEY_Y) val |= (1 << RETRO_DEVICE_ID_JOYPAD_Y);
     return val;
 }
 
