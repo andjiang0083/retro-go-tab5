@@ -28,6 +28,7 @@
 #include "driver/ppa.h"          /* PPA SRM 硬件旋转：替代 CPU 转置，省掉 cache 写回 */
 #include "esp_cache.h"           /* esp_cache_msync：按键叠加层写帧缓冲后的失效/写回 */
 #include "esp_timer.h"           /* 性能打点：区分"显示路径"与"模拟器核心"的 CPU 占用 */
+#include "esp_rom_sys.h"         /* esp_rom_delay_us：DMA2D 忙时的短让出（远细于 1ms tick） */
 #include "hal/axi_icm_ll.h"      /* AXI-ICM QoS：给 CPU cache 写回 / DMA2D 拷贝提权（见 lcd_init） */
 #include "soc/icm_sys_struct.h"  /* 读 QoS 默认值：LL 只有 setter 没有 getter，直接读寄存器结构体 */
 #include "bsp/display.h"
@@ -435,6 +436,16 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         t_o1 = t_x1;
 #endif
         err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
+        /* DMA2D 忙时 IDF 会直接**丢弃**这次绘制（0 超时抢信号量 → ESP_ERR_INVALID_STATE），
+         * 我们刚做完的 CPU 转置就白费了，这一帧也只能等下一帧脏区重推 ——
+         * 实测每秒 317 次丢弃（≈ 推送次数的 51%），是纯浪费。
+         * 有界重试：最多 5 次、每次让出 200µs（比 1ms 的 RTOS tick 细得多；
+         * 用 ROM 忙等而非 vTaskDelay，既不进调度器也不会去抢总线）。
+         * **必须有上限** —— 老笔记记的"队列深度 2 会楔死显示通路"就是缺限流的教训。 */
+        for (int tries = 0; err == ESP_ERR_INVALID_STATE && tries < 5; ++tries) {
+            esp_rom_delay_us(200);
+            err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
+        }
         int64_t t_d1 = esp_timer_get_time();
         if (err != ESP_OK)
             RG_LOGE("draw failed (err=0x%x) at phys <%d,%d %d,%d>\n", err, x0, y0, x0 + rows, y0 + w);
