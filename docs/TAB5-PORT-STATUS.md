@@ -192,3 +192,34 @@ E (5878) lcd.dsi: dpi_panel_draw_bitmap(547): previous draw operation is not fin
 
 **临时结论**：这不是游戏 ROM 的问题（ROM 头部与能正常运行的《火纹》逐字节一致，8MB vs 16MB 都能跑），
 也不是模拟器内核问题，而是**我们自己的显示通路**要优化。
+
+
+## 十、已修：模拟器选项崩溃 + 肩键/Turbo 键失灵（2026-09-25）
+
+用户报两个 bug：① 模拟器里进「Options → Emulator options」必崩；② 触摸手柄的 L/R 按了没反应。
+
+### ① 崩溃：空列表走进了 `rg_gui_dialog` 的野指针路径
+
+gbsp 的 `rg_handlers_t` **没有定义 `.options`**（launcher 定义了），于是「Emulator options」传进去的
+是一个全零数组 —— `get_dialog_items_count()` 数出 **0**，而 `rg_gui_dialog()` 里：
+
+- `sel = RG_MIN(RG_MAX(0, sel), options_count - 1)` —— `options_count` 是 `size_t`，**0-1 下溢成 SIZE_MAX**，
+  夹取后 `sel` 仍为 0，掩盖了"列表为空"；
+- 数组是 VLA `options[options_count + 1]`，空列表时**长度 1 且未初始化**；
+- `options[sel].flags` 读到的栈垃圾恰好为 0（`RG_DIALOG_FLAG_NORMAL == 0`）→ `active_selection = true`
+  → `options[sel].update_cb` 被当成函数指针调用 → **跳到随机地址**。
+
+**修法（两层）**：
+1. `rg_gui_dialog()` 开头加空列表保护：`options_count == 0` 时只画标题+提示后返回 0（根治所有调用方）；
+2. `app_options_cb()` 里先判 `app->handlers.options`，为空则弹「此程序没有可调整的选项。」
+   （新翻译条目，EN/FR/ZH 三列；`_()` 是按英文字符串查表，追加在表尾即可）。
+
+### ② L/R（以及 X/Y）失灵：映射表漏了
+
+`gbsp/main/main.c` 的 `input_cb()` 只映射了 方向键/START/SELECT/B/A，**L/R 从没被传下去**
+（`RG_KEY_L/R` 在 `rg_input.h` 有定义、`touch_layout.h` 也画了这两颗键，纯粹是映射漏了）。
+X/Y 同理 —— 而核心把 X/Y 定义为 **Turbo A / Turbo B**（`gpsp_turbo_period` 是真实实现的），
+所以一并补上，四颗键现在都是真的能用。
+
+**顺带**：`touch_layout.h` 是键位的单一数据源，但它只解决"画什么"，**"传不传得下去"是每个核心自己的映射表** ——
+以后加键位，两处都要动（这条已记进 skill）。

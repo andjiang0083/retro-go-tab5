@@ -872,6 +872,21 @@ void rg_gui_draw_message(const char *format, ...)
 intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, int selected_index)
 {
     size_t options_count = get_dialog_items_count(options_const);
+
+    /* 空列表必须在这里掉头：下面用的是 VLA `options[options_count + 1]`（长度 1，且未初始化），
+     * 而 sel 会被夹到 0，于是 options[0].flags / options[0].update_cb 读的是栈上的垃圾；
+     * 垃圾恰好为 0 时（RG_DIALOG_FLAG_NORMAL == 0）active_selection 成立，callback 就成了
+     * 野指针 —— 一按键直接跳到垃圾地址崩溃（实机崩溃点，见下方 while 循环）。
+     * 触发场景：模拟器菜单的「Emulator options」，gbsp 没有定义 .options，传进来就是空列表。 */
+    if (options_count == 0)
+    {
+        rg_gui_draw_status_bars();
+        rg_gui_draw_dialog(title, options_const, -1);
+        rg_input_wait_for_key(RG_KEY_ALL, false, 1000);
+        rg_task_delay(80);
+        return 0;
+    }
+
     int sel = selected_index < 0 ? (options_count + selected_index) : selected_index;
     int sel_old = -1;
     bool redraw = false;
@@ -1615,6 +1630,13 @@ static rg_gui_event_t app_options_cb(rg_gui_option_t *option, rg_gui_event_t eve
     if (event == RG_DIALOG_ENTER)
     {
         const rg_app_t *app = rg_system_get_app();
+        /* 该 app 没暴露可调项时（gbsp 就没定义 .options）别弹空对话框 —— 用户会以为程序坏了。
+         * 明确说一句；rg_gui_dialog 里也加了空列表保护，这里是双保险。 */
+        if (!app->handlers.options)
+        {
+            rg_gui_alert(option->label, _("This app has no adjustable options."));
+            return RG_DIALOG_REDRAW;
+        }
         rg_gui_option_t options[16] = {0};
         if (app->handlers.options)
             app->handlers.options(options);

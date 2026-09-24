@@ -86,6 +86,9 @@ The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch sc
 
 - **D-pad** — left margin
 - **A / B / X / Y** — right margin, diamond layout, each key its own color
+- **L / R** — top corners (GBA shoulder buttons)
+- **X / Y** — the core's Turbo A / Turbo B (hold to auto-fire)
+- **START / SELECT** — bottom centre
 - **MENU** — open the in-game menu (savestates, options, reset)
 - **OPTION** — options menu
 - **Language** — Options → Language switches the UI to Chinese (English by default; the choice persists in NVS)
