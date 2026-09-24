@@ -27,6 +27,10 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
 {
     uint8_t type = RETRO_TYPE_INVALID;
 
+    // 隐藏文件与 macOS 资源叉（._xxx）一律不列
+    if (rg_storage_is_metadata_file(entry->path, entry->basename))
+        return RG_SCANDIR_SKIP;
+
     if (entry->is_file)
     {
         type = RETRO_TYPE_FILE;
