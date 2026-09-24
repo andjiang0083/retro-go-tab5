@@ -32,7 +32,8 @@ Honest status, measured on the device (not aspirational):
 | Audio | ✅ Working | ES8388 codec over I2S, 32 kHz, no frame-rate impact |
 | Savestates | ✅ Working | Core-level state (~416 KB) written to the SD card |
 | Touch virtual gamepad | ✅ Working | Diamond ABXY layout, per-key colors, drawn only in the screen margins |
-| Display path | ⚠️ CPU-transpose | ~15 fully-rendered frames/sec at 60 fps logical — see [Performance](#performance) |
+| Chinese (CJK) support | ✅ Working | Built-in 3773-glyph CJK font (full GB2312 level-1, OFL-1.1) in a **dedicated flash partition**: zero load time, shared by every app, no SD card needed; all 197 UI strings localized |
+| Display path | ⚠️ CPU-transpose | ~15 fully-rendered frames/sec at 60 fps logical, **and it degrades over time** (transpose cost grows 47ms→431ms, DSI reports “previous draw operation is not finished”) — see [Performance](#performance) and [porting notes, section 9](docs/TAB5-PORT-STATUS.md) |
 | Battery gauge | ❌ Not implemented | `BATT:0` in the status log; the Tab5 has an INA226 |
 | Other cores (NES/SNES/MD/PCE/...) | ❌ Not ported | The retro-go tree carries them; only the launcher + GBA are wired for this target |
 
@@ -87,6 +88,7 @@ The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch sc
 - **A / B / X / Y** — right margin, diamond layout, each key its own color
 - **MENU** — open the in-game menu (savestates, options, reset)
 - **OPTION** — options menu
+- **Language** — Options → Language switches the UI to Chinese (English by default; the choice persists in NVS)
 
 Layout reference: [docs/touch-layout-p2.png](docs/touch-layout-p2.png)
 

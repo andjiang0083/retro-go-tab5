@@ -30,7 +30,8 @@ letterbox margins, so it never covers the game.*
 | 音频 | ✅ 可用 | ES8388 + I2S，32kHz，不影响帧率 |
 | 存档（Savestate） | ✅ 可用 | 核心级状态（约 416KB）写入 SD 卡 |
 | 触摸虚拟手柄 | ✅ 可用 | ABXY 菱形排布、每键独立颜色，只画在画面留白区 |
-| 显示通路 | ⚠️ CPU 转置 | 逻辑满速 60fps，但真正推送到屏上约 15 帧/秒 —— 见[性能](#性能) |
+| 中文支持 | ✅ 可用 | 内置 3773 字形 CJK 字库（GB2312 一级全覆盖，OFL-1.1），存**独立 flash 分区**：零加载、全 app 共享、不依赖 SD 卡；界面菜单 197 条全中文化 |
+| 显示通路 | ⚠️ CPU 转置 | 逻辑满速 60fps，但真正推送到屏上约 15 帧/秒；**长时间运行还会退化**（转置耗时 47ms→431ms 持续增长、DSI 报“上一次绘制未完成”）—— 见[性能](#性能) 与 [移植笔记第九节](docs/TAB5-PORT-STATUS.md) |
 | 电池电量 | ❌ 未实现 | 日志里是 `BATT:0`；Tab5 板载 INA226 |
 | 其它机种（NES/SNES/MD/PCE…） | ❌ 未移植 | retro-go 源码里有，但只为本目标接线了 launcher + GBA |
 
@@ -84,6 +85,7 @@ Tab5 几乎没有物理按键，所以手柄画在触摸屏的画面留白区（
 - **A / B / X / Y** —— 右侧留白区，菱形排布，每键独立颜色
 - **MENU** —— 打开游戏内菜单（存档 / 选项 / 重置）
 - **OPTION** —— 选项菜单
+- **语言** —— Options → Language 可切中文（默认英文；选择写入 NVS 持久保存）
 
 布局参考：[docs/touch-layout-p2.png](docs/touch-layout-p2.png)
 
