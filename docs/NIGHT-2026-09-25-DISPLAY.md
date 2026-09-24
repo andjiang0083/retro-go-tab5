@@ -155,3 +155,70 @@ AXI_ICM_MASTER_H264_M0/M1 = 11/12
    同时盯 underrun 日志
 4. 配合 `RG_DISPLAY_QUEUE_LEN = 2` 再测一轮，看能否安全拿回那个已知的 2 倍
 
+---
+
+# 夜间进度状态（交接给明早）
+
+## 设备状态：**未连接**
+
+凌晨准备刷机时发现 `/dev/cu.usbmodem*` 不存在、USB 总线上也没有串口设备 ——
+设备在睡前被拔掉（或线松了）。所以本轮的**所有真机 A/B 都没有执行**，
+夜间工作转为"找资料 + 仿真 + 备好待验证改动"，与睡前约定的三条线一致。
+
+## 已经做完并有据可查的
+
+| 产出 | 位置 | 状态 |
+|---|---|---|
+| 15fps 机制归因（队列深度 1 串行化） | 本文件·证据一 | 代码级确认 ✓ |
+| "报错=丢帧而非重试"结论 | 本文件·证据三 | IDF 源码确认 ✓ |
+| 厂商 BSP 配置（RGB565 / dma2d / num_fbs=1 / 70MHz） | 本文件·证据二 | 已核对 ✓ |
+| 转置访存假设被证伪 | `tools/bench_transpose.c` | 主机实测 ✓ |
+| **AXI-ICM 是官方指路方向** | 本文件·证据五 | IDF 注释 + P4 寄存器确认 ✓ |
+| 三段细分打点（xpose/ovl/draw + 每块行数） | `mipi_dsi_tab5.h` | 已编译进镜像 ✓ |
+| AXI-ICM QoS 提权（cache/dma2d → 15，默认 0） | `mipi_dsi_tab5.h` | 已编译进镜像 ✓ |
+
+**待刷镜像**：`dist/retro-go-p2.6.6-axi-icm.img`（2,424,832 字节；已用 `strings` 确认
+"AXI-ICM qos defaults/raised" 与三段打点字符串都在固件内）
+**回退镜像**：`dist/retro-go-p2.6.4-ppa-revert.img`（已验证可跑的基线）
+
+## 明早按顺序做（每步都有明确的判据）
+
+**第 0 步**：把设备插回 USB（`ls /dev/cu.usbmodem*` 能看到即可）
+
+**第 1 步：验证 AXI-ICM 提权**（最高优先级，改动最小、最可能见效）
+```
+刷 dist/retro-go-p2.6.6-axi-icm.img → 抓开机日志 → 看三件事
+```
+- 日志应出现 `AXI-ICM qos defaults: cache w/r=0/0 dma2d w/r=0/0`（默认值 = 0，证实有提权空间）
+- PERF 行对比基线：`[xpose= ovl= draw=]` 三段耗时 —— 找出 0.6~1.0ms 到底在哪一段
+- `previous draw operation is not finished` 条数：**这是丢帧计数**，若从 317/秒 明显下降即命中
+
+**第 2 步（若第 1 步有效）**：给面板扫描降突发（`axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DW_GDMA_M0, N, AXI_ICM_ACCESS_READ)`，N 从 32 试到 8），
+同时盯 `underrun happens`（画面变蓝的警报）—— 有欠载就回退到 N 更大。
+
+**第 3 步（若前两步还不够）**：`RG_DISPLAY_QUEUE_LEN = 2` + **在 `tab5_draw` 失败时有界重试**
+（现在 DMA2D 忙就直接丢帧，导致已做好的转置白费；改成最多重试 N 次再放弃并计数）。
+⚠ 老笔记记着"深度 2 会楔死"，所以必须**同时**有重试上限和计数，且一旦画面定格立刻刷回基线。
+
+## 下一步代码改动设计（尚未实施）
+
+`lcd_send_buffer()` 里 `tab5_draw` 返回 `ESP_ERR_INVALID_STATE`（DMA2D 忙）时：
+
+```c
+int tries = 0;
+while (err == ESP_ERR_INVALID_STATE && ++tries <= 5) {
+    esp_rom_delay_us(200);          /* 让出总线，转速快于 1ms 的 tick */
+    err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
+}
+if (err == ESP_ERR_INVALID_STATE) tab5_pf_drops++;   /* 计数，替代静默丢弃 */
+```
+
+## 仿真这条线做了什么、还剩什么
+
+- **已做**：`tools/bench_transpose.c` —— 主机侧对**转置访存模式**做真机前仿真，
+  **证伪**了"跨步写放大"假设（Mac 上有跨步预取器，分块反而更慢）。这一步的价值是
+  **省下了一轮无效真机实验**。
+- **未做**：队列/丢帧流水线的 Python 模型。原因：AXI-ICM 这个发现把优先级拉到了硬件 QoS 上，
+  而该改动无法用模型验证（要真机看丢帧计数）。若第 1~3 步仍不达标，建议下轮先补这个模型。
+
+
