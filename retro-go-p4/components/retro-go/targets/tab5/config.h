@@ -32,7 +32,8 @@
  * Audio — P1 全禁（ES8388 要走新 I2S API 适配，放到最后阶段）                *
  ****************************************************************************/
 #define RG_AUDIO_USE_INT_DAC        0   // 0 = Disable
-#define RG_AUDIO_USE_EXT_DAC        0   // 0 = Disable
+#define RG_AUDIO_USE_EXT_DAC        0   // 0 = Disable（老 i2s.c 不支持 MCLK，用不了）
+#define RG_AUDIO_USE_TAB5_CODEC     1   // ES8388 via M5 BSP: MCLK=30 BCLK=27 WS=29 DOUT=26
 
 
 /****************************************************************************

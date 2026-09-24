@@ -24,6 +24,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_mipi_dsi.h"    /* esp_lcd_dpi_panel_get_frame_buffer：PPA 要直接写帧缓冲 */
+#include "driver/ppa.h"          /* PPA SRM 硬件旋转：替代 CPU 转置，省掉 cache 写回 */
+#include "esp_cache.h"           /* esp_cache_msync：按键叠加层写帧缓冲后的失效/写回 */
+#include "esp_timer.h"           /* 性能打点：区分"显示路径"与"模拟器核心"的 CPU 占用 */
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
 #include "rg_input.h"            /* 虚拟按键可视层要读键位表 */
@@ -44,6 +48,10 @@ static esp_lcd_panel_handle_t tab5_panel = NULL;
 static uint16_t tab5_line_buffer[LCD_BUFFER_LENGTH];   /* retro-go 收集逻辑行用 */
 static uint16_t tab5_scratch[LCD_BUFFER_LENGTH];       /* 转置后的物理块 */
 static int tab5_win_left = 0, tab5_win_top = 0, tab5_win_width = 0;
+
+/* PPA 硬件旋转路径（详见文件后半的说明）；任一步失败则为 NULL → 退回 CPU 转置 */
+static ppa_client_handle_t tab5_ppa;
+static uint16_t *tab5_fb;      /* DPI 帧缓冲（PSRAM，720x1280 RGB565，行跨距无填充 = 720px） */
 
 static inline uint16_t tab5_swap16(uint16_t v)
 {
@@ -123,6 +131,72 @@ static void tab5_overlay_blit(uint16_t *scratch, int x0, int y0, int rows, int w
                 dst[px - x0] = edge ? col : fill;
             }
         }
+    }
+}
+#endif /* RG_GAMEPAD_TOUCH_MAP */
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+/* 虚拟按键叠加，但直接写 DPI 帧缓冲（PPA 路径专用）。
+ * ⚠ 帧缓冲由 PPA 硬件直接写、不经 CPU 缓存，所以 CPU 端的小区域写必须：
+ *   ① 先失效该区域的 cache 行（否则"未对齐的局部写"会把过期行内容写回去，抹掉 PPA 的输出）
+ *   ② 写像素
+ *   ③ 再写回（C2M），否则 DPI 的 DMA 读不到刚写的内容
+ * 范围取整个按键矩形的包围盒并向外对齐到 cache 行；失效/写回都是批量操作，每键 2 次调用。 */
+static void tab5_overlay_fb(int x0, int y0, int rows, int w)
+{
+    if (!tab5_fb)
+        return;
+
+    size_t count = 0;
+    const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&count);
+    if (!map || !count)
+        return;
+
+    const int border = 3;
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        const rg_keymap_touch_t *btn = &map[i];
+        const int lx0 = btn->x - btn->w / 2;
+        const int ly0 = btn->y - btn->h / 2;
+        /* 逻辑 -> 物理：px = (PHYS_W-1) - ly, py = lx */
+        const int bx0 = TAB5_PHYS_W - ly0 - btn->h;
+        const int by0 = lx0;
+        const int bw = btn->h, bh = btn->w;
+
+        const int ix0 = RG_MAX(bx0, x0), ix1 = RG_MIN(bx0 + bw, x0 + rows);
+        const int iy0 = RG_MAX(by0, y0), iy1 = RG_MIN(by0 + bh, y0 + w);
+        if (ix0 >= ix1 || iy0 >= iy1)
+            continue;
+
+        const uint16_t col = tab5_overlay_color(btn->key);
+        const uint16_t fill = tab5_overlay_dim(col);
+
+        /* ① cache 行对齐的失效范围（含中间未写的行，失效干净行无害） */
+        size_t b0 = ((size_t)iy0 * TAB5_PHYS_W + ix0) * 2;
+        size_t b1 = ((size_t)(iy1 - 1) * TAB5_PHYS_W + ix1) * 2;
+        size_t a0 = (b0 / 128) * 128;
+        size_t a1 = ((b1 + 127) / 128) * 128;
+        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0,
+                        ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+
+        /* ② 写像素 */
+        for (int py = iy0; py < iy1; ++py)
+        {
+            const int ry = py - by0;
+            uint16_t *dst = tab5_fb + (size_t)py * TAB5_PHYS_W;
+            for (int px = ix0; px < ix1; ++px)
+            {
+                const int rx = px - bx0;
+                const bool edge = (rx < border || ry < border ||
+                                   rx >= bw - border || ry >= bh - border);
+                dst[px] = edge ? col : fill;
+            }
+        }
+
+        /* ③ 写回，让 DPI 的 DMA 看到 */
+        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0,
+                        ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
 }
 #endif /* RG_GAMEPAD_TOUCH_MAP */
@@ -212,6 +286,37 @@ static void lcd_init(void)
     }
     tab5_panel = handles.panel;
 
+    /* 拿 DPI 帧缓冲并注册 PPA 客户端（PPA 直接写它，不经过 CPU 缓存）。
+     * 任何一步失败都只是退回 CPU 转置路径，不影响功能。 */
+    {
+        void *fb = NULL;
+        /* 运行时开关（免刷机 A/B）：默认**不启用** PPA（走已知可用的 CPU 转置路径）。
+         * 想试 PPA 就在 SD 根目录放一个 ppa_on 文件，删掉即退回。
+         * 原因：PPA 是硬件 master，写帧缓冲时可能与模拟器抢 PSRAM 带宽，
+         * 实测出现过进游戏后卡死，需要先定位再决定是否默认开启。 */
+        bool ppa_allowed = false;
+        FILE *on = fopen("/sd/ppa_on", "r");
+        if (on) {
+            ppa_allowed = true;
+            fclose(on);
+        }
+        if (esp_lcd_dpi_panel_get_frame_buffer(tab5_panel, 1, &fb) == ESP_OK && fb && ppa_allowed) {
+            tab5_fb = (uint16_t *)fb;
+            ppa_client_config_t ppa_cfg = {
+                .oper_type = PPA_OPERATION_SRM,
+                .max_pending_trans_num = 2,
+            };
+            if (ppa_register_client(&ppa_cfg, &tab5_ppa) == ESP_OK)
+                RG_LOGI("PPA SRM ready (fb=%p, %dx%d, stride=%dpx)\n", fb, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
+            else {
+                tab5_ppa = NULL;
+                RG_LOGW("ppa_register_client failed -> CPU transpose path\n");
+            }
+        } else {
+            RG_LOGW("PPA disabled (default; put /sd/ppa_on to enable) -> CPU transpose path\n");
+        }
+    }
+
     RG_SCREEN_INIT();   /* 约定钩子：显示初始化必须经这个宏（历史教训：漏掉 = 黑屏） */
 
     lcd_set_backlight(80);
@@ -219,9 +324,15 @@ static void lcd_init(void)
             RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, TAB5_PHYS_W, TAB5_PHYS_H);
 }
 
+/* 前置声明：lcd_deinit 先用到它，定义在下方（性能打点小节） */
+static void tab5_perf_flush(const char *app);
+
 static void lcd_deinit(void)
 {
     if (tab5_panel) {
+        /* 退出应用前把本场性能汇总落盘（/sd/perf.log），不用串口也能判读瓶颈 */
+        rg_app_t *app = rg_system_get_app();
+        tab5_perf_flush(app && app->name ? app->name : "?");
         bsp_display_brightness_set(0);
         esp_lcd_panel_del(tab5_panel);
         tab5_panel = NULL;
@@ -246,6 +357,70 @@ static inline uint16_t *lcd_get_buffer(size_t length)
     return tab5_line_buffer;
 }
 
+/* ---- PPA SRM：硬件旋转，直接写 DPI 帧缓冲 ----------------------------------
+ * 动机（实测数据）：显示任务每渲染一帧约 14ms，其中只有 ~3ms 是 CPU 转置，
+ *  ~11ms 是把块刷进 PSRAM 的 cache 写回 —— 而 DPI 正以 88MB/s 持续读同一片 PSRAM
+ *  （rev1.3 已知争用），CPU 写回被反复饿死。PPA 由硬件直接写帧缓冲：
+ *  既不占 CPU 做转置，也不产生 cache 写回 => 每帧 ~14ms 降到 ~1-2ms，
+ *  自动帧跳过策略才有余量把 frameskip 从 5 降到 1~2（画面 10fps -> 30~60fps）。
+ * 任何一步失败都自动退回原来的 CPU 转置路径（tab5_ppa == NULL）。 */
+
+/* ---------------------------------------------------------------------------
+ * 性能打点：显示路径到底吃掉多少 CPU？
+ * 判读方法：日志里的 BUSY% 是整机 CPU 占用（含模拟器核心 + 显示路径）。
+ *   这里给出显示路径的绝对耗时 => 显示占比 = display_us / 1e6。
+ *   剩下的大头就是模拟器核心（GBA 的 ARM7 解释器）。
+ *   ★ 若显示占比很低（<20%），说明瓶颈在核心 —— 那 PPA 也救不了帧率，别白干。
+ * 每秒在串口打一行，退出游戏时把整场汇总追加到 /sd/perf.log（不用串口也能读）。
+ * ------------------------------------------------------------------------- */
+static uint64_t tab5_pf_tr_us, tab5_pf_sub_us;                 /* 当前 1 秒窗口 */
+static uint64_t tab5_pf_tot_tr_us, tab5_pf_tot_sub_us;         /* 整场累计 */
+static int64_t  tab5_pf_win_start, tab5_pf_sess_start;
+static uint32_t tab5_pf_blocks, tab5_pf_tot_blocks;
+
+static void tab5_perf_report(void)
+{
+    int64_t now = esp_timer_get_time();
+    if (tab5_pf_win_start == 0) {
+        tab5_pf_win_start = tab5_pf_sess_start = now;
+        return;
+    }
+    int64_t elapsed = now - tab5_pf_win_start;
+    if (elapsed < 1000000)
+        return;
+    uint64_t total = tab5_pf_tr_us + tab5_pf_sub_us;
+    RG_LOGI("PERF: display=%u.%02ums/%ums (transpose=%u.%02u submit=%u.%02u) blocks=%u\n",
+        (unsigned)(total / 1000), (unsigned)((total % 1000) / 10), (unsigned)(elapsed / 1000),
+        (unsigned)(tab5_pf_tr_us / 1000), (unsigned)((tab5_pf_tr_us % 1000) / 10),
+        (unsigned)(tab5_pf_sub_us / 1000), (unsigned)((tab5_pf_sub_us % 1000) / 10),
+        (unsigned)tab5_pf_blocks);
+    tab5_pf_tr_us = tab5_pf_sub_us = 0;
+    tab5_pf_blocks = 0;
+    tab5_pf_win_start = now;
+}
+
+/* 退出游戏（回到 launcher）时落盘整场汇总 */
+static void tab5_perf_flush(const char *app)
+{
+    int64_t total_ms = (esp_timer_get_time() - tab5_pf_sess_start) / 1000;
+    if (tab5_pf_sess_start == 0 || total_ms <= 0)
+        return;
+    uint64_t disp_ms = (tab5_pf_tot_tr_us + tab5_pf_tot_sub_us) / 1000;
+    FILE *f = fopen("/sd/perf.log", "a");
+    if (!f) return;
+    fprintf(f, "[%s] session=%lldms display=%llums (%.1f%%) transpose=%llums submit=%llums blocks=%u\n",
+        app ? app : "?", (long long)total_ms, (unsigned long long)disp_ms,
+        100.0 * (double)disp_ms / (double)total_ms,
+        (unsigned long long)(tab5_pf_tot_tr_us / 1000),
+        (unsigned long long)(tab5_pf_tot_sub_us / 1000), (unsigned)tab5_pf_tot_blocks);
+    fclose(f);
+    RG_LOGI("PERF: session summary written to /sd/perf.log (%llums display / %lldms total)\n",
+        (unsigned long long)disp_ms, (long long)total_ms);
+    tab5_pf_tot_tr_us = tab5_pf_tot_sub_us = 0;
+    tab5_pf_tot_blocks = 0;
+    tab5_pf_sess_start = 0;
+}
+
 /* 把 retro-go 送来的逻辑行（可能很窄，例如 4 行 x 1280 列）整体转成一块
  * 物理矩形后一次性推给面板：90° 旋转下"若干逻辑行"恰好等于"物理上的一竖条"。 */
 static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
@@ -260,25 +435,78 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 
     /* 逻辑 ly = win_top + i, lx = win_left + j  ->
      * 物理 px = 719 - ly = (TAB5_PHYS_W - 1) - ly, py = lx
-     * 于是 [(i,j) 块] 落在物理矩形 [x0, x0+rows) x [y0, y0+w)，其中
-     *   x0 = TAB5_PHYS_W - win_top - rows,  y0 = win_left
-     * scratch 行主序下标 = b * rows + a，其中 b = j（物理行）、a = rows-1-i（物理列） */
-    for (int i = 0; i < rows; ++i) {
-        const uint16_t *src = buffer + (size_t)i * w;
-        const int a = rows - 1 - i;
-        for (int j = 0; j < w; ++j)
-            tab5_scratch[(size_t)j * rows + a] = tab5_swap16(src[j]);
-    }
-
+     * 于是 [(i,j) 块] 落在物理矩形 [x0, x0+rows) x [y0, y0+w)：
+     *   x0 = TAB5_PHYS_W - win_top - rows,  y0 = win_left */
     const int x0 = TAB5_PHYS_W - tab5_win_top - rows;
     const int y0 = tab5_win_left;
+
+    int64_t t_tr0 = esp_timer_get_time();
+    bool done = false;
+    esp_err_t err = ESP_OK;
+
+    /* ---- 首选：PPA 硬件旋转（不做 CPU 转置、不产生 cache 写回）---- */
+    if (tab5_ppa && tab5_fb && (((uintptr_t)buffer & 127u) == 0)) {
+        ppa_srm_oper_config_t cfg = {
+            .in = {
+                .buffer = buffer,
+                .pic_w = (uint32_t)w, .pic_h = (uint32_t)rows,
+                .block_w = (uint32_t)w, .block_h = (uint32_t)rows,
+                .block_offset_x = 0, .block_offset_y = 0,
+                .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+            },
+            .out = {
+                .buffer = tab5_fb,
+                .buffer_size = (uint32_t)(TAB5_PHYS_W * TAB5_PHYS_H * 2),
+                .pic_w = (uint32_t)TAB5_PHYS_W, .pic_h = (uint32_t)TAB5_PHYS_H,
+                /* 输出块尺寸由输入块 + 缩放 + 旋转推导（旋转 270° => rows x w），这里只给落点 */
+                .block_offset_x = (uint32_t)x0, .block_offset_y = (uint32_t)y0,
+                .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+            },
+            .rotation_angle = PPA_SRM_ROTATION_ANGLE_270,   /* 逆时针 270° == 顺时针 90° */
+            .scale_x = 1.0f, .scale_y = 1.0f,
+            .mirror_x = false, .mirror_y = false,
+            .rgb_swap = false,
+            .byte_swap = true,      /* 源为 565 大端，面板要小端 */
+            .mode = PPA_TRANS_MODE_BLOCKING,
+        };
+        err = ppa_do_scale_rotate_mirror(tab5_ppa, &cfg);
+        done = (err == ESP_OK);
+        if (!done)
+            RG_LOGW("PPA SRM failed (0x%x), falling back to CPU transpose\n", err);
+    }
+
+    /* ---- 回退：CPU 转置 + 面板推送（原路径）---- */
+    if (!done) {
+        for (int i = 0; i < rows; ++i) {
+            const uint16_t *src = buffer + (size_t)i * w;
+            const int a = rows - 1 - i;
+            for (int j = 0; j < w; ++j)
+                tab5_scratch[(size_t)j * rows + a] = tab5_swap16(src[j]);
+        }
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-    /* 虚拟按键在推给面板前的最后一刻合成（避免被 GUI 立即模式的重绘覆盖 => 不闪） */
-    tab5_overlay_blit(tab5_scratch, x0, y0, rows, w);
+        /* 虚拟按键在推给面板前的最后一刻合成（避免被 GUI 立即模式的重绘覆盖 => 不闪） */
+        tab5_overlay_blit(tab5_scratch, x0, y0, rows, w);
 #endif
-    esp_err_t err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
-    if (err != ESP_OK)
-        RG_LOGE("draw failed (err=0x%x) at phys <%d,%d %d,%d>\n", err, x0, y0, x0 + rows, y0 + w);
+        err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
+        if (err != ESP_OK)
+            RG_LOGE("draw failed (err=0x%x) at phys <%d,%d %d,%d>\n", err, x0, y0, x0 + rows, y0 + w);
+    }
+    int64_t t_tr1 = esp_timer_get_time();
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* PPA 路径：虚拟按键改为直接叠加到帧缓冲（必须在 PPA 之后，否则被覆盖） */
+    if (done)
+        tab5_overlay_fb(x0, y0, rows, w);
+#endif
+    int64_t t_tr2 = esp_timer_get_time();
+
+    tab5_pf_tr_us += (uint64_t)(t_tr1 - t_tr0);
+    tab5_pf_sub_us += (uint64_t)(t_tr2 - t_tr1);
+    tab5_pf_tot_tr_us += (uint64_t)(t_tr1 - t_tr0);
+    tab5_pf_tot_sub_us += (uint64_t)(t_tr2 - t_tr1);
+    tab5_pf_blocks++;
+    tab5_pf_tot_blocks++;
+    tab5_perf_report();
 
     tab5_win_top += rows;   /* 连续推送时窗口向下推进 */
 }

@@ -520,7 +520,19 @@ void rg_input_deinit(void)
 uint32_t rg_input_read_gamepad(void)
 {
 #ifdef RG_TARGET_SDL2
-    SDL_PumpEvents();
+    /* macOS：只有主线程能泵 Cocoa 事件（子线程会触发 NSApplication 异常 → abort） */
+    if (rg_sdl2_can_pump_events())
+    {
+        SDL_PumpEvents();
+        /* 处理退出请求：关窗口 / Ctrl-C / SIGTERM 都会被 SDL 转成 SDL_QUIT 事件。
+         * SDL 自带 SIGTERM/SIGINT 处理器，只把事件塞进队列 —— 不取出来进程就永远杀不掉。 */
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
+        {
+            if (event.type == SDL_QUIT)
+                exit(0);
+        }
+    }
 #endif
     return gamepad_state;
 }

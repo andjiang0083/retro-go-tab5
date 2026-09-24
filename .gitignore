@@ -20,3 +20,9 @@ __pycache__/
 *.bak
 *.orig
 *.rej
+
+# 固件镜像 / 备份 / 压缩包（永不入库）
+*.img
+dist/
+backup/
+*.tar.gz

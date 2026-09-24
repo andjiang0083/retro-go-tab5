@@ -256,6 +256,9 @@ typedef struct
 } rg_task_msg_t;
 #define RG_TASK_MSG_STOP -1
 rg_task_t *rg_task_create(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity);
+/* queueLen > 1 让发送方可以排队前进而不是被立刻阻塞（显示任务用它把模拟器和推屏解耦）。
+ * 除非发送方同时持有 (queueLen + 1) 块缓冲，否则保持默认 1。 */
+rg_task_t *rg_task_create_ex(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity, int queueLen);
 rg_task_t *rg_task_find(const char *name);
 rg_task_t *rg_task_current(void);
 bool rg_task_send(rg_task_t *task, const rg_task_msg_t *msg);
@@ -268,6 +271,11 @@ size_t rg_task_messages_waiting(rg_task_t *task);
 // is more accurate but rg_task_delay is more multitasking-friendly.
 void rg_task_delay(uint32_t ms);
 void rg_task_yield(void);
+
+#ifdef RG_TARGET_SDL2
+// macOS/SDL2：Cocoa 事件泵只能在主线程调用（子线程会触发异常 → abort）
+bool rg_sdl2_can_pump_events(void);
+#endif
 
 typedef void rg_mutex_t;
 rg_mutex_t *rg_mutex_create(void);

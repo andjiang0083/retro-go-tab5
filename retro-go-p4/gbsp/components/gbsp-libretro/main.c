@@ -18,6 +18,8 @@
  */
 
 #include "common.h"
+#include "memmap.h"
+#include <stdlib.h>
 #include <ctype.h>
 
 timer_type timer[4];
@@ -112,8 +114,36 @@ void init_main(void)
   video_count = 960;
 
 #ifdef HAVE_DYNAREC
+#ifdef MMAP_JIT_CACHE
+  /* ESP32-P4：JIT 生成的代码必须落在"可执行映射"里（heap_caps 给的是数据内存，跳过去会 fault）。
+     上游是在 libretro.c 的 retro_init() 里分配的，但 retro-go 的入口不调 retro_init，
+     所以在这里补上——必须在 init_emitter() 之前，它会把 load/store 桩代码写进这块内存。 */
+  rom_translation_cache = (u8 *)map_jit_block(ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE);
+  ram_translation_cache = &rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
+  if (!rom_translation_cache)
+  {
+    printf("gbsp: FATAL: JIT cache allocation failed (%u bytes)\n",
+           (unsigned)(ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE));
+    abort();
+  }
+  printf("gbsp: dynarec JIT cache ready (%u + %u bytes)\n",
+         (unsigned)ROM_TRANSLATION_CACHE_SIZE, (unsigned)RAM_TRANSLATION_CACHE_SIZE);
+#endif
   init_dynarec_caches();
   init_emitter(gamepak_must_swap());
+#endif
+}
+
+/* 应用层的执行入口：有 dynarec 时走 JIT，否则走解释器。
+   上游 libretro.c 在模拟循环里做这个选择，retro-go 的循环原本硬编码了 execute_arm()。 */
+u32 gba_execute_frame(u32 cycles)
+{
+#ifdef HAVE_DYNAREC
+  return execute_arm_translate(cycles);
+#else
+  /* execute_arm() 返回 void（cpu.h），应用侧也不使用返回值 */
+  execute_arm(cycles);
+  return 0;
 #endif
 }
 

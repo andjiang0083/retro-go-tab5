@@ -9,12 +9,12 @@ static int sampleRate;
 
 static bool driver_init(int device, int _sampleRate)
 {
+    sampleRate = _sampleRate; // 必须在建 spec 之前赋值：原代码用未初始化的 sampleRate 开设备
     SDL_AudioSpec desired = {
         .freq = sampleRate,
         .format = AUDIO_S16,
         .channels = 2,
     };
-    sampleRate = _sampleRate;
     audioDevice = SDL_OpenAudioDevice(NULL, 0, &desired, NULL, 0);
     return audioDevice != 0;
 }

@@ -24,6 +24,67 @@
 
 #ifdef MMAP_JIT_CACHE
 
+#if defined(ESP_PLATFORM)
+/* ESP32-P4：JIT 代码必须能被执行，而 heap_caps_malloc 只能拿到"数据内存"。
+ * 做法（照 Irak4t0n/HowBoyAdvance 的 gpsp_esp.c，GPLv2，其 P4 实机验证可用）：
+ *   ① 在 PSRAM 上按 MMU 页对齐分配一段（此时是普通数据内存）
+ *   ② 取它的物理地址
+ *   ③ esp_mmu_map 把同一段物理页以 MMU_MEM_CAP_EXEC 再映射一份（PADDR_SHARED）
+ * 返回的 exec 映射同时挂在 IBUS/DBUS 上，所以**读、写、执行都用这一个指针**。
+ * 注意：caps 检查不允许 EXEC+WRITE 组合，所以这里只能申请 EXEC。 */
+#include "esp_heap_caps.h"
+#include "esp_mmu_map.h"
+#include "esp_log.h"
+
+static void *jit_exec_base;
+static size_t jit_exec_size;
+
+void *map_jit_block(unsigned size) {
+    if (jit_exec_base)
+        return jit_exec_base;
+
+    const size_t page = CONFIG_MMU_PAGE_SIZE;
+    size_t total = (size + page - 1) & ~(page - 1);
+
+    uint8_t *data = (uint8_t *)heap_caps_aligned_alloc(page, total, MALLOC_CAP_SPIRAM);
+    if (!data) {
+        ESP_LOGE("jit", "JIT buffer alloc failed (%u bytes)", (unsigned)total);
+        return 0;
+    }
+
+    esp_paddr_t paddr = 0;
+    mmu_target_t target = 0;
+    esp_err_t err = esp_mmu_vaddr_to_paddr(data, &paddr, &target);
+    if (err != ESP_OK) {
+        ESP_LOGE("jit", "vaddr_to_paddr failed: %s", esp_err_to_name(err));
+        free(data);
+        return 0;
+    }
+
+    void *base = NULL;
+    err = esp_mmu_map(paddr, total, MMU_TARGET_PSRAM0, MMU_MEM_CAP_EXEC,
+                      ESP_MMU_MMAP_FLAG_PADDR_SHARED, &base);
+    if (err != ESP_OK) {
+        ESP_LOGE("jit", "esp_mmu_map(EXEC) failed (%d bytes): %s",
+                 (int)total, esp_err_to_name(err));
+        free(data);
+        return 0;
+    }
+
+    jit_exec_base = base;
+    jit_exec_size = total;
+    ESP_LOGI("jit", "JIT cache mapped: %u bytes, data=%p exec=%p",
+             (unsigned)total, data, base);
+    return base;
+}
+
+void unmap_jit_block(void *bufptr, unsigned size) {
+    /* JIT 缓存全程存活，不做回收 */
+    (void)bufptr;
+    (void)size;
+}
+#else /* !ESP_PLATFORM */
+
 // JIT block requirements translated to allocation code.
 #if defined(MIPS_ARCH)
   #define _MAP_ITERATIONS           1024   // Test -/+2GB in 4MB steps
@@ -127,6 +188,8 @@ bool validate_addr_section_mips(void *ptr, unsigned size, unsigned max_offset_mb
 	}
 
 #endif /* WIN32 */
+
+#endif /* !ESP_PLATFORM */
 
 #endif /* MMAP_JIT_CACHE */
 

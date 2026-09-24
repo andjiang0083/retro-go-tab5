@@ -78,6 +78,11 @@ typedef struct
   u32 next_entry;
 } hashhdr_type;
 
+#ifdef ESP_PLATFORM
+#include "esp_attr.h"
+/* 256KB 的表：放 PSRAM 里省内部 RAM（照 HowBoyAdvance） */
+EXT_RAM_BSS_ATTR
+#endif
 u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
 typedef struct
@@ -215,7 +220,9 @@ typedef struct
   u32 offset = opcode & 0x07FF                                                \
 
 /* Include the right emitter headers */
-#if defined(MIPS_ARCH)
+#if defined(RISCV_ARCH)
+  #include "riscv/riscv_emit.h"
+#elif defined(MIPS_ARCH)
   #include "mips/mips_emit.h"
 #elif defined(ARM_ARCH)
   #include "arm/arm_emit.h"
@@ -253,6 +260,37 @@ typedef struct
 #elif defined(MIPS_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
     __builtin___clear_cache(baseaddr, endptr);
+  }
+#elif defined(RISCV_ARCH)
+  /* ESP32-P4：JIT 代码写在 PSRAM 的 MMU 可执行映射里，取指前必须同步缓存：
+   *   ① d-cache 脏行写回 PSRAM（C2M）
+   *   ② 失效该区域的 i/d-cache（M2C）
+   *   ③ 兜底：全量失效 L1 i-cache —— 范围失效对"动态映射的 PSRAM exec 区"不可靠
+   * 实现取自 Irak4t0n/HowBoyAdvance（GPLv2），其 P4 实机验证可用。 */
+  #include "esp_cache.h"
+  #include "esp_log.h"
+  #include "esp32p4/rom/cache.h"
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    uintptr_t aligned_start = (uintptr_t)baseaddr & ~63UL;
+    uintptr_t aligned_end   = ((uintptr_t)endptr + 63) & ~63UL;
+    size_t size = aligned_end - aligned_start;
+    if (size == 0) return;
+
+    esp_err_t err = esp_cache_msync((void *)aligned_start, size,
+                                    ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    if (err != ESP_OK)
+      ESP_LOGE("jit", "C2M failed: %s addr=%p sz=%u",
+               esp_err_to_name(err), (void *)aligned_start, (unsigned)size);
+
+    err = esp_cache_msync((void *)aligned_start, size,
+                          ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    if (err != ESP_OK)
+      ESP_LOGE("jit", "M2C failed: %s addr=%p sz=%u",
+               esp_err_to_name(err), (void *)aligned_start, (unsigned)size);
+
+    /* 兜底：全量失效 L1 指令缓存 —— 范围失效对"动态映射的 PSRAM exec 区"不可靠。
+     * 只动 i-cache：指令行永远不会是脏数据，而正确内容已由上面两步写回 PSRAM/L2。 */
+    Cache_Invalidate_All(CACHE_MAP_L1_ICACHE_MASK);
   }
 #else
   /* x86 CPUs have icache consistency checks */

@@ -6,6 +6,7 @@
 #include "../components/gbsp-libretro/memmap.h"
 #include "../components/gbsp-libretro/gba_memory.h"
 #include "../components/gbsp-libretro/gba_cc_lut.h"
+#include "../components/gbsp-libretro/savestate.h"
 
 #define AUDIO_SAMPLE_RATE (GBA_SOUND_FREQUENCY)
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 60 + 1)
@@ -19,6 +20,11 @@ boot_mode selected_boot_mode = boot_game;
 
 u32 skip_next_frame = 0;
 int sprite_limit = 1;
+
+/* 上游把 dynarec_enable 定义在 libretro/libretro.c，但 retro-go 的入口不编译那个文件
+ * （初始化与主循环由我们接管）→ 必须在 app 层定义。
+ * savestate.c 靠它判断是否需要保存/恢复 JIT 翻译缓存，开着 dynarec 就必须为 1。 */
+int dynarec_enable = 1;
 
 static rg_surface_t *updates[2];
 static rg_surface_t *currentUpdate;
@@ -38,12 +44,38 @@ static bool screenshot_handler(const char *filename, int width, int height)
 
 static bool save_state_handler(const char *filename)
 {
-    return false;
+    /* 416KB 状态缓冲：宿主用普通 malloc，真机上这尺寸会落到 PSRAM 堆。 */
+    void *buffer = malloc(GBA_STATE_MEM_SIZE);
+    if (!buffer)
+    {
+        RG_LOGE("Save state: out of memory (%d bytes).\n", (int)GBA_STATE_MEM_SIZE);
+        return false;
+    }
+    gba_save_state(buffer);
+    /* flags=0：原子性由框架负责 —— rg_system.c 先建好目录，再让我们写到一个 .new 临时文件，
+     * 最后才替换正式存档。（rg_storage 自己的 RG_FILE_ATOMIC_WRITE 目前还是个 TODO，传了没用。） */
+    bool ok = rg_storage_write_file(filename, buffer, GBA_STATE_MEM_SIZE, 0);
+    free(buffer);
+    if (!ok)
+        RG_LOGE("Save state failed: %s\n", filename);
+    return ok;
 }
 
 static bool load_state_handler(const char *filename)
 {
-    return false;
+    void *buffer = NULL;
+    size_t size = 0;
+
+    if (!rg_storage_read_file(filename, &buffer, &size, 0))
+        return false;
+
+    /* gba_load_state() 没有长度参数，文件短了会被越界读 —— 我们自己的存档正好等于
+     * GBA_STATE_MEM_SIZE（核心内部再校验 MAGIC/VERSION），比它小的一律拒绝。 */
+    bool ok = (size >= GBA_STATE_MEM_SIZE) && gba_load_state(buffer);
+    free(buffer);
+    if (!ok)
+        RG_LOGE("Load state failed: %s (%u bytes)\n", filename, (unsigned)size);
+    return ok;
 }
 
 static bool reset_handler(bool hard)
@@ -141,7 +173,7 @@ void app_main(void)
         rumble_frame_reset();
 
         clear_gamepak_stickybits();
-        execute_arm(execute_cycles);
+        gba_execute_frame(execute_cycles);   // dynarec 可用时走 JIT，否则走解释器
         // RG_TIMER_LAP("execute_arm");
 
         if (!skip_next_frame)

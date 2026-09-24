@@ -84,6 +84,7 @@ void rand_seed(u32 data);
 #define completed_frame(c) ((c) & 0x80000000)
 u32 function_cc update_gba(int remaining_cycles);
 void reset_gba(void);
+u32 gba_execute_frame(u32 cycles);
 
 void init_main(void);
 

@@ -4,7 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Only the tab5 target defines this; give every other target a clean 0. */
+#ifndef RG_AUDIO_USE_TAB5_CODEC
+#define RG_AUDIO_USE_TAB5_CODEC 0
+#endif
+
 extern const rg_audio_driver_t rg_audio_driver_dummy;
+#if RG_AUDIO_USE_TAB5_CODEC
+extern const rg_audio_driver_t rg_audio_driver_tab5_es8388;
+#endif
 extern const rg_audio_driver_t rg_audio_driver_buzzer;
 extern const rg_audio_driver_t rg_audio_driver_i2s;
 extern const rg_audio_driver_t rg_audio_driver_sdl2;
@@ -15,6 +23,9 @@ extern const rg_audio_driver_t rg_audio_driver_sdl2;
 
 static const rg_audio_sink_t sinks[] = {
     {&rg_audio_driver_dummy,  0, "Dummy"  },
+#if RG_AUDIO_USE_TAB5_CODEC
+    {&rg_audio_driver_tab5_es8388, 0, "ES8388"},
+#endif
 #if RG_AUDIO_USE_INT_DAC
     {&rg_audio_driver_i2s,    0, "Speaker"},
 #endif

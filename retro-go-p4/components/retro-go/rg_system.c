@@ -22,6 +22,25 @@
 #else
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mutex.h>
+
+#if defined(RG_TARGET_SDL2) && defined(__APPLE__)
+/* macOS 的 Cocoa 事件泵只能在【主线程】调用：子线程调用会让 NSApplication
+ * 事件路由抛 C++ 异常 → std::terminate → abort（实测崩溃报告指向 rg_input 线程）。
+ * 因此子线程只延时/让出，不泵事件；主线程由 rg_input_read_gamepad() 每帧泵。 */
+#include <pthread.h>
+#define RG_SDL2_CAN_PUMP_EVENTS() (pthread_main_np() != 0)
+#else
+#define RG_SDL2_CAN_PUMP_EVENTS() 1
+#endif
+#endif
+
+/* 供其它模块（rg_input 等）判断当前线程能否安全泵 SDL 事件。
+ * macOS 的 Cocoa 后端要求事件泵必须在主线程，否则抛 C++ 异常 → abort。 */
+#ifdef RG_TARGET_SDL2
+bool rg_sdl2_can_pump_events(void)
+{
+    return RG_SDL2_CAN_PUMP_EVENTS();
+}
 #endif
 
 #define RG_STRUCT_MAGIC 0x12345678
@@ -52,6 +71,7 @@ struct rg_task_s
 {
     void (*func)(void *arg);
     void *arg;
+    int queueLen; // 队列深度（ESP 用；SDL2 分支不使用）
     // bool blocked;
 #ifdef ESP_PLATFORM
     QueueHandle_t queue;
@@ -537,7 +557,7 @@ static void task_wrapper(void *arg)
 {
     rg_task_t *task = arg;
     task->handle = xTaskGetCurrentTaskHandle();
-    task->queue = xQueueCreate(1, sizeof(rg_task_msg_t));
+    task->queue = xQueueCreate(task->queueLen > 0 ? task->queueLen : 1, sizeof(rg_task_msg_t));
     (task->func)(task->arg);
     vQueueDelete(task->queue);
     memset(task, 0, sizeof(rg_task_t));
@@ -555,6 +575,11 @@ static int task_wrapper(void *arg)
 #endif
 
 rg_task_t *rg_task_create(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity)
+{
+    return rg_task_create_ex(name, taskFunc, arg, stackSize, priority, affinity, 1);
+}
+
+rg_task_t *rg_task_create_ex(const char *name, void (*taskFunc)(void *arg), void *arg, size_t stackSize, int priority, int affinity, int queueLen)
 {
     RG_ASSERT_ARG(name && taskFunc);
     rg_task_t *task = NULL;
@@ -625,7 +650,7 @@ bool rg_task_send(rg_task_t *task, const rg_task_msg_t *msg)
     return xQueueSend(task->queue, msg, portMAX_DELAY) == pdTRUE;
 #elif defined(RG_TARGET_SDL2)
     while (task->msgWaiting > 0)
-        continue;
+        SDL_Delay(1); // 忙等会让主线程空烧 CPU
     task->msg = *msg;
     task->msgWaiting = 1;
     return true;
@@ -643,8 +668,9 @@ bool rg_task_peek(rg_task_msg_t *out)
     success = xQueuePeek(task->queue, out, portMAX_DELAY) == pdTRUE;
 #elif defined(RG_TARGET_SDL2)
     while (task->msgWaiting < 1)
-        continue;
+        SDL_Delay(1);
     *out = task->msg;
+    success = true; // 原来漏了：即便拿到消息也返回 false，任务循环会第一轮就退出
 #endif
     // task->blocked = false;
     return success;
@@ -661,9 +687,10 @@ bool rg_task_receive(rg_task_msg_t *out)
     success = xQueueReceive(task->queue, out, portMAX_DELAY) == pdTRUE;
 #elif defined(RG_TARGET_SDL2)
     while (task->msgWaiting < 1)
-        continue;
+        SDL_Delay(1);
     *out = task->msg;
     task->msgWaiting = 0;
+    success = true; // 同上，原来漏了
 #endif
     // task->blocked = false;
     return success;
@@ -689,7 +716,8 @@ void rg_task_delay(uint32_t ms)
 #if defined(ESP_PLATFORM)
     vTaskDelay(pdMS_TO_TICKS(ms));
 #elif defined(RG_TARGET_SDL2)
-    SDL_PumpEvents();
+    if (RG_SDL2_CAN_PUMP_EVENTS())
+        SDL_PumpEvents();
     SDL_Delay(ms);
 #endif
 }
@@ -699,7 +727,8 @@ void rg_task_yield(void)
 #if defined(ESP_PLATFORM)
     vPortYield();
 #elif defined(RG_TARGET_SDL2)
-    SDL_PumpEvents();
+    if (RG_SDL2_CAN_PUMP_EVENTS())
+        SDL_PumpEvents();
 #endif
 }
 
@@ -831,7 +860,9 @@ IRAM_ATTR int64_t rg_system_timer(void)
 #if defined(ESP_PLATFORM)
     return esp_timer_get_time();
 #elif defined(RG_TARGET_SDL2)
-    return (SDL_GetPerformanceCounter() * 1000000.f) / SDL_GetPerformanceFrequency();
+    int64_t freq = SDL_GetPerformanceFrequency();
+    int64_t div = (freq >= 1000000) ? (freq / 1000000) : 1;
+    return (int64_t)(SDL_GetPerformanceCounter() / div);
 #endif
 }
 

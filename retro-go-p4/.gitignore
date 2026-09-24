@@ -17,6 +17,7 @@ build/
 
 # SDL2 build
 /sd
+/build-sdl2
 /stderr.txt
 /stdout.txt
 /gmon.out

@@ -12,6 +12,15 @@
 
 // static rg_display_driver_t driver;
 static rg_task_t *display_task_queue;
+
+/* 显示队列深度。⚠ 已实测：把深度提到 2（配合 gbsp 的三缓冲轮转）能让"真正画出来的帧数"
+ * 从 15/秒 翻到 30/秒，画面明显更顺 —— 但在这块板上会周期性把显示路径楔死：
+ * 现象 = 先流畅、随后画面定格、不写新 crash.log、看门狗不报，只能断电恢复
+ * （DSI/PSRAM 总线仲裁饿死，与 PPA 直写帧缓冲那次同一类）。故强制保持 1。
+ * 若将来要再试：必须同时给出限流方案（不要整屏突发），并做成运行时开关，见移植笔记。 */
+#ifndef RG_DISPLAY_QUEUE_LEN
+#define RG_DISPLAY_QUEUE_LEN 1
+#endif
 static rg_display_counters_t counters;
 static rg_display_config_t config;
 static rg_surface_t *osd;
@@ -497,7 +506,13 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 bool rg_display_sync(bool block)
 {
     while (block && rg_task_messages_waiting(display_task_queue))
-        continue; // We should probably yield?
+    {
+#if defined(RG_TARGET_SDL2)
+        rg_task_delay(1); // 宿主上忙等会空烧 CPU（这里在主线程，delay 顺带泵事件）
+#else
+        rg_task_yield(); // 真机：让出 CPU 给显示任务，不要睡一个 tick
+#endif
+    }
     return !rg_task_messages_waiting(display_task_queue);
 }
 
@@ -631,7 +646,7 @@ void rg_display_init(void)
     rg_display_clear(C_BLACK);
     rg_task_delay(80); // Wait for the screen be cleared before turning on the backlight (40ms doesn't seem to be enough...)
     lcd_set_backlight(config.backlight);
-    display_task_queue = rg_task_create("rg_display", &display_task, NULL, 4 * 1024, RG_TASK_PRIORITY_6, 1);
+    display_task_queue = rg_task_create_ex("rg_display", &display_task, NULL, 4 * 1024, RG_TASK_PRIORITY_6, 1, RG_DISPLAY_QUEUE_LEN);
     if (config.border_file)
         load_border_file(config.border_file);
     RG_LOGI("Display ready.\n");
