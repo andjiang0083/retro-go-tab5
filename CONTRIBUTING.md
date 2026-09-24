@@ -1,5 +1,7 @@
 # Contributing
 
+**English** · [中文](CONTRIBUTING_CN.md)
+
 Thanks for considering it. This is a single-board port maintained by people who own the hardware, so the most useful
 contributions are the ones that can be verified on a real Tab5.
 

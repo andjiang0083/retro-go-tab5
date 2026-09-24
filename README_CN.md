@@ -64,7 +64,7 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \
   0x0 build/tab5-retro-go.img
 ```
 
-完整步骤、`--no-networking` 这个坑、以及串口监视的注意事项：**[BUILDING.md](BUILDING.md)**。
+完整步骤、`--no-networking` 这个坑、以及串口监视的注意事项：**[BUILDING_CN.md](BUILDING_CN.md)**。
 
 ---
 
@@ -102,7 +102,7 @@ FPS:61 (46+0+15)     BUSY:32-56%
 （画面定格、不写 panic 日志、只能断电恢复），原因是 DPI 持续扫屏在 1280x720@60Hz 下就要吃掉约 106MB/s 的 PSRAM 带宽，
 几乎没有余量再容纳第二路并发写。这是**面板尺寸**的性质，不是队列设计的问题。
 
-**剩下唯一安全的方向是"每帧推送更少的字节"** —— 例如只提交核心真正改动过的那些行。见 [ROADMAP.md](ROADMAP.md)。
+**剩下唯一安全的方向是"每帧推送更少的字节"** —— 例如只提交核心真正改动过的那些行。见 [ROADMAP_CN.md](ROADMAP_CN.md)。
 
 ---
 
@@ -134,8 +134,8 @@ docs/                   移植笔记（中文）+ 触摸布局图
 这个项目之所以存在，是因为一台"上游不支持"的设备最后被支持了。如果你手上有 Tab5、有 ESP32-P4 板子，
 或者对 RISC-V JIT 感兴趣 —— 这里有大量可做的事：
 
-- **[ROADMAP.md](ROADMAP.md)** —— 具体待办，大致按优先级排序
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** —— 怎么构建、怎么测、怎么提 PR
+- **[ROADMAP_CN.md](ROADMAP_CN.md)** —— 具体待办，大致按优先级排序
+- **[CONTRIBUTING_CN.md](CONTRIBUTING_CN.md)** —— 怎么构建、怎么测、怎么提 PR
 - **适合上手的**：电池电量（INA226）、"只推送改动行"的显示通路、移植另一个机种、文档与截图
 
 几条来自真机实战的约定：

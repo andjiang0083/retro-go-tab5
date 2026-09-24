@@ -1,5 +1,7 @@
 # Building
 
+**English** · [中文](BUILDING_CN.md)
+
 Everything here was learned the hard way on a real Tab5. Follow it in order and you will not have to rediscover any of it.
 
 ## Requirements

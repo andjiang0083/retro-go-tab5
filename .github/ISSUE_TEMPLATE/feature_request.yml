@@ -8,24 +8,27 @@ body:
       value: |
         Check [ROADMAP.md](https://github.com/andjiang0083/retro-go-tab5/blob/main/ROADMAP.md) first — if it is already listed,
         say so and we will link your issue to it. Claiming an item here is the right way to avoid two people doing the same work.
+
+        **中文**：先看 [ROADMAP_CN.md](https://github.com/andjiang0083/retro-go-tab5/blob/main/ROADMAP_CN.md) ——
+        如果已经列在里面，说一声即可，我们会把你的 issue 关联过去。在这里认领是避免重复劳动的正确方式。
   - type: input
     id: summary
     attributes:
-      label: What do you want to build?
+      label: What do you want to build? / 想做什么？
       placeholder: "Battery gauge via the onboard INA226"
     validations:
       required: true
   - type: textarea
     id: why
     attributes:
-      label: Why is it worth doing?
+      label: Why is it worth doing? / 为什么值得做？
       description: What does it unlock or fix? Concrete beats aspirational.
     validations:
       required: true
   - type: textarea
     id: approach
     attributes:
-      label: How would you approach it?
+      label: How would you approach it? / 打算怎么做？
       description: |
         Rough plan is enough. If it touches the display path or PSRAM bandwidth, note how it will be verified and whether it
         can ship behind a runtime switch (see CONTRIBUTING.md).
@@ -34,7 +37,7 @@ body:
   - type: checkboxes
     id: contributing
     attributes:
-      label: Are you planning to work on it?
+      label: Are you planning to work on it? / 你打算动手吗？
       options:
-        - label: I intend to submit a PR for this
-        - label: I can test on real Tab5 hardware
+        - label: I intend to submit a PR for this / 我打算提 PR
+        - label: I can test on real Tab5 hardware / 我能在真机 Tab5 上测试

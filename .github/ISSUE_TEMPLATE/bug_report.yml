@@ -8,10 +8,13 @@ body:
       value: |
         Thanks for reporting. A few details make the difference between "I can reproduce this in five minutes"
         and "I cannot reproduce this at all" - please fill in what you can.
+
+        **中文**：感谢反馈。请尽量填全 —— 下面这些细节决定了"五分钟能复现"还是"完全复现不了"。
+        其中**"如何恢复"那一项最关键**：它能区分软件崩溃和硬件级挂死，两者根因完全不同。
   - type: input
     id: build-info
     attributes:
-      label: Build info
+      label: Build info / 构建信息
       description: The Build info line printed at boot (target, version, SDK, chip).
       placeholder: "RG_TARGET_TAB5-0 v0.1.0 SDK:v5.5.2 esp32p4"
     validations:
@@ -19,26 +22,26 @@ body:
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened
+      label: What happened / 发生了什么
       description: What you did, what you expected, what you got. Include the game/core if relevant.
     validations:
       required: true
   - type: dropdown
     id: recovery
     attributes:
-      label: How did it recover?
+      label: How did it recover? / 它是怎么恢复的？
       description: This single detail separates a software panic from a hardware-level hang - they have very different causes.
       options:
-        - It rebooted by itself
-        - It needed a power cycle (screen frozen)
-        - It kept running but rendered wrong (tearing / artifacts)
-        - Other / not sure
+        - It rebooted by itself / 自己重启了
+        - It needed a power cycle (screen frozen) / 需要断电恢复（画面定格）
+        - It kept running but rendered wrong (tearing / artifacts) / 还在跑但画面不对（撕裂、花屏）
+        - Other / not sure / 其它或不确定
     validations:
       required: true
   - type: textarea
     id: crashlog
     attributes:
-      label: /crash.log (if one was written)
+      label: /crash.log (if one was written) / 崩溃日志（如果写了的话）
       description: |
         Pull the SD card and paste /crash.log from its root. Also give the file's date - an old log from a
         previous crash is worse than no log, because it misleads.
@@ -48,7 +51,7 @@ body:
   - type: input
     id: perf
     attributes:
-      label: Performance line (if applicable)
+      label: Performance line (if applicable) / 性能行（如有）
       description: The FPS line from the serial log, if you have one.
       placeholder: "FPS:60 (30+15+15), BUSY:41%"
     validations:
@@ -56,7 +59,7 @@ body:
   - type: textarea
     id: changes
     attributes:
-      label: Any local modifications?
+      label: Any local modifications? / 本地做过改动吗？
       description: Did you change code, the sdkconfig, or a config file before hitting this?
     validations:
       required: false
