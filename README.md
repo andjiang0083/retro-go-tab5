@@ -1,6 +1,9 @@
 # retro-go-tab5
 
+**English** · [中文](README_CN.md)
+
 **A port of [retro-go](https://github.com/ducalex/retro-go) to the M5Stack Tab5 (ESP32-P4), with a RISC-V dynamic recompiler for Game Boy Advance.**
+**把 [retro-go](https://github.com/ducalex/retro-go) 移植到 M5Stack Tab5（ESP32-P4），并为 GBA 实现 RISC-V 动态重编译（dynarec）。**
 
 The Tab5 is a 1280x720 MIPI-DSI handheld built on the ESP32-P4 — a dual-core RISC-V SoC with 32 MB of PSRAM and no wireless radio at all.
 retro-go is a lightweight multi-system emulator frontend. This repository is the port: board bring-up, display path, audio, input,
