@@ -11,6 +11,14 @@ retro-go 是一个轻量多机种模拟器前端，本仓库是它的移植：�
 
 全部在真机上验证过。**非常欢迎一起共建** —— 见 [参与共建](#参与共建)。
 
+## 截图
+
+![真机 Tab5 上运行的 GBA，彩色触摸手柄位于留白区](docs/screenshot-fire-emblem.png)
+
+*《火焰之纹章：烈火之剑》在真机 Tab5 上运行 —— 彩色触摸手柄只画在留白区，不遮挡游戏画面。*
+*Fire Emblem: The Blazing Blade running on a real Tab5. The coloured touch gamepad is drawn only in the
+letterbox margins, so it never covers the game.*
+
 ---
 
 ## 现状（实测，不是愿景）

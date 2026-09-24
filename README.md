@@ -11,6 +11,14 @@ and a GBA core that JIT-compiles ARM/Thumb into native RISC-V so the CPU-emulati
 
 Built and tested on real hardware. Contributions very welcome — see [Contributing](#contributing).
 
+## Screenshots
+
+![GBA running on a real Tab5, with the coloured touch gamepad in the letterbox margins](docs/screenshot-fire-emblem.png)
+
+*Fire Emblem: The Blazing Blade running on a real Tab5. The coloured touch gamepad is drawn only in the
+letterbox margins, so it never covers the game.*
+*《火焰之纹章：烈火之剑》在真机 Tab5 上运行 —— 彩色触摸手柄只画在留白区，不遮挡游戏画面。*
+
 ---
 
 ## Status
