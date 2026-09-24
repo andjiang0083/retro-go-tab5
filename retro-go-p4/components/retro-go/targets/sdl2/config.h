@@ -14,8 +14,19 @@
 #define RG_SCREEN_HOST              0
 #define RG_SCREEN_SPEED             0
 #define RG_SCREEN_BACKLIGHT         1
+/* ── Tab5 虚拟按键可视层的 PC 预览模式（宿主构建专用）─────────────────────────
+ * 用 tab5 的真实分辨率 + 真实键位表在 Mac 上渲染可视层，验证标签/透明度/按下反馈，
+ * 省掉"改一次刷一次机"。构建方式见 tools/build_sdl2_mac.sh 的 -DRG_TAB5_OVERLAY_PREVIEW。
+ * 只影响宿主构建，不影响任何真机 target。 */
+#ifdef RG_TAB5_OVERLAY_PREVIEW
+#define RG_SCREEN_WIDTH             1280
+#define RG_SCREEN_HEIGHT            720
+#include "../tab5/touch_layout.h"
+#define RG_GAMEPAD_TOUCH_MAP        RG_TAB5_TOUCH_MAP
+#else
 #define RG_SCREEN_WIDTH             320
 #define RG_SCREEN_HEIGHT            240
+#endif
 #define RG_SCREEN_ROTATE            0
 #define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 0}
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}

@@ -30,8 +30,9 @@ static int scan_folder_cb(const rg_scandir_t *entry, void *arg)
     retro_app_t *app = (retro_app_t *)arg;
     uint8_t type = RETRO_TYPE_INVALID;
 
-    // Skip hidden files
-    if (entry->basename[0] == '.')
+    // Skip hidden files and macOS resource forks (AppleDouble, "._xxx")
+    // 注意：设备枚举到 8.3 短名时开头的点会被吃掉，光判断 '.' 漏得掉，helper 里认魔数。
+    if (rg_storage_is_metadata_file(entry->path, entry->basename))
         return RG_SCANDIR_SKIP;
 
     if (entry->is_file)

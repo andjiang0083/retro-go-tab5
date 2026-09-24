@@ -65,6 +65,7 @@ const char *rg_basename(const char *path);
 const char *rg_extension(const char *filename);
 bool rg_extension_match(const char *filename, const char *extensions);
 const char *rg_relpath(const char *path);
+const char *rg_path_tail(const char *path, char *dst, size_t dst_size, size_t max_bytes);
 
 /* Hashing */
 uint32_t rg_crc32(uint32_t crc, const uint8_t *buf, size_t len);

@@ -202,6 +202,52 @@ const char *rg_relpath(const char *path)
     return path;
 }
 
+/* 把路径截成"最多 max_bytes 字节的尾部"，并保证不把一个 UTF-8 字符劈成两半。
+ * 优先保留末尾：GUI 的路径标题里，末尾才是"当前所在目录"这个关键信息。
+ * 截断时在前面加省略号（…）。dst_size 不足时安全返回。
+ * 为什么不能用 snprintf("%.Ns")：那是按**字节**截断，中文路径会被劈成半个字，
+ * 屏幕上显示成方块/乱码。 */
+const char *rg_path_tail(const char *path, char *dst, size_t dst_size, size_t max_bytes)
+{
+    if (!dst || dst_size < 4)
+        return NULL;
+
+    if (!path)
+        path = "";
+
+    size_t total = strlen(path);
+    if (total <= max_bytes || max_bytes == 0)
+    {
+        snprintf(dst, dst_size, "%s", path);
+        return dst;
+    }
+
+    const char *end = path + total;
+    const char *start = end;
+    const char *p = end;
+    while (p > path)
+    {
+        const char *prev = p - 1;
+        while (prev > path && ((*prev & 0xC0) == 0x80)) // 回退到该字符的首字节
+            prev--;
+        if ((size_t)(end - prev) > max_bytes)
+            break;
+        start = prev;
+        p = prev;
+    }
+    /* 截断点落在路径中间时，尽量挪到下一个 '/' 之后 —— 让标题从一个完整的目录名开始，
+     * 而不是从半个目录名开始（"…4作）/口袋…" 这种看着莫名其妙）。 */
+    if (start > path)
+    {
+        const char *slash = strchr(start, '/');
+        if (slash && slash[1])
+            start = slash + 1;
+    }
+
+    snprintf(dst, dst_size, "\xE2\x80\xA6%s", start); // "…" + 尾部
+    return dst;
+}
+
 uint32_t rg_crc32(uint32_t crc, const uint8_t *buf, size_t len)
 {
 #ifdef ESP_PLATFORM

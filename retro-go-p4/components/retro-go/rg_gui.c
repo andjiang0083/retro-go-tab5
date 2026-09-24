@@ -1,5 +1,7 @@
 #include "rg_system.h"
+#include "rg_touch_overlay.h"    /* 虚拟手柄（触摸按键）可视层的运行时开关/透明度 */
 #include "rg_gui.h"
+#include "rg_cjk.h"
 
 #include <cJSON.h>
 #include <math.h>
@@ -102,6 +104,10 @@ static int get_vertical_position(int y_pos, int height)
 
 void rg_gui_init(void)
 {
+    /* 内置 CJK 点阵字库（flash 分区 mmap，幂等）。放这里：所有画 GUI 的 app 都会走这条路，
+     * 而它不需要任何额外初始化时机（mmap 是即时的，失败也只是汉字显示成方块）。 */
+    rg_cjk_init();
+
     gui.screen_width = rg_display_get_width();
     gui.screen_height = rg_display_get_height();
     // FIXME: RG_SCREEN_SAFE_AREA being added on top of RG_SCREEN_VISIBLE_AREA might not be super intuitive
@@ -337,8 +343,16 @@ static size_t get_glyph(uint32_t *output, const rg_font_t *font, int points, int
     // {
     //     return get_glyph(output, &font_basic8x8, points, c);
     // }
-    else // Glyph not found, no fallback
+    else // Glyph not found in the built-in font
     {
+        /* 内置字体没有这个码位（CJK 等）→ 查 flash 内置的 CJK 点阵字库（见 rg_cjk.c）。
+         * 必须放在"缺字方块"之前：有字就画字，真没有才画方块。
+         * 返回宽度 = font->height（"一个汉字占一个 em"），于是外层的等比缩放、宽度测量、
+         * 居中/右对齐、截断（不劈字，因为按码位迭代）全部无需改动。 */
+        size_t cjk_width = rg_cjk_glyph(output, points, font->height, (uint32_t)c);
+        if (cjk_width)
+            return cjk_width;
+
         size_t box_width = font->width ?: 8;
         if (output) // draw missing box
         {
@@ -1323,6 +1337,32 @@ static rg_gui_event_t show_clock_cb(rg_gui_option_t *option, rg_gui_event_t even
     return RG_DIALOG_VOID;
 }
 
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+/* 虚拟手柄（触摸按键）可视层：开关 + 透明度档位。
+ * 这两项存 NVS，改完立刻生效（显示驱动每帧读状态），不用重启、不用刷机。 */
+static rg_gui_event_t touch_buttons_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+    {
+        rg_overlay_set_visible(!rg_overlay_get_visible());
+        return RG_DIALOG_REDRAW;
+    }
+    strcpy(option->value, rg_overlay_get_visible() ? _("On") : _("Off"));
+    return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t touch_opacity_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_PREV || event == RG_DIALOG_NEXT)
+    {
+        rg_overlay_cycle_alpha(event == RG_DIALOG_NEXT ? 1 : -1);
+        return RG_DIALOG_REDRAW;
+    }
+    snprintf(option->value, 8, "%d%%", rg_overlay_get_alpha());
+    return RG_DIALOG_VOID;
+}
+#endif
+
 static rg_gui_event_t timezone_cb(rg_gui_option_t *option, rg_gui_event_t event)
 {
     const char utc_offsets[][10] = {"UTC-12:00", "UTC-11:00", "UTC-10:00", "UTC-09:00", "UTC-09:30", "UTC-08:00",
@@ -1599,6 +1639,12 @@ void rg_gui_options_menu(void)
         {0, _("Font type"),     "-", RG_DIALOG_FLAG_NORMAL, &font_type_cb},
         {0, _("Theme"),         "-", RG_DIALOG_FLAG_NORMAL, &theme_cb},
         {0, _("Show clock"),    "-", RG_DIALOG_FLAG_NORMAL, &show_clock_cb},
+        #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+        /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备
+         * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
+         * 透明度仍可调，它不会让人失去输入。 */
+        {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
+        #endif
         {0, _("Timezone"),      "-", RG_DIALOG_FLAG_NORMAL, &timezone_cb},
         {0, _("Language"),      "-", RG_DIALOG_FLAG_NORMAL, &language_cb},
         #ifdef RG_GPIO_LED // Only show disk LED option if disk LED GPIO pin is defined
@@ -1617,6 +1663,12 @@ void rg_gui_options_menu(void)
         {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},
         {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},
         // {0, _("Misc options"),  NULL, RG_DIALOG_FLAG_NORMAL, &misc_options_cb},
+        #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+        /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备
+         * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
+         * 透明度仍可调，它不会让人失去输入。 */
+        {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
+        #endif
         {0, _("Emulator options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},
         RG_DIALOG_END,
     };

@@ -507,8 +507,13 @@ void gui_draw_list(tab_t *tab)
 
     if (tab->navpath)
     {
-        char buffer[64];
-        snprintf(buffer, 63, "[%s]",  tab->navpath);
+        /* 路径标题：显示去掉 /sd 的相对路径；超长时按 UTF-8 码位边界从尾部截断
+         * （末尾是"当前所在目录"，比截掉尾巴有用；按字节截断会把汉字劈成两半）。
+         * pathbuf 故意留小（59），让编译器能静态证明下面 snprintf 不会溢出 —— 否则
+         * -Werror=format-truncation 会因为"%s 最长 64 字节 + 方括号"直接报错。 */
+        char buffer[64], pathbuf[59];
+        rg_path_tail(rg_relpath(tab->navpath), pathbuf, sizeof(pathbuf), sizeof(pathbuf) - 4);
+        snprintf(buffer, sizeof(buffer), "[%s]", pathbuf);
         top += rg_gui_draw_text(0, top, gui.width, buffer, gui.theme->foreground, C_TRANSPARENT, 0).height;
     }
 
@@ -603,8 +608,15 @@ void gui_load_preview(tab_t *tab)
         else if (type == 0x3) // Game cover (based on filename)
         {
             path_len = snprintf(path, RG_PATH_MAX, "%s/%s", app->paths.covers, file->name);
-            if (path_len < RG_PATH_MAX - 3) // Don't bother if we already have an overflow
-                strcpy(path + path_len - strlen(rg_extension(file->name) ?: ""), "png");
+            if (path_len < RG_PATH_MAX - 4) // Don't bother if we already have an overflow
+            {
+                /* 按文件名找封面：把 ROM 的扩展名换成 png。
+                 * rg_extension() 返回的是**不含点**的扩展名（rg_utils.c: return ptr + 1），
+                 * 所以有扩展名时"覆盖原扩展名"即可（点还在原处）；没有扩展名时必须补上点，
+                 * 否则会拼出 "xxxpng" 这种路径（实测真机日志里就是这样，封面永远加载不到）。 */
+                const char *ext = rg_extension(file->name);
+                strcpy(path + path_len - (ext ? strlen(ext) : 0), ext ? "png" : ".png");
+            }
         }
         else if (type == 0x4 && file->saves > 0) // Save state screenshot (png)
         {

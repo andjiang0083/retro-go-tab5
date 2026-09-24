@@ -61,6 +61,7 @@ bool rg_storage_ready(void);
 void rg_storage_commit(void);
 bool rg_storage_delete(const char *path);
 bool rg_storage_exists(const char *path);
+bool rg_storage_is_metadata_file(const char *path, const char *basename);
 bool rg_storage_mkdir(const char *dir);
 rg_stat_t rg_storage_stat(const char *path);
 bool rg_storage_scandir(const char *path, rg_scandir_cb_t *callback, void *arg, uint32_t flags);

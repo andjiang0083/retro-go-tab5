@@ -341,6 +341,32 @@ rg_stat_t rg_storage_stat(const char *path)
     return ret;
 }
 
+/* macOS 在 FAT 卷上会给每个文件写一份 "._<名字>" 资源叉（AppleDouble，内容头魔数
+ * 00 05 16 07）。它是纯垃圾，不该出现在任何文件列表里。两个坑：
+ *   ① 名字形态不稳定 —— 设备枚举到 8.3 短名时（扩展名变大写、开头的点被吃掉），
+ *      只判断 basename[0]=='.' 会漏过去，所以对 "_" 开头的名字再读 4 字节认魔数；
+ *   ② 只在可疑名字上读文件，正常 ROM 一次多余 I/O 都不花。 */
+bool rg_storage_is_metadata_file(const char *path, const char *basename)
+{
+    if (!basename || !basename[0])
+        return true;                    /* 空名字：不该出现 */
+    if (basename[0] == '.')
+        return true;                    /* ._xxx / .DS_Store / .Spotlight-V100 等 */
+
+    if (basename[0] != '_' || !path)
+        return false;                   /* 8.3 短名形态：._xxx -> _xxx~1.GBA */
+
+    uint8_t magic[4] = {0};
+    FILE *fp = fopen(path, "rb");
+    if (!fp)
+        return false;
+    size_t len = fread(magic, 1, sizeof(magic), fp);
+    fclose(fp);
+
+    return len == sizeof(magic) && magic[0] == 0x00 && magic[1] == 0x05 &&
+           magic[2] == 0x16 && magic[3] == 0x07;
+}
+
 bool rg_storage_exists(const char *path)
 {
     CHECK_PATH(path);

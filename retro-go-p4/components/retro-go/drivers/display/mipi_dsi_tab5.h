@@ -30,7 +30,7 @@
 #include "esp_timer.h"           /* 性能打点：区分"显示路径"与"模拟器核心"的 CPU 占用 */
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
-#include "rg_input.h"            /* 虚拟按键可视层要读键位表 */
+#include "rg_touch_overlay.h"    /* 虚拟按键可视层（标签/透明度/按下反馈） */
 /* 注意：不要 #include "bsp/m5stack_tab5.h" —— 它的 umbrella 头会拉 lvgl.h
  * （retro-go 不编 LVGL）。需要什么就手写 extern，见下。 */
 
@@ -58,148 +58,13 @@ static inline uint16_t tab5_swap16(uint16_t v)
     return (uint16_t)((v << 8) | (v >> 8));
 }
 
-#if defined(RG_GAMEPAD_TOUCH_MAP)
-/* ---- 虚拟按键可视层（在推送前合成，按键永远在最上层）------------------------
- * 为什么必须放在这里、而不是 rg_display.c：
- *   本驱动没有整屏帧缓冲 —— lcd_send_buffer() 是"算一块推一块"，lcd_sync() 是空函数；
- *   而 GUI 是立即模式，随时可能重画任意区域。在显示层"每帧末尾叠加"会被随后的 GUI
- *   绘制覆盖 => 实机表现为按键闪烁。放在推给面板之前的最后一步合成，才是稳定的。
- * scratch 里已经是面板格式（小端 565），所以这里直接写普通 RGB565 值。 */
-static inline uint16_t tab5_overlay_dim(uint16_t c)
-{
-    return (uint16_t)((c >> 1) & 0x7BEF);   /* RGB565 每通道减半 => 同色系暗填充 */
-}
-
-/* 没有文字标签，靠"颜色 + 位置"辨认，所以每个按键给一个可区分的颜色 */
-static uint16_t tab5_overlay_color(rg_key_t key)
-{
-    switch (key)
-    {
-        case RG_KEY_UP:     return 0x07E0;  /* 绿 */
-        case RG_KEY_DOWN:   return 0x07FF;  /* 青 */
-        case RG_KEY_LEFT:   return 0xF800;  /* 红 */
-        case RG_KEY_RIGHT:  return 0xFD20;  /* 橙 */
-        case RG_KEY_A:      return 0xF81F;  /* 品红 */
-        case RG_KEY_B:      return 0xFFE0;  /* 黄 */
-        case RG_KEY_X:      return 0x001F;  /* 蓝 */
-        case RG_KEY_Y:      return 0x781F;  /* 紫 */
-        case RG_KEY_L:      return 0xC618;  /* 浅灰 */
-        case RG_KEY_R:      return 0x8410;  /* 深灰 */
-        case RG_KEY_SELECT: return 0xAFE0;  /* 橄榄 */
-        case RG_KEY_START:  return 0xFC00;  /* 琥珀 */
-        case RG_KEY_MENU:   return 0xFFFF;  /* 白 */
-        default:            return 0xFFFF;
-    }
-}
-
-static void tab5_overlay_blit(uint16_t *scratch, int x0, int y0, int rows, int w)
-{
-    size_t count = 0;
-    const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&count);
-    if (!map || !count)
-        return;
-
-    const int border = 3;
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        const rg_keymap_touch_t *btn = &map[i];
-        const int lx0 = btn->x - btn->w / 2;
-        const int ly0 = btn->y - btn->h / 2;
-        /* 逻辑 -> 物理：px = (PHYS_W-1) - ly, py = lx（与上面的转置映射一致） */
-        const int bx0 = TAB5_PHYS_W - ly0 - btn->h;
-        const int by0 = lx0;
-        const int bw = btn->h, bh = btn->w;
-
-        const int ix0 = RG_MAX(bx0, x0), ix1 = RG_MIN(bx0 + bw, x0 + rows);
-        const int iy0 = RG_MAX(by0, y0), iy1 = RG_MIN(by0 + bh, y0 + w);
-        if (ix0 >= ix1 || iy0 >= iy1)
-            continue;
-
-        const uint16_t col = tab5_overlay_color(btn->key);
-        const uint16_t fill = tab5_overlay_dim(col);
-
-        for (int py = iy0; py < iy1; ++py)
-        {
-            const int ry = py - by0;
-            uint16_t *dst = scratch + (size_t)(py - y0) * rows;
-            for (int px = ix0; px < ix1; ++px)
-            {
-                const int rx = px - bx0;
-                const bool edge = (rx < border || ry < border ||
-                                   rx >= bw - border || ry >= bh - border);
-                dst[px - x0] = edge ? col : fill;
-            }
-        }
-    }
-}
-#endif /* RG_GAMEPAD_TOUCH_MAP */
-
-#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-/* 虚拟按键叠加，但直接写 DPI 帧缓冲（PPA 路径专用）。
- * ⚠ 帧缓冲由 PPA 硬件直接写、不经 CPU 缓存，所以 CPU 端的小区域写必须：
- *   ① 先失效该区域的 cache 行（否则"未对齐的局部写"会把过期行内容写回去，抹掉 PPA 的输出）
- *   ② 写像素
- *   ③ 再写回（C2M），否则 DPI 的 DMA 读不到刚写的内容
- * 范围取整个按键矩形的包围盒并向外对齐到 cache 行；失效/写回都是批量操作，每键 2 次调用。 */
-static void tab5_overlay_fb(int x0, int y0, int rows, int w)
-{
-    if (!tab5_fb)
-        return;
-
-    size_t count = 0;
-    const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&count);
-    if (!map || !count)
-        return;
-
-    const int border = 3;
-
-    for (size_t i = 0; i < count; ++i)
-    {
-        const rg_keymap_touch_t *btn = &map[i];
-        const int lx0 = btn->x - btn->w / 2;
-        const int ly0 = btn->y - btn->h / 2;
-        /* 逻辑 -> 物理：px = (PHYS_W-1) - ly, py = lx */
-        const int bx0 = TAB5_PHYS_W - ly0 - btn->h;
-        const int by0 = lx0;
-        const int bw = btn->h, bh = btn->w;
-
-        const int ix0 = RG_MAX(bx0, x0), ix1 = RG_MIN(bx0 + bw, x0 + rows);
-        const int iy0 = RG_MAX(by0, y0), iy1 = RG_MIN(by0 + bh, y0 + w);
-        if (ix0 >= ix1 || iy0 >= iy1)
-            continue;
-
-        const uint16_t col = tab5_overlay_color(btn->key);
-        const uint16_t fill = tab5_overlay_dim(col);
-
-        /* ① cache 行对齐的失效范围（含中间未写的行，失效干净行无害） */
-        size_t b0 = ((size_t)iy0 * TAB5_PHYS_W + ix0) * 2;
-        size_t b1 = ((size_t)(iy1 - 1) * TAB5_PHYS_W + ix1) * 2;
-        size_t a0 = (b0 / 128) * 128;
-        size_t a1 = ((b1 + 127) / 128) * 128;
-        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0,
-                        ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-
-        /* ② 写像素 */
-        for (int py = iy0; py < iy1; ++py)
-        {
-            const int ry = py - by0;
-            uint16_t *dst = tab5_fb + (size_t)py * TAB5_PHYS_W;
-            for (int px = ix0; px < ix1; ++px)
-            {
-                const int rx = px - bx0;
-                const bool edge = (rx < border || ry < border ||
-                                   rx >= bw - border || ry >= bh - border);
-                dst[px] = edge ? col : fill;
-            }
-        }
-
-        /* ③ 写回，让 DPI 的 DMA 看到 */
-        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0,
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    }
-}
-#endif /* RG_GAMEPAD_TOUCH_MAP */
+/* ---- 虚拟按键可视层 ---------------------------------------------------------
+ * 实现在 rg_touch_overlay.c（目标无关的共享模块：标签 / 透明度 / 按下反馈都在那里），
+ * 本驱动只负责在"推给面板前的最后一刻"把它合成进来。
+ * 为什么必须在显示层合成、不能在 GUI 层画：本驱动没有整屏帧缓冲 —— lcd_send_buffer()
+ * 是"算一块推一块"，lcd_sync() 是空函数；而 GUI 是立即模式，随时可能重画任意区域。
+ * 在 GUI 层画的按键会被随后的绘制覆盖 => 实机表现为按键闪烁（27b44b4 修过这个）。
+ * 两条渲染路径都要合成：CPU 转置（写 scratch）和 PPA 直写帧缓冲（写 tab5_fb）。 */
 
 /* DPI panel 在 use_dma2d=1 时 draw_bitmap 是异步的：忙时返回 ESP_ERR_INVALID_STATE，
  * 一帧内连续推送时会正常出现，等一下就重试（不是错误，别当故障处理）。 */
@@ -318,6 +183,12 @@ static void lcd_init(void)
     }
 
     RG_SCREEN_INIT();   /* 约定钩子：显示初始化必须经这个宏（历史教训：漏掉 = 黑屏） */
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 虚拟按键预渲染（一次性，约 100ms）：标签/边框/透明度的形状都在这一步烘成掩码，
+     * 每帧只做查表混合。必须等显示起来后再建（建层本身不碰屏幕，但读键位表/存 NVS）。 */
+    rg_overlay_init();
+#endif
 
     lcd_set_backlight(80);
     RG_LOGI("Tab5 DSI ready (ST7123 path): logical %dx%d -> physical %dx%d (90CW map)\n",
@@ -485,7 +356,7 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         }
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
         /* 虚拟按键在推给面板前的最后一刻合成（避免被 GUI 立即模式的重绘覆盖 => 不闪） */
-        tab5_overlay_blit(tab5_scratch, x0, y0, rows, w);
+        rg_overlay_blit_cw90(tab5_scratch, rows, x0, y0, rows, w, TAB5_PHYS_W);
 #endif
         err = tab5_draw(x0, y0, x0 + rows, y0 + w, tab5_scratch);
         if (err != ESP_OK)
@@ -494,9 +365,24 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
     int64_t t_tr1 = esp_timer_get_time();
 
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-    /* PPA 路径：虚拟按键改为直接叠加到帧缓冲（必须在 PPA 之后，否则被覆盖） */
+    /* PPA 路径：虚拟按键直接叠加到帧缓冲（必须在 PPA 之后，否则被 PPA 的输出覆盖）。
+     * ⚠ 帧缓冲由 PPA 硬件直接写、不经 CPU 缓存，所以 CPU 的小区域写必须：
+     *   ① 先失效该区域的 cache 行（否则"未对齐的局部写"会把过期行内容写回去，抹掉 PPA 的输出）
+     *   ② 写像素  ③ 再写回（C2M），否则 DPI 的 DMA 读不到刚写的内容
+     * 范围就是本块自身（合成只写块内的像素），对齐到 cache 行；每块 2 次调用。 */
     if (done)
-        tab5_overlay_fb(x0, y0, rows, w);
+    {
+        const size_t b0 = ((size_t)y0 * TAB5_PHYS_W + x0) * 2;
+        const size_t b1 = ((size_t)(y0 + w - 1) * TAB5_PHYS_W + (x0 + rows - 1)) * 2 + 1;
+        const size_t a0 = (b0 / 128) * 128;
+        const size_t a1 = ((b1 + 127) / 128) * 128;
+        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+        /* ⚠ 这里传的是**整块帧缓冲**（不是本块的小缓冲），所以缓冲区原点必须是 (0,0)、
+         * 裁剪区是整屏 —— 传 (x0,y0) 会让索引变成 (py-y0)*720+(px-x0)，画面整体写偏到左上角。
+         * 按键自身的位置决定实际写哪儿，不需要外部裁剪。 */
+        rg_overlay_blit_cw90(tab5_fb, TAB5_PHYS_W, 0, 0, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
+        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
 #endif
     int64_t t_tr2 = esp_timer_get_time();
 

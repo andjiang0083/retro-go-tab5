@@ -1,5 +1,6 @@
 #include "rg_system.h"
 #include "rg_input.h"
+#include "rg_touch_overlay.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -40,11 +41,13 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #endif
 
 #ifdef RG_GAMEPAD_TOUCH_MAP
+#ifndef CONFIG_ESP_LCD_TOUCH_MAX_POINTS
+#define CONFIG_ESP_LCD_TOUCH_MAX_POINTS 5
+#endif
+#ifdef ESP_PLATFORM
 #include "esp_lcd_touch.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_touch_st7123.h"
-#ifndef CONFIG_ESP_LCD_TOUCH_MAX_POINTS
-#define CONFIG_ESP_LCD_TOUCH_MAX_POINTS 5
 #endif
 /* 触摸 IC 报的是面板物理坐标（竖屏原生 720x1280），与显示驱动的 90° 映射互逆 */
 #ifndef RG_TOUCH_PHYS_W
@@ -61,7 +64,15 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #endif
 static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
 
-/* 把键位表暴露给显示层（可视层用） */
+/* 虚拟按键隐藏时的恢复入口 = 左上角那个可见的开关（几何由可视层提供：
+ * rg_overlay_get_toggle_rect()，别在这里再写一份坐标）。
+ * 早期版本是"左上角 100x100 长按 1.2s"的秘密手势 —— 用户找不到、等于没有入口，已换掉。 */
+
+/* 当前按下的键（含触摸虚拟键）。可视层用它做"按下高亮"：
+ * 只读输入任务维护的全局量，不做事件泵（显示路径每帧要调几十次）。
+ * （定义放在 gamepad_state 声明之后，见文件下方。） */
+
+
 const rg_keymap_touch_t *rg_input_get_touch_keymap(size_t *count)
 {
     if (count)
@@ -69,6 +80,7 @@ const rg_keymap_touch_t *rg_input_get_touch_keymap(size_t *count)
     return keymap_touch;
 }
 
+#ifdef ESP_PLATFORM
 static esp_lcd_touch_handle_t touch_handle = NULL;
 /* Tab5 BSP 的 I2C 句柄（声明在 bsp/m5stack_tab5.h，那个 umbrella 头会拉 lvgl.h，故手写 extern） */
 extern esp_err_t bsp_i2c_init(void);
@@ -144,9 +156,20 @@ static bool rg_touch_ensure(void)
     RG_LOGI("Touch ready (after %d attempt(s)).\n", touch_init_attempts);
     return true;
 }
-#endif
+#else
+/* 宿主（SDL2 预览）没有触摸驱动：可视层只需要键位表，命中判定走键盘 */
+static bool rg_touch_ensure(void) { return false; }
+#endif /* ESP_PLATFORM */
+#endif /* RG_GAMEPAD_TOUCH_MAP */
 static bool input_task_running = false;
 static uint32_t gamepad_state = -1; // _Atomic
+
+/* 当前按下的键（含触摸虚拟键）。可视层用它做"按下高亮"：
+ * 只读输入任务维护的全局量，不做事件泵（显示路径每帧要调几十次）。 */
+uint32_t rg_input_get_pressed_mask(void)
+{
+    return (gamepad_state == (uint32_t)-1) ? 0 : (gamepad_state & RG_KEY_ALL);
+}
 static uint32_t gamepad_mapped = 0;
 static rg_battery_t battery_state = {0};
 
@@ -284,7 +307,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #endif
 #endif
 
-#if defined(RG_GAMEPAD_TOUCH_MAP)
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
     if (rg_touch_ensure() && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
     {
         uint16_t px[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
@@ -292,7 +315,16 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         uint8_t count = 0;
         if (esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS))
         {
-            for (int t = 0; t < count; ++t)
+#if RG_TOUCH_OVERLAY
+            /* "看得见"和"点得到"必须同源，两个条件都要满足：
+             *   ① 用户没关掉按键（visible）—— 否则黑边上一按就触发，用户以为触摸坏了；
+             *   ② 建层成功（is_ready）—— 分配失败时按键根本没画出来，同样不能命中。
+             * 只判 visible 会漏掉 ②：那时屏幕上看不到任何按键，命中却照旧生效。 */
+            const bool pad_visible = rg_overlay_get_visible() && rg_overlay_is_ready();
+#else
+            const bool pad_visible = true;
+#endif
+            for (int t = 0; t < count && pad_visible; ++t)
             {
                 int lx = 0, ly = 0;
                 RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
@@ -302,6 +334,30 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                     if (lx >= mapping->x - mapping->w / 2 && lx <= mapping->x + mapping->w / 2 &&
                         ly >= mapping->y - mapping->h / 2 && ly <= mapping->y + mapping->h / 2)
                         state |= mapping->key;
+                }
+            }
+
+            /* ── 恢复入口：点左上角那个可见开关 ────────────────────────────────
+             * 按键隐藏时可视层会在左上角画一个十字键图标的开关（rg_touch_overlay.c），
+             * 这里只负责命中它 → 把按键放回来（并立即落盘，断电也不丢）。
+             * 开关本身不是按键：不注入任何 RG_KEY_*，只切 visible。 */
+            if (!pad_visible && count > 0)
+            {
+                int tx = 0, ty = 0, tw = 0, th = 0;
+                rg_overlay_get_toggle_rect(&tx, &ty, &tw, &th);
+                /* 遍历所有触点，不只 px[0]：ST7123 多点上报里第 0 点可能是上一次的
+                 * 残留坐标（按键命中之所以一直正常，就是因为它遍历了全部点）。 */
+                for (int t = 0; t < count; ++t)
+                {
+                    int lx = 0, ly = 0;
+                    RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                    if (lx >= tx && lx < tx + tw && ly >= ty && ly < ty + th)
+                    {
+                        RG_LOGI("touch overlay: toggle tapped, showing buttons\n");
+                        rg_overlay_init();          /* 若之前建层失败，这里补一次 */
+                        rg_overlay_set_visible(true);
+                        break;
+                    }
                 }
             }
         }
@@ -505,7 +561,7 @@ void rg_input_init(void)
 void rg_input_deinit(void)
 {
     input_task_running = false;
-#if defined(RG_GAMEPAD_TOUCH_MAP)
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
     if (touch_handle)
     {
         esp_lcd_touch_del(touch_handle);

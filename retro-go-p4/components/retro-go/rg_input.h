@@ -92,6 +92,9 @@ typedef struct
 const rg_keymap_touch_t *rg_input_get_touch_keymap(size_t *count);
 #endif
 
+// 当前按下的键（含触摸虚拟键）——可视层的"按下高亮"用
+uint32_t rg_input_get_pressed_mask(void);
+
 // FIXME: Create a single unified keymap...
 // ...
 
