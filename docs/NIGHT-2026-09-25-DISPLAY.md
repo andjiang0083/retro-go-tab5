@@ -177,9 +177,18 @@ AXI_ICM_MASTER_H264_M0/M1 = 11/12
 | 三段细分打点（xpose/ovl/draw + 每块行数） | `mipi_dsi_tab5.h` | 已编译进镜像 ✓ |
 | AXI-ICM QoS 提权（cache/dma2d → 15，默认 0） | `mipi_dsi_tab5.h` | 已编译进镜像 ✓ |
 
-**待刷镜像**：`dist/retro-go-p2.6.6-axi-icm.img`（2,424,832 字节；已用 `strings` 确认
-"AXI-ICM qos defaults/raised" 与三段打点字符串都在固件内）
+**待刷镜像（明早的候选，按风险从低到高）**：
+
+| 镜像 | 内容 | 风险 | 期望 |
+|---|---|---|---|
+| `dist/retro-go-p2.6.6-axi-icm.img` | 三段打点 + AXI-ICM QoS 提权 | 低（只是提权，不动面板） | 丢帧数下降、draw 段耗时下降 |
+| `dist/retro-go-p2.6.7-retry-qos.img` | 以上 + DMA2D 忙时有界重试 | 低（上限 5×200µs，不会卡死） | 丢弃的绘制能被救回，减少白做的转置 |
+| `dist/retro-go-p2.6.8-depth2.img` | 再 + 显示队列深度 1→2 | **中（老笔记记录过楔死）** | 若成功：帧数翻倍（15→30） |
+
 **回退镜像**：`dist/retro-go-p2.6.4-ppa-revert.img`（已验证可跑的基线）
+
+⚠ **建议顺序**：先刷 p2.6.6 看默认 QoS 值和丢帧计数的变化 → 有效再刷 p2.6.7 → 最后才试 p2.6.8。
+p2.6.8 一旦出现画面定格：直接断电重启，然后刷回 p2.6.4 或 p2.6.7（不会有任何数据损坏）。
 
 ## 明早按顺序做（每步都有明确的判据）
 
