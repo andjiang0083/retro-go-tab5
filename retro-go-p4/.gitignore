@@ -1,0 +1,24 @@
+__pycache__/
+.DS_Store/
+.cache/
+.vscode/
+build/
+
+# ESP32 build
+/partitions.bin
+/partitions.csv
+/sdkconfig.old
+/sdkconfig
+/*/sdkconfig.old
+/*/sdkconfig
+/*.fw
+/*.img
+/*.zip
+
+# SDL2 build
+/sd
+/build-sdl2
+/stderr.txt
+/stdout.txt
+/gmon.out
+/*.exe

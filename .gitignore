@@ -1,0 +1,36 @@
+# --- build output ---
+build/
+*/build/
+**/build/
+sdkconfig.old
+dependencies.lock.bak
+
+# generated per-app sdkconfig copies (the real, tracked ones live in
+# components/retro-go/targets/<target>/sdkconfig)
+retro-go-p4/*/sdkconfig
+retro-go-p4/*/*/sdkconfig
+
+# --- firmware images / backups / archives (never commit these) ---
+*.img
+dist/
+backup/
+*.tar.gz
+
+# --- logs ---
+logs/
+*.log
+
+# --- python ---
+__pycache__/
+*.pyc
+
+# --- macos ---
+.DS_Store
+
+# --- temp ---
+*.bak
+*.orig
+*.rej
+
+# NOTE: vendor/managed_components/ is intentionally tracked — the project's CMake
+# lists it in EXTRA_COMPONENT_DIRS, so a clean clone must contain it to build.

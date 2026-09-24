@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Roadmap — pick something to build
+    url: https://github.com/andjiang0083/retro-go-tab5/blob/main/ROADMAP.md
+    about: Concrete open items, roughly ordered by value.
+  - name: Build help
+    url: https://github.com/andjiang0083/retro-go-tab5/blob/main/BUILDING.md
+    about: Requirements, the mandatory --no-networking flag, flashing, and the troubleshooting table.
+  - name: Questions and general discussion
+    url: https://github.com/andjiang0083/retro-go-tab5/discussions
+    about: For anything that is not a bug report or a concrete proposal.

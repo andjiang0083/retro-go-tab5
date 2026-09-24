@@ -1,0 +1,40 @@
+name: Feature / porting request
+description: Suggest something to build, or claim something from the roadmap
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [ROADMAP.md](https://github.com/andjiang0083/retro-go-tab5/blob/main/ROADMAP.md) first — if it is already listed,
+        say so and we will link your issue to it. Claiming an item here is the right way to avoid two people doing the same work.
+  - type: input
+    id: summary
+    attributes:
+      label: What do you want to build?
+      placeholder: "Battery gauge via the onboard INA226"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it worth doing?
+      description: What does it unlock or fix? Concrete beats aspirational.
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: How would you approach it?
+      description: |
+        Rough plan is enough. If it touches the display path or PSRAM bandwidth, note how it will be verified and whether it
+        can ship behind a runtime switch (see CONTRIBUTING.md).
+    validations:
+      required: false
+  - type: checkboxes
+    id: contributing
+    attributes:
+      label: Are you planning to work on it?
+      options:
+        - label: I intend to submit a PR for this
+        - label: I can test on real Tab5 hardware
