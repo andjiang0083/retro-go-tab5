@@ -301,12 +301,27 @@ static void lcd_init(void)
          * 重开前必读：① 先确认 tab5_line_buffer/tab5_scratch 仍是 128 字节对齐（曾经不对齐
          * 导致**静默**退回，白跑一整轮 A/B，见上方声明处注释）；② /sd/ppa_on 这个文件开关已
          * 废除（太容易被 macOS 建成 ppa_on.command，且无法反映真实执行路径）。 */
+        /* 2026-09-25 第二次重测结论：**仍然 1 帧** —— 补上 data_burst_length=128 无效，
+         * 所以 burst 不是病根（我先前的判断错了，记录在案）。
+         * 真正的差别在**调用方式**：R8T5 是「一帧一次 PPA」（整个画面一次转完），
+         * 我们是「一块一次 PPA」—— 每条 25.6 行的带子都单独发一次**阻塞** op，
+         * 每秒几十次，每次都有固定开销 + 目的地是"720 行各写 51 字节"的跨行零碎写。
+         * 结论：PPA 要用就**整帧一次**用，绝不能按块用。先关掉，别再挡路。 */
         bool ppa_allowed = false;
         if (esp_lcd_dpi_panel_get_frame_buffer(tab5_panel, 1, &fb) == ESP_OK && fb && ppa_allowed) {
             tab5_fb = (uint16_t *)fb;
+            /* 2026-09-25 重测（依据 R8T5 — github.com/Layer812/R8T5，Tab5 上的 PICO-8 模拟器，
+             * 它的 PPA 呈现函数注释就写着 "fast present"）：
+             * 它的配置与本处只差两项 ——
+             *   .data_burst_length = PPA_DATA_BURST_LENGTH_128  ← **我们原来完全没设**
+             *   .max_pending_trans_num = 1                      ← 我们原来是 2
+             * burst 长度没设 = DMA 每次只搬一点点，和我们 CPU 转置踩的是同一个坑，
+             * 只是这次踩在 DMA 引擎里。上次"PPA 慢 25 倍"很可能就是这一项造成的。
+             * 判据：屏幕帧率数字 + xpose=/draw= 打点；不对就一次构建回退。 */
             ppa_client_config_t ppa_cfg = {
                 .oper_type = PPA_OPERATION_SRM,
-                .max_pending_trans_num = 2,
+                .max_pending_trans_num = 1,
+                .data_burst_length = PPA_DATA_BURST_LENGTH_128,
             };
             if (ppa_register_client(&ppa_cfg, &tab5_ppa) == ESP_OK)
                 RG_LOGI("PPA SRM ready (fb=%p, %dx%d, stride=%dpx)\n", fb, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
