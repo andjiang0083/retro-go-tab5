@@ -1406,7 +1406,17 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
             },
         .flags =
             {
-                .use_dma2d = true,
+                /* 2026-09-25 实验①：关掉 DMA2D，改由 CPU 直接拷贝。
+                 * 起因：IDF 的 dpi_panel_draw_bitmap 在有 DMA2D 时是「异步拷贝 + 0 超时抢信号量」，
+                 * 抢不到就**丢弃**本次绘制（日志 previous draw operation is not finished），
+                 * 实测每秒丢弃上百次；同时那条路每块要动 ~120KB 内存
+                 * （源写回 40K + DMA2D 拷贝 40K + 目标写回 40K），而有效数据只有 40KB，
+                 * 真机打点表现为 draw= 段 0.772ms/块（占每块 1.239ms 的 62%）。
+                 * 本步只为**量化**：换成 CPU 同步拷贝后，draw= 若能大幅下降，说明瓶颈确在拷贝链路，
+                 * 下一步（转置直接写帧缓冲、走驱动的免拷贝快路）才有意义。
+                 * 关闭 DMA2D 后异步信号量机制不存在，丢弃/空洞问题也一并消失。
+                 * 不碰任何用户可见属性（分辨率/刷新率/色深/时序均不变）。 */
+                .use_dma2d = false,
             },
     };
 
