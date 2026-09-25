@@ -446,6 +446,11 @@ static void tab5_ppa_frame_probe(void)
         return;
     }
 
+    /* 三种 scale 组合各试一次 —— 现在源和目的都已 128 对齐，可以干净地判断 PPA 认哪个。
+     * 前几轮测试都被"缓冲没对齐"污染过，那些结果不能作数。
+     * 顺序：#0 = 1.0/1.0（纯旋转）；#1 = 交换(1280/720, 720/1280)；#2 = 不交换(720/1280, 1280/720)。 */
+    static const float probe_sx[3] = {1.0f, (float)TAB5_PHYS_H / 720.0f, (float)TAB5_PHYS_W / 1280.0f};
+    static const float probe_sy[3] = {1.0f, (float)TAB5_PHYS_W / 1280.0f, (float)TAB5_PHYS_H / 720.0f};
     for (int i = 0; i < 3; ++i)
     {
         ppa_srm_oper_config_t op = {0};
@@ -460,8 +465,8 @@ static void tab5_ppa_frame_probe(void)
         /* ⚠ 旋转下 scale 的两个轴是**交换**的（照抄 R8T5：scale_x 用高度比、scale_y 用宽度比）。
          * 给 1.0/1.0 会被拒（ESP_ERR_INVALID_ARG 0x102）—— 因为那等于说"输出 1280x720"，
          * 而旋转后的输出实际是 720x1280。生产路径 mipi_dsi_tab5.h 里也是 1.0/1.0，同样的问题。 */
-        op.scale_x = (float)TAB5_PHYS_H / 720.0f;      /* 1280/720 */
-        op.scale_y = (float)TAB5_PHYS_W / 1280.0f;     /* 720/1280 */
+        op.scale_x = probe_sx[i];
+        op.scale_y = probe_sy[i];
         op.out.block_offset_x = 0;
         op.out.block_offset_y = 0;
 
@@ -480,13 +485,19 @@ static void tab5_ppa_frame_probe(void)
 
 static void tab5_perf_report(void)
 {
-    /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。 */
+    /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。
+     * 2026-09-25 结论：三种 scale 变体全部 err=0x102（ESP_ERR_INVALID_ARG），
+     * 即使源与目的都已 128 对齐 —— 说明还有别的原因，且**那个 9.4ms 不能采信**。
+     * 探针已停用（它每次启动都往帧缓冲写整帧，会与面板扫描打架 → 真机实测 51~81 条
+     * "previous draw operation is not finished" 报错）。留着代码备查。 */
+#if 0
     static bool ppa_frame_probe_done = false;
     if (!ppa_frame_probe_done && tab5_fb)
     {
         ppa_frame_probe_done = true;
         tab5_ppa_frame_probe();
     }
+#endif
     int64_t now = esp_timer_get_time();
     if (tab5_pf_win_start == 0) {
         tab5_pf_win_start = tab5_pf_sess_start = now;
