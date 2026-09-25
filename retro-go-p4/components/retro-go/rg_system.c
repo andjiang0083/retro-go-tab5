@@ -1,5 +1,9 @@
 #include "rg_system.h"
 
+/* 屏幕帧率数字要推给叠加层（见 update_statistics）。本头文件自包含（内部已 include
+ * rg_system.h 拿目标配置），重复包含无副作用。 */
+#include "rg_touch_overlay.h"
+
 #include <sys/time.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -232,6 +236,11 @@ static void update_statistics(void)
         statistics.skippedFPS = (ticks - frames) / totalTimeSecs;
         statistics.fullFPS = fullFrames / totalTimeSecs;
         statistics.partialFPS = partFrames / totalTimeSecs;
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+        /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
+         * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
+        rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
+#endif
     }
     statistics.uptime = rg_system_timer() / 1000000;
 

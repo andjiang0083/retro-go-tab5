@@ -762,6 +762,82 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
         blit_one(buf, stride, rx, ry, rw, rh, 0, &btns[i], false);
 }
 
+/* ---------------------------------------------------------------- 屏幕上的显示帧率数字
+ *
+ * 位置：L 与 R 肩键之间的顶部中央（逻辑 (640,60)，与肩键同一行；两键分别占 x 40~240 与
+ *       1040~1240，中间这段本来就是空的，不压游戏画面）。
+ * 数据来源：rg_system.c 的 update_statistics() 每秒推一次值（partialFPS + fullFPS，
+ *           "真正显示出去的帧率"，与日志 FPS:(跳过+部分+完整) 的后两项同口径）。
+ * 实现：复用本模块已加载的 8x8 点阵**逐像素直绘**，不走按键掩码 —— 数字每秒都在变，
+ *       为它反复重建掩码没意义；面积仅 3 位 × scale4 = 96×32 = 3072 px，代价可忽略。
+ * 颜色：纯白 + 黑色投影（先投影、后正文），任何游戏画面上都看得清。 */
+#define RG_FPS_TEXT_CX 640      /* 逻辑坐标：L 与 R 正中 */
+#define RG_FPS_TEXT_CY 60
+#define RG_FPS_SCALE   4
+
+static int fps_value = -1;
+static char fps_text[8] = "";
+
+void rg_overlay_set_fps(int value)
+{
+    if (value < 0)
+    {
+        fps_value = -1;
+        return;
+    }
+    if (value > 999)
+        value = 999;
+    if (value == fps_value)
+        return;                       /* 值没变就不必重排版 */
+    fps_value = value;
+    snprintf(fps_text, sizeof(fps_text), "%d", value);
+}
+
+/* 按 cw90 映射把 fps_text 直绘进 buf：逻辑 (lx,ly) -> 物理 (phys_w-1-ly, lx)。
+ * 与 blit_one 用同一套映射；这里逐像素换算，不用第二份旋转位图。 */
+static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
+                          int lx0, int ly0, const uint16_t color)
+{
+    const int n = (int)strlen(fps_text);
+    const int px0 = phys_w - ly0 - 8 * RG_FPS_SCALE;   /* 逻辑 y 反向对应物理 x */
+    const int px1 = phys_w - ly0;
+    const int py0 = lx0;                               /* 逻辑 x 正向对应物理 y */
+    const int py1 = lx0 + n * 8 * RG_FPS_SCALE;
+
+    const int cx0 = imax(px0, rx), cx1 = imin(px1, rx + rw);
+    const int cy0 = imax(py0, ry), cy1 = imin(py1, ry + rh);
+    if (cx0 >= cx1 || cy0 >= cy1)
+        return;                                        /* 本块不覆盖数字区域，早退 */
+
+    for (int py = cy0; py < cy1; ++py)
+    {
+        const int gx = (py - py0) / RG_FPS_SCALE;      /* 逻辑 x -> 字形列 */
+        const int ch = gx >> 3, col = gx & 7;
+        if (ch >= n)
+            continue;
+        const uint8_t *gl = glyphs[(uint8_t)fps_text[ch]];
+        for (int px = cx0; px < cx1; ++px)
+        {
+            const int gy = (phys_w - 1 - px - ly0) / RG_FPS_SCALE;   /* 逻辑 y -> 字形行 */
+            if (gy < 0 || gy > 7)
+                continue;
+            if (gl[gy] & (0x80 >> col))                /* 字模 MSB = 最左列 */
+                buf[(size_t)(py - ry) * stride + (px - rx)] = color;
+        }
+    }
+}
+
+static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
+{
+    if (fps_value < 0 || !fps_text[0])
+        return;
+    const int n = (int)strlen(fps_text);
+    const int lx = RG_FPS_TEXT_CX - n * 8 * RG_FPS_SCALE / 2;
+    const int ly = RG_FPS_TEXT_CY - 8 * RG_FPS_SCALE / 2;
+    draw_fps_text(buf, stride, rx, ry, rw, rh, phys_w, lx + 2, ly + 2, c565(0, 0, 0));      /* 投影 */
+    draw_fps_text(buf, stride, rx, ry, rw, rh, phys_w, lx, ly, c565(255, 255, 255));        /* 正文 */
+}
+
 /* tab5 专用：面板是原生竖屏，逻辑画面按 90°CW 写进物理帧缓冲。
  * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)，与显示驱动的映射必须完全一致。
  * 这里不做第二份旋转位图，只在索引上换算 —— 一份数据、两种朝向。 */
@@ -776,12 +852,16 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
     if (!visible || !ready)
     {
+        /* 隐藏态（或建层失败）：只画左上角开关 —— 它是唯一入口，任何情况下都得在 */
         blit_toggle(buf, stride, rx, ry, rw, rh, phys_w, true);
+        blit_fps(buf, stride, rx, ry, rw, rh, phys_w);   /* 帧率数字与按键显隐无关，始终画 */
         return;
     }
 
     for (size_t i = 0; i < btn_count; ++i)
         blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], true);
+
+    blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }
 
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */

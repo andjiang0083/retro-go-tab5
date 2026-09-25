@@ -75,4 +75,10 @@ void rg_overlay_debug_set_pressed(uint32_t mask);
  * 开关只在按键隐藏时显示，但矩形始终可查（单一数据源，别在别处再写一遍坐标）。 */
 void rg_overlay_get_toggle_rect(int *x, int *y, int *w, int *h);
 
+/* 屏幕上的"显示帧率"数字：画在 L 与 R 肩键之间的顶部中央（逻辑坐标 640,60）。
+ * 由 rg_system.c 的 update_statistics() 每秒推一次值 —— 用的是 statistics 里
+ * partialFPS + fullFPS（"真正显示出去的帧率"），与日志 FPS:(跳过+部分+完整) 的后两项同口径。
+ * 传负值 = 不显示。直绘，不走按键掩码。 */
+void rg_overlay_set_fps(int value);
+
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */
