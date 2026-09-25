@@ -308,8 +308,11 @@ static void lcd_init(void)
          * 每秒几十次，每次都有固定开销 + 目的地是"720 行各写 51 字节"的跨行零碎写。
          * 结论：PPA 要用就**整帧一次**用，绝不能按块用。先关掉，别再挡路。 */
         bool ppa_allowed = false;
-        if (esp_lcd_dpi_panel_get_frame_buffer(tab5_panel, 1, &fb) == ESP_OK && fb && ppa_allowed) {
+        /* 无论 PPA 开不开都要缓存帧缓冲指针：每秒一次的叠加层刷新（屏幕帧率数字）要直接写它。
+         * 原先只在 PPA 分支里赋值，导致 PPA 关着时 tab5_fb 是 NULL，叠加层无处可写。 */
+        if (esp_lcd_dpi_panel_get_frame_buffer(tab5_panel, 1, &fb) == ESP_OK && fb)
             tab5_fb = (uint16_t *)fb;
+        if (tab5_fb && ppa_allowed) {
             /* 2026-09-25 重测（依据 R8T5 — github.com/Layer812/R8T5，Tab5 上的 PICO-8 模拟器，
              * 它的 PPA 呈现函数注释就写着 "fast present"）：
              * 它的配置与本处只差两项 ——
@@ -436,6 +439,21 @@ static void tab5_perf_report(void)
         (unsigned)(tab5_pf_ov_us / 1000), (unsigned)((tab5_pf_ov_us % 1000) / 10),
         (unsigned)(tab5_pf_dr_us / 1000), (unsigned)((tab5_pf_dr_us % 1000) / 10),
         rows_avg10 / 10, rows_avg10 % 10, (unsigned)tab5_pf_rows_max);
+    /* 每秒把叠加层（屏幕帧率数字）直接合成进面板帧缓冲。
+     * 为什么非这样不可：数字只有在"被推送的块正好覆盖它"时才会被重画，而游戏中的脏区
+     * 极少覆盖到顶部正中 —— 真机表现就是"数字不刷新，必须点开 menu 才更新"（menu 走整屏推送）。
+     * 这里用和 menu 完全相同的做法（整块帧缓冲做原点 + 整屏裁剪），每秒一次。 */
+    if (tab5_fb)
+    {
+        rg_overlay_blit_cw90(tab5_fb, TAB5_PHYS_W, 0, 0, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
+        /* 只写回数字所在的那条物理行带（y≈600..680，覆盖数字的 y 608..672），
+         * 不做整帧 1.84MB 写回 —— 那是上次"蓝屏不断闪烁"的最大嫌疑。
+         * 偏移 864000、长度 115200，都是 128 的整数倍（msync 要求对齐）。 */
+        const size_t off = (size_t)TAB5_PHYS_W * 2 * 600;
+        const size_t len = (size_t)TAB5_PHYS_W * 2 * 80;
+        esp_cache_msync((void *)((uintptr_t)tab5_fb + off), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+
     tab5_pf_tr_us = tab5_pf_sub_us = 0;
     tab5_pf_xp_us = tab5_pf_ov_us = tab5_pf_dr_us = 0;
     tab5_pf_px = 0;
