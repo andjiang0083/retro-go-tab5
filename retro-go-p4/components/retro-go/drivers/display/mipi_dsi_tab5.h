@@ -31,6 +31,7 @@
 #include "esp_rom_sys.h"         /* esp_rom_delay_us：DMA2D 忙时的短让出（远细于 1ms tick） */
 #include "hal/axi_icm_ll.h"      /* AXI-ICM QoS：给 CPU cache 写回 / DMA2D 拷贝提权（见 lcd_init） */
 #include "soc/icm_sys_struct.h"  /* 读 QoS 默认值：LL 只有 setter 没有 getter，直接读寄存器结构体 */
+#include <esp_heap_caps.h>       /* E0 带宽探针要显式申请 PSRAM 缓冲 */
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
 #include "rg_touch_overlay.h"    /* 虚拟按键可视层（标签/透明度/按下反馈） */
@@ -82,11 +83,103 @@ static esp_lcd_panel_handle_t tab5_panel = NULL;
  * 实际每次都在走 CPU 路径，白跑一整轮 A/B。链接后的地址是 0x...bbc（低 7 位非零），所以必须显式声明。 */
 static uint16_t tab5_line_buffer[LCD_BUFFER_LENGTH] __attribute__((aligned(128)));  /* retro-go 收集逻辑行用 */
 static uint16_t tab5_scratch[LCD_BUFFER_LENGTH] __attribute__((aligned(128)));      /* 转置后的物理块 */
+
+/* E3（2026-09-25）：源数据先**整块顺序读**进片内 SRAM，再从 SRAM 转置。
+ * 依据 BW2 打点：同样的"每 1440B 碰 64B"模式，打在 PSRAM 上只有 28.2MB/s，
+ * 而顺序读有 89MB/s（差 3 倍）。块的源数据本身连续（每行 1440B 紧邻），
+ * 所以整块读就是一次纯顺序读；坏模式随后打在 SRAM 上，没有行缓冲惩罚。
+ * 块超过缓冲（48KB）时自动退回原分块路径，行为不变。 */
+#define TAB5_STAGE_BYTES (48 * 1024)
+static uint16_t tab5_stage[TAB5_STAGE_BYTES / 2] __attribute__((aligned(128)));
 static int tab5_win_left = 0, tab5_win_top = 0, tab5_win_width = 0;
 
 /* PPA 硬件旋转路径（详见文件后半的说明）；任一步失败则为 NULL → 退回 CPU 转置 */
 static ppa_client_handle_t tab5_ppa;
 static uint16_t *tab5_fb;      /* DPI 帧缓冲（PSRAM，720x1280 RGB565，行跨距无填充 = 720px） */
+
+/* ── E0：裸测 PSRAM 带宽（2026-09-25，一次性探针，测完即删）────────────────────
+ * 要回答的问题：现在只知道"穿过整条显示通路是 29.7MB/s"，**不知道内存本身能给多少**。
+ * 没有这个地板值，后面所有优化（双缓冲、改块形状、去掉旋转）都是瞎猜。
+ *
+ * 方法：同一段代码在两个时刻各跑一次 ——
+ *   A 面板开始扫描之前（bsp_display_new 之前）→ 没有面板抢带宽
+ *   B 面板开始扫描之后                  → 面板正以约 107MB/s 持续读帧缓冲
+ * 两个数之差 = 面板扫描到底吃掉了多少内存带宽（这是我们一直在猜的事）。
+ *
+ * 缓冲 8MB：**必须远大于 cache**，否则读全部命中 cache，测的是 cache 不是 PSRAM。
+ * 三个动作分别计时：顺序写（含把脏数据推下 PSRAM 的 msync）/ 顺序读（先失效 cache）。
+ * ⚠ 探针在扫描期间会造成几毫秒重负载，屏幕可能闪一下 —— 预期行为，不是坏了。 */
+#define TAB5_BW_BYTES (8 * 1024 * 1024)
+#define TAB5_BW_WORDS (TAB5_BW_BYTES / 4)
+
+static void tab5_bw_probe(const char *tag)
+{
+    uint32_t *buf = heap_caps_malloc(TAB5_BW_BYTES, MALLOC_CAP_SPIRAM);
+    if (!buf) { RG_LOGW("BW[%s] PSRAM alloc failed\n", tag); return; }
+
+    int64_t t0 = esp_timer_get_time();
+    for (size_t i = 0; i < TAB5_BW_WORDS; ++i)
+        buf[i] = (uint32_t)i;                                          /* 顺序写 */
+    esp_cache_msync(buf, TAB5_BW_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M); /* 真正落到 PSRAM 才算完 */
+    int64_t t1 = esp_timer_get_time();
+
+    esp_cache_msync(buf, TAB5_BW_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_M2C); /* 失效，保证读来自 PSRAM */
+    uint32_t sum = 0;
+    for (size_t i = 0; i < TAB5_BW_WORDS; ++i)
+        sum += buf[i];                                                 /* 顺序读 */
+    int64_t t2 = esp_timer_get_time();
+
+    RG_LOGI("BW[%s] write=%.1f MB/s  read=%.1f MB/s  (写 %.1fms / 读 %.1fms, 缓冲 8MB, sum=%u)\n",
+            tag,
+            (TAB5_BW_BYTES / 1e6) / ((t1 - t0) / 1e6),
+            (TAB5_BW_BYTES / 1e6) / ((t2 - t1) / 1e6),
+            (t1 - t0) / 1000.0, (t2 - t1) / 1000.0, (unsigned)sum);
+
+    heap_caps_free(buf);
+}
+
+/* ── E0b：用**我们真实的访问模式**再测一遍（2026-09-25，一次性探针）─────────────
+ * E0 测的是顺序访问（89MB/s），但转置的真实负载是跨行访问：
+ *   读：每行连续读 32 像素 = 正好一整条 64B cache line，然后跳到下一行（跨 1440B）
+ *   写：旧转置每行只写 2 字节（跨 1440B）—— 那个"28 倍写放大"到底多贵
+ * 单位统一用**有效字节/秒**，这样能直接和通路的 29.7MB/s 对比，看是谁在拖后腿。
+ * PASSES 次循环是为了让耗时足够长（8MB 单趟不到 1ms，测不准）。 */
+#define TAB5_BW2_PASSES 20
+
+static void tab5_bw_probe_strided(const char *tag)
+{
+    const int STRIDE_PX = 720;                              /* 与帧缓冲同跨距 */
+    const int ROWS = TAB5_BW_BYTES / (STRIDE_PX * 2);
+    uint16_t *buf = heap_caps_malloc(TAB5_BW_BYTES, MALLOC_CAP_SPIRAM);
+    if (!buf) { RG_LOGW("BW2[%s] PSRAM alloc failed\n", tag); return; }
+
+    /* ① 转置的读：每行读 32 像素（一条 64B line），跳下一行 */
+    int64_t t0 = esp_timer_get_time();
+    uint32_t sum = 0;
+    for (int p = 0; p < TAB5_BW2_PASSES; ++p) {
+        esp_cache_msync(buf, TAB5_BW_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+        for (int r = 0; r < ROWS; ++r)
+            for (int x = 0; x < 32; ++x)
+                sum += buf[(size_t)r * STRIDE_PX + x];
+    }
+    int64_t t1 = esp_timer_get_time();
+
+    /* ② 旧转置的写：每行只写 2 字节（跨 1440B） */
+    for (int p = 0; p < TAB5_BW2_PASSES; ++p)
+        for (int r = 0; r < ROWS; ++r)
+            buf[(size_t)r * STRIDE_PX] = (uint16_t)(r + p);
+    esp_cache_msync(buf, TAB5_BW_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    int64_t t2 = esp_timer_get_time();
+
+    const double used_read  = (double)ROWS * 32 * 2 * TAB5_BW2_PASSES / 1e6;  /* 有效 MB */
+    const double used_write = (double)ROWS * 2 * TAB5_BW2_PASSES / 1e6;
+
+    RG_LOGI("BW2[%s] 跨行读64B=%.1f MB/s(有效) 跨行写2B=%.1f MB/s(有效) [读 %.1fms / 写 %.1fms, sum=%u]\n",
+            tag, used_read / ((t1 - t0) / 1e6), used_write / ((t2 - t1) / 1e6),
+            (t1 - t0) / 1000.0, (t2 - t1) / 1000.0, (unsigned)sum);
+
+    heap_caps_free(buf);
+}
 
 static inline uint16_t tab5_swap16(uint16_t v)
 {
@@ -176,6 +269,10 @@ static void lcd_init(void)
     /* AXI-ICM QoS：先把 CPU cache 写回与 DMA2D 拷贝的优先级提起来（面板不动，理由见函数注释） */
     tab5_axi_icm_tune();
 
+#if 0 /* E0/E0b 探针：已测完（结果见 docs），关掉以免开机时出现可见闪烁 */
+    tab5_bw_probe("A-面板未扫描");   /* E0 探针 A：此时 DPI 还没起来，没有面板抢带宽 */
+    tab5_bw_probe_strided("A-面板未扫描");   /* E0b：真实访问模式（跨行读 64B / 跨行写 2B） */
+#endif
     esp_err_t err = bsp_display_new_with_handles_to_st7123(NULL, &handles);
     if (err != ESP_OK || !handles.panel) {
         RG_LOGW("st7123 path failed (err=0x%x), trying generic path\n", err);
@@ -222,6 +319,10 @@ static void lcd_init(void)
         }
     }
 
+#if 0 /* E0/E0b 探针：已测完（结果见 docs），关掉以免开机时出现可见闪烁 */
+    tab5_bw_probe("B-面板扫描中");   /* E0 探针 B：面板此刻正持续读帧缓冲，抢带宽的对照 */
+    tab5_bw_probe_strided("B-面板扫描中");   /* E0b：真实访问模式 */
+#endif
     RG_SCREEN_INIT();   /* 约定钩子：显示初始化必须经这个宏（历史教训：漏掉 = 黑屏） */
 
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
@@ -432,6 +533,15 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
          * 在 32 轮 i 循环里被写满 —— 两侧都变成"一条 cache line 装 32 个有效像素"。
          * 只是**存储顺序**不同，落点与取值完全一致：等价性已由 tools/test_transpose_tiling.c
          * 在 98 个尺寸组合上验证为逐字节相同（含 1 行/1 列/非 32 倍数边界）。 */
+        /* E3：整块顺序读进片内 SRAM（理由见 tab5_stage 声明处）。
+         * 源数据本身连续，所以这是一次纯顺序读；转置随后从 SRAM 读，不再受 PSRAM 行缓冲惩罚。
+         * 块超过 48KB 缓冲则自动退回原分块路径，行为与之前完全一致。 */
+        const size_t tab5_blk_bytes = (size_t)rows * w * 2;
+        const uint16_t *xsrc = buffer;
+        if (tab5_blk_bytes <= TAB5_STAGE_BYTES) {
+            memcpy(tab5_stage, buffer, tab5_blk_bytes);
+            xsrc = tab5_stage;
+        }
         #define TAB5_TR 32
         #define TAB5_TC 32
         for (int i0 = 0; i0 < rows; i0 += TAB5_TR) {
@@ -440,7 +550,7 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
                 const int tj = (w - j0 < TAB5_TC) ? (w - j0) : TAB5_TC;
                 for (int ii = 0; ii < ti; ++ii) {
                     const int i = i0 + ii;
-                    const uint16_t *src = buffer + (size_t)i * w + j0;
+                    const uint16_t *src = xsrc + (size_t)i * w + j0;
                     const int a = rows - 1 - i;
                     uint16_t *dst = tab5_scratch + (size_t)j0 * rows + a;
                     for (int jj = 0; jj < tj; ++jj)
