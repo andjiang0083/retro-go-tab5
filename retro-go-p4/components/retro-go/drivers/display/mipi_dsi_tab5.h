@@ -415,8 +415,78 @@ static uint64_t tab5_pf_tot_xp_us, tab5_pf_tot_ov_us, tab5_pf_tot_dr_us;
 static uint32_t tab5_pf_px, tab5_pf_tot_px;                     /* 窗口内推送的像素数 */
 static uint32_t tab5_pf_rows_max;
 
+/* ── 整帧一次 PPA 的耗时测量（唯一还没验证过的形态，2026-09-25）
+ * 背景：按块调用 PPA 是死路（每秒几十次阻塞 op，真机实测 1 帧）。R8T5 的 "fast present"
+ * 是**整帧一次**：整个画面一次转完。这里只测一件事 —— 一次 op 把整块逻辑画面
+ * （1280x720 RGB565 = 1.84MB）转进面板帧缓冲要多久。
+ * 判据：< 5ms → "模拟器画进逻辑帧缓冲 + 每帧一次 PPA" 这条架构可行；
+ *       > 50ms → PPA 在这块板子上彻底结案，不再碰。
+ * 副作用：会把一帧内容写进面板帧缓冲 → 开机后约 1 秒屏幕闪一下黑，随后 launcher 重画。 */
+static void tab5_ppa_frame_probe(void)
+{
+    const size_t src_bytes = (size_t)1280 * 720 * 2;
+    /* PPA 要求缓冲 128 字节对齐（不对齐会被拒 —— 我们生产代码里就吃过这个亏）。
+     * heap_caps_malloc 不保证 128 对齐，必须显式 aligned_alloc。 */
+    uint16_t *src = (uint16_t *)heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM);
+    if (!src) { RG_LOGW("PPA-FRAME: 源缓冲申请失败，跳过\n"); return; }
+    memset(src, 0, src_bytes);
+    RG_LOGI("PPA-FRAME: src=%p (低7位=%u)  fb=%p (低7位=%u)\n",
+            src, (unsigned)((uintptr_t)src & 127), tab5_fb, (unsigned)((uintptr_t)tab5_fb & 127));
+
+    ppa_client_handle_t cli = NULL;
+    ppa_client_config_t ccfg = {
+        .oper_type = PPA_OPERATION_SRM,
+        .max_pending_trans_num = 1,
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+    };
+    if (ppa_register_client(&ccfg, &cli) != ESP_OK || !cli)
+    {
+        RG_LOGW("PPA-FRAME: client 注册失败，跳过\n");
+        heap_caps_free(src);
+        return;
+    }
+
+    for (int i = 0; i < 3; ++i)
+    {
+        ppa_srm_oper_config_t op = {0};
+        op.in.buffer = src;
+        op.in.pic_w = 1280; op.in.pic_h = 720;
+        op.in.block_w = 1280; op.in.block_h = 720;
+        op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.out.buffer = tab5_fb;
+        op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+        op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_270;
+        /* ⚠ 旋转下 scale 的两个轴是**交换**的（照抄 R8T5：scale_x 用高度比、scale_y 用宽度比）。
+         * 给 1.0/1.0 会被拒（ESP_ERR_INVALID_ARG 0x102）—— 因为那等于说"输出 1280x720"，
+         * 而旋转后的输出实际是 720x1280。生产路径 mipi_dsi_tab5.h 里也是 1.0/1.0，同样的问题。 */
+        op.scale_x = (float)TAB5_PHYS_H / 720.0f;      /* 1280/720 */
+        op.scale_y = (float)TAB5_PHYS_W / 1280.0f;     /* 720/1280 */
+        op.out.block_offset_x = 0;
+        op.out.block_offset_y = 0;
+
+        int64_t t0 = esp_timer_get_time();
+        esp_err_t err = ppa_do_scale_rotate_mirror(cli, &op);
+        int64_t dt = esp_timer_get_time() - t0;
+        /* 只用整数格式化：ESP-IDF 的日志不支持 %lld / %f（用了会把后面的参数全部错位）。 */
+        const int mbs10 = dt > 0 ? (int)(1840000 * 10 / dt) : 0;   /* 1.84MB / dt，×10 留一位小数 */
+        RG_LOGI("PPA-FRAME: #%d 整帧270度 = %d us (输出 %d.%d MB/s) err=0x%x\n",
+                i, (int)dt, mbs10 / 10, mbs10 % 10, (unsigned)err);
+    }
+
+    ppa_unregister_client(cli);
+    heap_caps_free(src);
+}
+
 static void tab5_perf_report(void)
 {
+    /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。 */
+    static bool ppa_frame_probe_done = false;
+    if (!ppa_frame_probe_done && tab5_fb)
+    {
+        ppa_frame_probe_done = true;
+        tab5_ppa_frame_probe();
+    }
     int64_t now = esp_timer_get_time();
     if (tab5_pf_win_start == 0) {
         tab5_pf_win_start = tab5_pf_sess_start = now;
