@@ -1392,6 +1392,13 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
          * 结论：这个面板的扫描刷新率不能靠降 DPI 时钟来省；带宽要另想办法（见
          * docs/NIGHT-2026-09-25-DISPLAY.md 与 esp32-p4-display-bandwidth skill）。 */
         .pixel_format       = LCD_COLOR_PIXEL_FORMAT_RGB565,
+        /* ⚠ 2026-09-25 E2 第 1 步**失败并已回退**，勿重犯：
+         * 单独把 num_fbs 从 1 改成 2 会**直接破坏显示** —— 真机实测面板报错 22 条
+         * （previous draw operation is not finished）、日志 FPS:50 (50+0+0) 即**一帧都没送达**、
+         * PSRAM 也没按预期减少 1.84MB（第二块 fb 没被正常用起来）。
+         * 结论：**E2 必须整体落地**（num_fbs=2 + 取双 fb 指针 + 注册 on_refresh_done 做 vsync
+         * + 写后备帧并交换 + 精确范围 cache 写回），不能拆成"先改配置看看"。
+         * 单独改配置会让 IDF 的 DMA2D/刷新路径处于无人管理的双缓冲状态 → 绘制全失败。 */
         .num_fbs            = 1,
         .video_timing =
             {
