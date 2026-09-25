@@ -442,15 +442,25 @@ static void tab5_perf_report(void)
     /* 每秒把叠加层（屏幕帧率数字）直接合成进面板帧缓冲。
      * 为什么非这样不可：数字只有在"被推送的块正好覆盖它"时才会被重画，而游戏中的脏区
      * 极少覆盖到顶部正中 —— 真机表现就是"数字不刷新，必须点开 menu 才更新"（menu 走整屏推送）。
-     * 这里用和 menu 完全相同的做法（整块帧缓冲做原点 + 整屏裁剪），每秒一次。 */
+     * ⚠ 必须先擦除再画：这条路径不像正常推送那样把底下的游戏画面重画一遍，
+     * 不擦的话新旧数字会叠在一起（真机已验证）。
+     * 区域按 cw90 映射算：数字逻辑 y=44..76 → 物理 x=644..676（固定）；
+     * 逻辑 x 随位数变化 → 物理 y 取一个够宽的带（1~3 位都盖得住）。
+     * 黑底是刻意的：白字+黑投影本来就按深底设计，黑框还能让数字在亮场景里也看得清。 */
     if (tab5_fb)
     {
+        const int cx0 = 640, cx1 = 680, cy0 = 584, cy1 = 696;   /* 物理坐标，比数字本身略大一圈 */
+        for (int py = cy0; py < cy1; ++py)
+        {
+            uint16_t *row = tab5_fb + (size_t)py * TAB5_PHYS_W;
+            for (int px = cx0; px < cx1; ++px)
+                row[px] = 0x0000;
+        }
         rg_overlay_blit_cw90(tab5_fb, TAB5_PHYS_W, 0, 0, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
-        /* 只写回数字所在的那条物理行带（y≈600..680，覆盖数字的 y 608..672），
-         * 不做整帧 1.84MB 写回 —— 那是上次"蓝屏不断闪烁"的最大嫌疑。
-         * 偏移 864000、长度 115200，都是 128 的整数倍（msync 要求对齐）。 */
-        const size_t off = (size_t)TAB5_PHYS_W * 2 * 600;
-        const size_t len = (size_t)TAB5_PHYS_W * 2 * 80;
+        /* 只写回数字所在的那条物理行带（y=584..696），不做整帧 1.84MB 写回 ——
+         * 那是上次"蓝屏不断闪烁"的最大嫌疑。偏移 840960、长度 161280，都是 128 的整数倍。 */
+        const size_t off = (size_t)TAB5_PHYS_W * 2 * 584;
+        const size_t len = (size_t)TAB5_PHYS_W * 2 * 112;
         esp_cache_msync((void *)((uintptr_t)tab5_fb + off), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
 
