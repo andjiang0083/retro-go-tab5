@@ -420,12 +420,36 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
     /* ---- 回退：CPU 转置 + 面板推送（原路径）---- */
     if (!done) {
         int64_t t_x0 = esp_timer_get_time();
-        for (int i = 0; i < rows; ++i) {
-            const uint16_t *src = buffer + (size_t)i * w;
-            const int a = rows - 1 - i;
-            for (int j = 0; j < w; ++j)
-                tab5_scratch[(size_t)j * rows + a] = tab5_swap16(src[j]);
+        /* ── 分块转置（2026-09-25，真机实测后重写）─────────────────────────────
+         * 旧写法逐行转：内层 j 连续读（好），但目标下标 j*rows+a 的步长是 rows 个 uint16
+         * （28 行时 = 56 字节），每次只写 2 字节 —— 一条 64B cache line 只被用上 2 字节，
+         * 剩下 30 次写入要等后面 28 轮 i 循环才补上。等于每轮把全部 ~630 条 line 碰一遍
+         * 却每条只写 2 字节，28 轮下来 ~17640 次行事务，而理论只需 630 次（约 28 倍放大）。
+         * 真机打点印证：xpose= 141ms/秒，合每像素 24ns，是理论值的 ~20 倍。
+         *
+         * 改法：按 32×32 分块，保持"内层沿 j 连续读"（源在 PSRAM，读要一次吃满一条 line），
+         * 目标写虽然步长仍是 rows，但一个分块只碰 32 条 line（32×64B = 2KB，常驻 L1），
+         * 在 32 轮 i 循环里被写满 —— 两侧都变成"一条 cache line 装 32 个有效像素"。
+         * 只是**存储顺序**不同，落点与取值完全一致：等价性已由 tools/test_transpose_tiling.c
+         * 在 98 个尺寸组合上验证为逐字节相同（含 1 行/1 列/非 32 倍数边界）。 */
+        #define TAB5_TR 32
+        #define TAB5_TC 32
+        for (int i0 = 0; i0 < rows; i0 += TAB5_TR) {
+            const int ti = (rows - i0 < TAB5_TR) ? (rows - i0) : TAB5_TR;
+            for (int j0 = 0; j0 < w; j0 += TAB5_TC) {
+                const int tj = (w - j0 < TAB5_TC) ? (w - j0) : TAB5_TC;
+                for (int ii = 0; ii < ti; ++ii) {
+                    const int i = i0 + ii;
+                    const uint16_t *src = buffer + (size_t)i * w + j0;
+                    const int a = rows - 1 - i;
+                    uint16_t *dst = tab5_scratch + (size_t)j0 * rows + a;
+                    for (int jj = 0; jj < tj; ++jj)
+                        dst[(size_t)jj * rows] = tab5_swap16(src[jj]);
+                }
+            }
         }
+        #undef TAB5_TR
+        #undef TAB5_TC
         int64_t t_x1 = esp_timer_get_time();
         int64_t t_o1;
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
