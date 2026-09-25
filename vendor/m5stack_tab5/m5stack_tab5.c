@@ -1385,6 +1385,12 @@ esp_err_t bsp_display_new_with_handles_to_st7123(const bsp_display_config_t* con
         .virtual_channel    = 0,
         .dpi_clk_src        = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
         .dpi_clock_freq_mhz = 70,  // DPI clock frequency
+        /* ⚠ 2026-09-25 实验记录（已回退，勿重犯）：曾试降到 45MHz（扫描 37.2Hz）以释放
+         * PSRAM 带宽（面板 57.8Hz 扫描独占 ~107MB/s，我们的转置+DMA2D 只有 ~40MB/s 且
+         * CPU 仅 41%、提交仅 0.2ms/秒 → 瓶颈是总线延迟）。
+         * 结果：整体吞吐没明显改善，但**屏幕出现明显频闪**，用户当场否决。
+         * 结论：这个面板的扫描刷新率不能靠降 DPI 时钟来省；带宽要另想办法（见
+         * docs/NIGHT-2026-09-25-DISPLAY.md 与 esp32-p4-display-bandwidth skill）。 */
         .pixel_format       = LCD_COLOR_PIXEL_FORMAT_RGB565,
         .num_fbs            = 1,
         .video_timing =
