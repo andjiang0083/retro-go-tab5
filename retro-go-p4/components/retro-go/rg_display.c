@@ -525,6 +525,18 @@ bool rg_display_sync(bool block)
     return !rg_task_messages_waiting(display_task_queue);
 }
 
+/* 强制某些逻辑行在下一帧重推（把校验和清零）。
+ * 用途：屏幕上的帧率数字每秒都在变，但它所在区域平时不在脏区里，
+ * 不主动置脏就永远不重画 —— 真机表现为"帧率数字不刷新，只有点开 menu 才更新"。
+ * 这是本文件既有的"校验和置零强制重推"手法（见 rg_display_write_rect）。 */
+void rg_display_invalidate_lines(int top, int count)
+{
+    if (top < 0) { count += top; top = 0; }
+    for (int y = 0; y < count; ++y)
+        if (top + y < display.screen.height)
+            screen_line_checksum[top + y] = 0;
+}
+
 void rg_display_write_rect(int left, int top, int width, int height, int stride, const uint16_t *buffer, uint32_t flags)
 {
     RG_ASSERT_ARG(buffer);

@@ -4,6 +4,10 @@
  * rg_system.h 拿目标配置），重复包含无副作用。 */
 #include "rg_touch_overlay.h"
 
+/* 强制重推某些逻辑行（实现在 rg_display.c）。这里直接声明，避免动 rg_display.h
+ * 的包含顺序（那个头文件对 config.h 的可见性有要求）。 */
+extern void rg_display_invalidate_lines(int top, int count);
+
 #include <sys/time.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -240,6 +244,10 @@ static void update_statistics(void)
         /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
          * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
         rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
+        /* 数字变了，把它所在的逻辑行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
+         * 真机表现为"屏幕上的帧率不刷新，点开 menu 才更新"。
+         * 44 / 32 对应 rg_touch_overlay.c 里数字的纵向范围（中心 y=60、高 8x4=32px）。 */
+        rg_display_invalidate_lines(44, 32);
 #endif
     }
     statistics.uptime = rg_system_timer() / 1000000;
