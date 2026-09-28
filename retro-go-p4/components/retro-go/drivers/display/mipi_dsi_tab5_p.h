@@ -679,7 +679,11 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         {
             const size_t n = (size_t)rows * (size_t)w;
             uint16_t *d = tab5_scratch;
-            const uint16_t *sc = buffer;
+            /* 2026-09-28 修 bug：这里原本写的是 buffer（PSRAM 源），
+             * 于是上面那次 memcpy 到片内 SRAM 的 E3 优化**从未生效** ——
+             * 搬了 23KB 却被无视，循环仍逐像素读 PSRAM，实测每像素 24ns（理论值 ~20 倍）。
+             * 必须读 xsrc：块 <= 48KB 时它就是片内 SRAM 里的那份。 */
+            const uint16_t *sc = xsrc;
             for (size_t k = 0; k < n; ++k)
                 d[k] = tab5_swap16(sc[k]);
         }
