@@ -430,8 +430,15 @@ static void tab5_ppa_frame_probe(void)
     uint16_t *src = (uint16_t *)heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM);
     if (!src) { RG_LOGW("PPA-FRAME: 源缓冲申请失败，跳过\n"); return; }
     memset(src, 0, src_bytes);
-    RG_LOGI("PPA-FRAME: src=%p (低7位=%u)  fb=%p (低7位=%u)\n",
-            src, (unsigned)((uintptr_t)src & 127), tab5_fb, (unsigned)((uintptr_t)tab5_fb & 127));
+    /* 2026-09-28：照抄 tab5-vgbanext 的 ppa_engine 做法 —— 输出用**自管** 64 字节对齐 DMA 缓冲，
+     * 不写面板帧缓冲。两个好处：① 与面板扫描无冲突（旧探针写 fb 导致 51~81 条
+     * "previous draw operation is not finished"）；② 排除 IDF 帧缓冲所有权/尺寸的干扰。 */
+    const size_t out_bytes = (size_t)TAB5_PHYS_W * TAB5_PHYS_H * 2;
+    uint16_t *dst = (uint16_t *)heap_caps_aligned_calloc(64, 1, out_bytes,
+                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (!dst) { RG_LOGW("PPA-FRAME: 输出缓冲申请失败，跳过\n"); heap_caps_free(src); return; }
+    RG_LOGI("PPA-FRAME: src=%p (低7位=%u)  dst=%p (低6位=%u) fb=%p\n",
+            src, (unsigned)((uintptr_t)src & 127), dst, (unsigned)((uintptr_t)dst & 63), tab5_fb);
 
     ppa_client_handle_t cli = NULL;
     ppa_client_config_t ccfg = {
@@ -458,7 +465,8 @@ static void tab5_ppa_frame_probe(void)
         op.in.pic_w = 1280; op.in.pic_h = 720;
         op.in.block_w = 1280; op.in.block_h = 720;
         op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-        op.out.buffer = tab5_fb;
+        op.out.buffer = dst;
+        op.out.buffer_size = out_bytes;   /* ← 历次探针都漏了这个字段，PPA 对缺失它的 op 返回 0x102 */
         op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
         op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
         op.rotation_angle = PPA_SRM_ROTATION_ANGLE_270;
@@ -481,6 +489,7 @@ static void tab5_ppa_frame_probe(void)
 
     ppa_unregister_client(cli);
     heap_caps_free(src);
+    heap_caps_free(dst);
 }
 
 static void tab5_perf_report(void)
@@ -488,9 +497,9 @@ static void tab5_perf_report(void)
     /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。
      * 2026-09-25 结论：三种 scale 变体全部 err=0x102（ESP_ERR_INVALID_ARG），
      * 即使源与目的都已 128 对齐 —— 说明还有别的原因，且**那个 9.4ms 不能采信**。
-     * 探针已停用（它每次启动都往帧缓冲写整帧，会与面板扫描打架 → 真机实测 51~81 条
-     * "previous draw operation is not finished" 报错）。留着代码备查。 */
-#if 0
+     * 2026-09-28 重新启用：输出改自管缓冲 + 补 buffer_size，不再写帧缓冲（无面板冲突）。
+     * 本次只判断 err 是否归零 —— 归零即证明 PPA 可用，下一步才谈性能。 */
+#if 1
     static bool ppa_frame_probe_done = false;
     if (!ppa_frame_probe_done && tab5_fb)
     {
