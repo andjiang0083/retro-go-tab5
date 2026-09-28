@@ -424,21 +424,22 @@ static uint32_t tab5_pf_rows_max;
  * 副作用：会把一帧内容写进面板帧缓冲 → 开机后约 1 秒屏幕闪一下黑，随后 launcher 重画。 */
 static void tab5_ppa_frame_probe(void)
 {
-    const size_t src_bytes = (size_t)1280 * 720 * 2;
-    /* PPA 要求缓冲 128 字节对齐（不对齐会被拒 —— 我们生产代码里就吃过这个亏）。
-     * heap_caps_malloc 不保证 128 对齐，必须显式 aligned_alloc。 */
+    /* 真实用例（2026-09-28）：模拟器帧 240x160 RGB565 --3x--> 720x480，
+     * 即竖屏顶部游戏区那一块。纯缩放、不旋转（竖屏下逻辑与面板同向）。
+     * 跑 5 次：第一次是冷启动（上次实测 44ms 是冷值 + 1.84MB 全帧，不具代表性），
+     * 看的是**稳定态**每帧代价 —— 这才是决定能不能进生产路径的数字。 */
+    const int SRC_W = 240, SRC_H = 160;
+    const int DST_W = 720, DST_H = 480;
+    const size_t src_bytes = (size_t)SRC_W * SRC_H * 2;      /* 76,800 B */
+    const size_t out_bytes = (size_t)DST_W * DST_H * 2;      /* 691,200 B */
+    const int RUNS = 5;
+
     uint16_t *src = (uint16_t *)heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM);
-    if (!src) { RG_LOGW("PPA-FRAME: 源缓冲申请失败，跳过\n"); return; }
+    if (!src) { RG_LOGW("PPA-REAL: 源缓冲申请失败，跳过\n"); return; }
     memset(src, 0, src_bytes);
-    /* 2026-09-28：照抄 tab5-vgbanext 的 ppa_engine 做法 —— 输出用**自管** 64 字节对齐 DMA 缓冲，
-     * 不写面板帧缓冲。两个好处：① 与面板扫描无冲突（旧探针写 fb 导致 51~81 条
-     * "previous draw operation is not finished"）；② 排除 IDF 帧缓冲所有权/尺寸的干扰。 */
-    const size_t out_bytes = (size_t)TAB5_PHYS_W * TAB5_PHYS_H * 2;
     uint16_t *dst = (uint16_t *)heap_caps_aligned_calloc(64, 1, out_bytes,
                                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-    if (!dst) { RG_LOGW("PPA-FRAME: 输出缓冲申请失败，跳过\n"); heap_caps_free(src); return; }
-    RG_LOGI("PPA-FRAME: src=%p (低7位=%u)  dst=%p (低6位=%u) fb=%p\n",
-            src, (unsigned)((uintptr_t)src & 127), dst, (unsigned)((uintptr_t)dst & 63), tab5_fb);
+    if (!dst) { RG_LOGW("PPA-REAL: 输出缓冲申请失败，跳过\n"); heap_caps_free(src); return; }
 
     ppa_client_handle_t cli = NULL;
     ppa_client_config_t ccfg = {
@@ -448,43 +449,38 @@ static void tab5_ppa_frame_probe(void)
     };
     if (ppa_register_client(&ccfg, &cli) != ESP_OK || !cli)
     {
-        RG_LOGW("PPA-FRAME: client 注册失败，跳过\n");
-        heap_caps_free(src);
+        RG_LOGW("PPA-REAL: client 注册失败，跳过\n");
+        heap_caps_free(src); heap_caps_free(dst);
         return;
     }
 
-    /* 三种 scale 组合各试一次 —— 现在源和目的都已 128 对齐，可以干净地判断 PPA 认哪个。
-     * 前几轮测试都被"缓冲没对齐"污染过，那些结果不能作数。
-     * 顺序：#0 = 1.0/1.0（纯旋转）；#1 = 交换(1280/720, 720/1280)；#2 = 不交换(720/1280, 1280/720)。 */
-    static const float probe_sx[3] = {1.0f, (float)TAB5_PHYS_H / 720.0f, (float)TAB5_PHYS_W / 1280.0f};
-    static const float probe_sy[3] = {1.0f, (float)TAB5_PHYS_W / 1280.0f, (float)TAB5_PHYS_H / 720.0f};
-    for (int i = 0; i < 3; ++i)
+    RG_LOGI("PPA-REAL: %dx%d -> %dx%d (3x, 纯缩放) src=%p dst=%p\n",
+            SRC_W, SRC_H, DST_W, DST_H, src, dst);
+
+    for (int i = 0; i < RUNS; ++i)
     {
         ppa_srm_oper_config_t op = {0};
         op.in.buffer = src;
-        op.in.pic_w = 1280; op.in.pic_h = 720;
-        op.in.block_w = 1280; op.in.block_h = 720;
+        op.in.pic_w = SRC_W; op.in.pic_h = SRC_H;
+        op.in.block_w = SRC_W; op.in.block_h = SRC_H;
         op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
         op.out.buffer = dst;
-        op.out.buffer_size = out_bytes;   /* ← 历次探针都漏了这个字段，PPA 对缺失它的 op 返回 0x102 */
-        op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+        op.out.buffer_size = out_bytes;          /* 缺它必得 0x102 —— 已实测确认 */
+        op.out.pic_w = DST_W; op.out.pic_h = DST_H;
         op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_270;
-        /* ⚠ 旋转下 scale 的两个轴是**交换**的（照抄 R8T5：scale_x 用高度比、scale_y 用宽度比）。
-         * 给 1.0/1.0 会被拒（ESP_ERR_INVALID_ARG 0x102）—— 因为那等于说"输出 1280x720"，
-         * 而旋转后的输出实际是 720x1280。生产路径 mipi_dsi_tab5.h 里也是 1.0/1.0，同样的问题。 */
-        op.scale_x = probe_sx[i];
-        op.scale_y = probe_sy[i];
+        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;   /* 竖屏：不旋转 */
+        op.scale_x = 3.0f;
+        op.scale_y = 3.0f;
         op.out.block_offset_x = 0;
         op.out.block_offset_y = 0;
 
         int64_t t0 = esp_timer_get_time();
         esp_err_t err = ppa_do_scale_rotate_mirror(cli, &op);
         int64_t dt = esp_timer_get_time() - t0;
-        /* 只用整数格式化：ESP-IDF 的日志不支持 %lld / %f（用了会把后面的参数全部错位）。 */
-        const int mbs10 = dt > 0 ? (int)(1840000 * 10 / dt) : 0;   /* 1.84MB / dt，×10 留一位小数 */
-        RG_LOGI("PPA-FRAME: #%d 整帧270度 = %d us (输出 %d.%d MB/s) err=0x%x\n",
-                i, (int)dt, mbs10 / 10, mbs10 % 10, (unsigned)err);
+        /* 只用整数格式化：ESP-IDF 日志不支持 %lld/%f */
+        const int tenths = dt > 0 ? (int)((src_bytes + out_bytes) * 10 / dt) : 0;
+        RG_LOGI("PPA-REAL: run#%d = %d us  (吞吐 %d.%d MB/s)  err=0x%x\n",
+                i, (int)dt, tenths / 10, tenths % 10, (unsigned)err);
     }
 
     ppa_unregister_client(cli);
