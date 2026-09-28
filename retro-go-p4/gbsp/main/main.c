@@ -119,6 +119,28 @@ void set_fastforward_override(bool fastforward)
 {
 }
 
+/* ===== 电池存档（SRAM）持久化 —— 分三步做，每步单独验证 =================
+ * 背景：此前 gamepak_backup 从没落过盘，每次开机还被 memset 成 0xFF，
+ *       游戏内存档点存的东西一重启就丢。
+ * 上次一步到位（算路径+建目录+读文件）导致「无法进入游戏」，已回退到
+ * commit 9f45df5 之前。这次拆开：
+ *   step1 只算路径（纯字符串，零 I/O）      ← 本步
+ *   step2 开机读回 .srm（要建目录、要读 SD）
+ *   step3 运行中检测变化写回
+ * ========================================================================= */
+static char sram_path[256];
+
+static void sram_setup_path(void)
+{
+    const char *rom = app->romPath ? app->romPath : "";
+    const char *rel = strstr(rom, "/roms/");
+    rel = rel ? rel + 6 : (strrchr(rom, '/') ? strrchr(rom, '/') + 1 : rom);
+    snprintf(sram_path, sizeof sram_path, "%s", rel);
+    char *dot = strrchr(sram_path, '.');
+    if (dot) *dot = 0;
+    RG_LOGI("SRAM-DBG step1: save path would be '.../saves/gba/%s.srm'\n", sram_path);
+}
+
 void app_main(void)
 {
     const rg_handlers_t handlers = {
@@ -150,6 +172,7 @@ void app_main(void)
         memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
 
     memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
+    sram_setup_path();   /* step1：只算路径，不碰 SD */
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {
         RG_PANIC("Could not load the game file.");
