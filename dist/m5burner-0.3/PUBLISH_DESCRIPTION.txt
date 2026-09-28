@@ -1,0 +1,22 @@
+retro-go Tab5 —— M5Stack Tab5 上的 GBA 模拟器
+Game Boy Advance emulator for the M5Stack Tab5
+
+【v0.3 新增】显示性能大幅提升（游戏稳定 30fps）；屏幕实时帧率显示；显示通路忙时不再静默丢帧
+[NEW in v0.3] Much faster display path (stable 30 fps); live on-screen FPS readout; no more silently dropped frames
+
+SD 卡目录结构 / SD card layout:
+<SD 卡根目录>/
+├── roms/gba/            ← GBA ROM 放这里（.gba 或 .zip，zip 内放一个 ROM）
+│   └── gba_bios.bin     ← 可选：GBA BIOS
+├── retro-go/            ← 模拟器工作目录（自动创建，一般不用手动碰）
+│   ├── saves/           ← 游戏存档
+│   ├── config/          ← 设置、最近游玩、收藏
+│   ├── cache/ themes/ borders/
+├── romart/              ← 游戏封面图（可选，按 ROM 文件名匹配：游戏.gba → 游戏.png）
+└── crash.log            ← 崩溃时自动生成；反馈问题请带上这个文件
+
+操作方式 / Controls:
+Tab5 几乎没有物理按键，手柄画在触摸屏的画面留白区 ——
+方向键（左侧）· A/B/X/Y 菱形（右侧，X/Y = Turbo A/B 连发）· L/R 肩键（顶部）·
+START/SELECT（底部中间）· MENU（游戏内菜单）· OPTION（选项菜单）
+界面默认英文，可在 Options → Language 切换中文（设置会保存）
