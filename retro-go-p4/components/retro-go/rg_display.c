@@ -75,6 +75,8 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length);
 #include "drivers/display/ili9341.h"
 #elif RG_SCREEN_DRIVER == 2 /* MIPI DSI (M5Stack Tab5 / ST7123) */
 #include "drivers/display/mipi_dsi_tab5.h"
+#elif RG_SCREEN_DRIVER == 3
+#include "drivers/display/mipi_dsi_tab5_p.h"
 #elif RG_SCREEN_DRIVER == 99
 #include "drivers/display/sdl2.h"
 #else

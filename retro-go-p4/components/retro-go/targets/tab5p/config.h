@@ -39,12 +39,12 @@
 /****************************************************************************
  * Video — MIPI DSI / ST7123, 走官方 Tab5 BSP                                *
  ****************************************************************************/
-#define RG_SCREEN_DRIVER            2   // 2 = MIPI DSI (Tab5 BSP)，0=SPI, 99=SDL2
+#define RG_SCREEN_DRIVER            3   // 3 = MIPI DSI 竖屏线性（tab5p 专用，无旋转）
 #define RG_SCREEN_BACKLIGHT         1
 /* 逻辑分辨率（用户自然持机的横向视角）。物理面板是 720x1280 竖屏，
  * 驱动按 90° 映射写入，所以这里必须是横向的那一组数。 */
-#define RG_SCREEN_WIDTH             1280
-#define RG_SCREEN_HEIGHT            720
+#define RG_SCREEN_WIDTH             720
+#define RG_SCREEN_HEIGHT            1280
 #define RG_SCREEN_ROTATE            0
 #define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 0}  // Left, Top, Right, Bottom
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}  // Left, Top, Right, Bottom
