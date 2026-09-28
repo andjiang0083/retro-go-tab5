@@ -537,7 +537,7 @@ static void tab5_perf_report(void)
             for (int px = cx0; px < cx1; ++px)
                 row[px] = 0x0000;
         }
-        /* 竖屏线性：整层叠加（含帧率数字）待线性版本，本轮先不合成 */
+        rg_overlay_blit_linear(tab5_fb, TAB5_PHYS_W, 0, 0, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
         /* 只写回数字所在的那条物理行带（y=584..696），不做整帧 1.84MB 写回 ——
          * 那是上次"蓝屏不断闪烁"的最大嫌疑。偏移 840960、长度 161280，都是 128 的整数倍。 */
         const size_t off = (size_t)TAB5_PHYS_W * 2 * 584;
@@ -682,7 +682,7 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         int64_t t_o1;
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
         /* 虚拟按键在推给面板前的最后一刻合成（避免被 GUI 立即模式的重绘覆盖 => 不闪） */
-        /* 竖屏线性：叠加层需要线性版本，本轮先不合成（见 README-PORTRAIT 下一步） */
+        rg_overlay_blit_linear(tab5_scratch, w, x0, y0, w, rows, w);
         t_o1 = esp_timer_get_time();
 #else
         t_o1 = t_x1;
@@ -728,7 +728,7 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         /* ⚠ 这里传的是**整块帧缓冲**（不是本块的小缓冲），所以缓冲区原点必须是 (0,0)、
          * 裁剪区是整屏 —— 传 (x0,y0) 会让索引变成 (py-y0)*720+(px-x0)，画面整体写偏到左上角。
          * 按键自身的位置决定实际写哪儿，不需要外部裁剪。 */
-        /* 竖屏线性：整层叠加（含帧率数字）待线性版本，本轮先不合成 */
+        rg_overlay_blit_linear(tab5_fb, TAB5_PHYS_W, 0, 0, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
         esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
 #endif

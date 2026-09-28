@@ -875,4 +875,29 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
     blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }
 
+
+/* 竖屏线性版（tab5p 分支）：逻辑坐标 = 物理坐标，不做 90° 换算。
+ * 与 cw90 版共用同一份绘制代码，只是 cw90=false。 */
+void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
+{
+    if (!buf || rw <= 0 || rh <= 0)
+        return;
+
+    retry_init_if_needed();
+    commit_if_pending();
+    poll_pressed();
+
+    if (!visible || !ready)
+    {
+        blit_toggle(buf, stride, rx, ry, rw, rh, phys_w, false);
+        blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
+        return;
+    }
+
+    for (size_t i = 0; i < btn_count; ++i)
+        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], false);
+
+    blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
+}
+
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */

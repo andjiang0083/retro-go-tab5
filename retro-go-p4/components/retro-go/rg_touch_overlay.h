@@ -67,6 +67,7 @@ void rg_overlay_cycle_alpha(int direction);      /* +1 / -1 档，菜单用 */
  * 参数 (x,y,w,h) 是该缓冲在屏幕上的位置（逻辑坐标 / 物理坐标），stride 为行跨距（像素）。 */
 void rg_overlay_blit(uint16_t *buf, int stride, int x, int y, int w, int h);
 void rg_overlay_blit_cw90(uint16_t *buf, int stride, int x, int y, int w, int h, int phys_w);
+void rg_overlay_blit_linear(uint16_t *buf, int stride, int x, int y, int w, int h, int phys_w);
 
 /* 仅预览/调试用：强制某些键显示为按下（PC 截图脚本用） */
 void rg_overlay_debug_set_pressed(uint32_t mask);
