@@ -1,15 +1,3 @@
-/* ── 竖屏变体 tab5p 的身份别名（必须放在本文件最前！）────────────────────
- * tab5p 是 Tab5 的竖屏变体，硬件与 tab5 完全相同，但构建系统给的名字是
- * RG_TARGET_TAB5P。本文件下面大量 #if RG_BUILD_TARGET == RG_TARGET_TAB5 的
- * 硬件分支（ADC/音频/电源）会因此全部落空、落到默认值，报出「你的芯片没有 DAC」。
- * 在**求值之前**把它别名回 TAB5。对 tab5 本体无任何影响（条件不成立）。
- */
-#if defined(RG_TARGET_TAB5P) && defined(RG_BUILD_TARGET) && (RG_BUILD_TARGET == RG_TARGET_TAB5P)
-#define TAB5P_IS_TAB5 1
-#undef  RG_BUILD_TARGET
-#define RG_BUILD_TARGET RG_TARGET_TAB5
-#endif
-
 #if defined(RG_TARGET_ODROID_GO)
 #include "targets/odroid-go/config.h"
 #elif defined(RG_TARGET_MRGC_G32)
