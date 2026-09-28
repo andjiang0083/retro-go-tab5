@@ -684,8 +684,21 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
              * 搬了 23KB 却被无视，循环仍逐像素读 PSRAM，实测每像素 24ns（理论值 ~20 倍）。
              * 必须读 xsrc：块 <= 48KB 时它就是片内 SRAM 里的那份。 */
             const uint16_t *sc = xsrc;
-            for (size_t k = 0; k < n; ++k)
-                d[k] = tab5_swap16(sc[k]);
+            /* 2026-09-28：逐像素 tab5_swap16 实测 14ns/像素（compute-bound，
+             * 217ms/秒）。改成 32 位取样一次处理两个像素：4 条运算换 2 像素，
+             * 且写出是 32 位单存。只动这里，不碰像素格式约定。 */
+            {
+                const size_t np = n >> 1;      /* 像素对数（块宽 720，恒为偶数）*/
+                uint32_t *d32 = (uint32_t *)d;
+                const uint32_t *s32 = (const uint32_t *)sc;
+                for (size_t k = 0; k < np; ++k)
+                {
+                    uint32_t v = s32[k];
+                    d32[k] = ((v >> 8) & 0x00FF00FFu) | ((v << 8) & 0xFF00FF00u);
+                }
+                if (n & 1)
+                    d[n - 1] = tab5_swap16(sc[n - 1]);
+            }
         }
         int64_t t_x1 = esp_timer_get_time();
         int64_t t_o1;
