@@ -119,6 +119,70 @@ void set_fastforward_override(bool fastforward)
 {
 }
 
+/* ===== 电池存档（SRAM）持久化 ==============================================
+ * 2026-09-28：此前**整条路径不存在** —— 内核的 gamepak_backup 从没落过盘，
+ * 每次开机还被 memset 成 0xFF，游戏内存档点存的东西一重启就没了。
+ * 这里补齐：开机读回 .srm；运行中每 2 秒检测变化写回。
+ * （主循环是 while(true)，没有干净退出路径，所以只能走"定期检测"而不是退出时保存。）
+ * ========================================================================= */
+static char sram_path[256];
+
+static void sram_setup_path(void)
+{
+    const char *rom = app->romPath ? app->romPath : "";
+    const char *slash = strrchr(rom, '/');
+    const char *base = slash ? slash + 1 : rom;
+    const char *rel = strstr(rom, "/roms/");
+    if (rel) rel += 6; else rel = base;
+    char stem[192];
+    snprintf(stem, sizeof stem, "%s", rel);
+    char *dot = strrchr(stem, '.');
+    if (dot) *dot = 0;
+    snprintf(sram_path, sizeof sram_path, RG_BASE_PATH_SAVES "/gba/%s.srm", stem);
+    char dir[256];
+    snprintf(dir, sizeof dir, "%s", sram_path);
+    for (char *p = dir + 1; *p; ++p)
+        if (*p == '/') { *p = 0; rg_storage_mkdir(dir); *p = '/'; }
+    RG_LOGI("SRAM path: %s\n", sram_path);
+}
+
+static void sram_load(void)
+{
+    void *buf = NULL;
+    size_t size = 0;
+    if (!rg_storage_read_file(sram_path, &buf, &size, 0) || !buf)
+    {
+        RG_LOGI("SRAM: no existing save yet\n");
+        return;
+    }
+    size_t n = size < sizeof(gamepak_backup) ? size : sizeof(gamepak_backup);
+    memcpy(gamepak_backup, buf, n);
+    free(buf);
+    RG_LOGI("SRAM loaded: %u/%u bytes\n", (unsigned)n, (unsigned)sizeof(gamepak_backup));
+}
+
+static void sram_autosave(void)
+{
+    static uint32_t last_hash = 0;
+    static int64_t next_check = 0;
+    int64_t now = rg_system_timer();
+    if (now < next_check)
+        return;
+    next_check = now + 2000000;   /* 每 2 秒检测一次 */
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < sizeof(gamepak_backup); ++i)
+        h = (h ^ gamepak_backup[i]) * 16777619u;
+    if (h == last_hash)
+        return;
+    if (rg_storage_write_file(sram_path, gamepak_backup, sizeof(gamepak_backup), 0))
+    {
+        last_hash = h;
+        RG_LOGI("SRAM saved (%u bytes)\n", (unsigned)sizeof(gamepak_backup));
+    }
+    else
+        RG_LOGE("SRAM save FAILED: %s\n", sram_path);
+}
+
 void app_main(void)
 {
     const rg_handlers_t handlers = {
@@ -150,6 +214,8 @@ void app_main(void)
         memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
 
     memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
+    sram_setup_path();
+    sram_load();
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {
         RG_PANIC("Could not load the game file.");
@@ -182,6 +248,7 @@ void app_main(void)
 
         clear_gamepak_stickybits();
         gba_execute_frame(execute_cycles);   // dynarec 可用时走 JIT，否则走解释器
+        sram_autosave();                     // 电池存档：变了就落盘
         // RG_TIMER_LAP("execute_arm");
 
         if (!skip_next_frame)
