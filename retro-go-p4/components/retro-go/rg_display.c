@@ -516,6 +516,10 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 
 bool rg_display_sync(bool block)
 {
+    /* 2026-09-28 性能盲区仪表：模拟器线程**等显示**的阻塞时间。
+     * 驱动侧的 display= 量的是显示任务自己的工作量；这里量的是调用方被拖住多久。
+     * 两者相加才是显示对帧时间的真实侵占。 */
+    int64_t pf_t0 = esp_timer_get_time();
     while (block && rg_task_messages_waiting(display_task_queue))
     {
 #if defined(RG_TARGET_SDL2)
@@ -523,6 +527,18 @@ bool rg_display_sync(bool block)
 #else
         rg_task_yield(); // 真机：让出 CPU 给显示任务，不要睡一个 tick
 #endif
+    }
+    {
+        static int64_t pf_win = 0, pf_wait = 0;
+        static uint32_t pf_calls = 0;
+        int64_t now = esp_timer_get_time();
+        pf_wait += now - pf_t0;
+        pf_calls++;
+        if (pf_win == 0) pf_win = now;
+        if (now - pf_win >= 1000000) {
+            RG_LOGI("SYNC-PF: 等显示=%d us/秒  calls=%d\n", (int)pf_wait, (int)pf_calls);
+            pf_win = now; pf_wait = 0; pf_calls = 0;
+        }
     }
     return !rg_task_messages_waiting(display_task_queue);
 }
