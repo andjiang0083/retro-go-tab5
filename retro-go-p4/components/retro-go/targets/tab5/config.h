@@ -1,7 +1,8 @@
 /* Configuration for M5Stack Tab5 (ESP32-P4)
  *
  * 显示：官方 Tab5 BSP（vendor/m5stack_tab5）+ MIPI DSI/ST7123，走 RG_SCREEN_DRIVER 2。
- * 面板原生 720x1280 竖屏；逻辑画面 1280x720 横向，90° 映射在驱动里做（见驱动头部注释）。
+ * 【竖屏分支】面板原生 720x1280 竖屏 = 逻辑画面同向，**无旋转**、顺序读写
+ * （横屏主线为逻辑 1280x720 + 90° 映射；本分支走驱动编号 3 = mipi_dsi_tab5_p.h）。
  * 构建：python rg_tool.py --target tab5 build-img launcher gbsp --no-networking
  */
 
@@ -39,12 +40,12 @@
 /****************************************************************************
  * Video — MIPI DSI / ST7123, 走官方 Tab5 BSP                                *
  ****************************************************************************/
-#define RG_SCREEN_DRIVER            2   // 2 = MIPI DSI (Tab5 BSP)，0=SPI, 99=SDL2
+#define RG_SCREEN_DRIVER            3   // 3 = MIPI DSI 竖屏线性（本分支专用，无旋转）
 #define RG_SCREEN_BACKLIGHT         1
 /* 逻辑分辨率（用户自然持机的横向视角）。物理面板是 720x1280 竖屏，
  * 驱动按 90° 映射写入，所以这里必须是横向的那一组数。 */
-#define RG_SCREEN_WIDTH             1280
-#define RG_SCREEN_HEIGHT            720
+#define RG_SCREEN_WIDTH             720
+#define RG_SCREEN_HEIGHT            1280
 #define RG_SCREEN_ROTATE            0
 #define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 0}  // Left, Top, Right, Bottom
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}  // Left, Top, Right, Bottom
