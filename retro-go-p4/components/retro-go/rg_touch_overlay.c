@@ -780,6 +780,12 @@ static char fps_text[8] = "";
 
 void rg_overlay_set_fps(int value)
 {
+#if !RG_OVERLAY_SHOW_FPS
+    /* 发布版：不显示帧率数字 */
+    (void)value;
+    return;
+#endif
+
     if (value < 0)
     {
         fps_value = -1;
@@ -829,6 +835,11 @@ static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
 static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
 {
+#if !RG_OVERLAY_SHOW_FPS
+    /* 发布版：不显示帧率数字 */
+    return;
+#endif
+
     if (fps_value < 0 || !fps_text[0])
         return;
     const int n = (int)strlen(fps_text);

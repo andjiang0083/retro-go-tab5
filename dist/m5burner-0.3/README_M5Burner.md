@@ -42,7 +42,6 @@ Tab5 几乎没有物理按键，手柄画在触摸屏的画面留白区：
 
 - **显示性能大幅提升** —— 显示通路重做：整块顺序读进片内 SRAM、总线 QoS 提权、像素转置改为 32×32 分块。
   游戏帧率从原先的 ~15-20fps 提升到 **稳定 30fps**（GBA 类游戏）。
-- **屏幕实时帧率显示** —— 画面上会显示当前**实际送出**的帧率数字（每秒刷新），可直观判断流畅度。
 - **稳定性** —— 显示通路在忙时改为**有界重试**（原先会静默丢帧，表现为局部画面停止更新）。
 - 包含 v0.2 的全部内容（中文支持 / 崩溃与按键修复）。
 
@@ -68,7 +67,6 @@ START/SELECT (bottom centre) · MENU (in-game menu) · OPTION (options).
 
 - **Much faster display path** — rebuilt: block-sequential reads into on-chip SRAM, bus QoS boost,
   and the pixel transpose reworked into 32x32 tiles. Games went from ~15-20 fps to a **stable 30 fps**.
-- **Live FPS readout** on screen (the rate actually being pushed to the panel, refreshed every second).
 - **Stability** — the display path now retries with a bound when busy instead of silently dropping frames
   (which used to leave parts of the screen frozen).
 - Includes everything from v0.2 (Chinese support / crash and button fixes).
