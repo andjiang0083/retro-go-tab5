@@ -93,7 +93,10 @@
 /* 每帧"算一块推一块"的块大小（像素）。默认 RG_SCREEN_WIDTH*4=4 行 => 一帧 180 次推送，
  * 播游戏时面板 DMA 会持续忙、触发 tab5_draw 的重试风暴。这里放到 16 行（一帧 45 次）。
  * 内存代价：驱动里两个 LCD_BUFFER_LENGTH 大小的缓冲 = 2 × 40KB。 */
-#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 16)
+/* 2026-09-28：16→32 行/块。真机实测每 16 行推一次 → 一帧 30 次推送，
+ * DMA2D 大量丢弃(ESP_ERR_INVALID_STATE)、重试烧掉 224ms/秒。
+ * 32 行一块 = 46KB，正好装进 48KB 的片内 SRAM 暂存(tab5_stage)，推送次数减半。 */
+#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 32)
 
 /* GUI 字体放大倍数：默认字体 VeraBold11 渲染高度 13px，在 1280x720 上太小（实机反馈）。
  * 3 倍 = 39px。改这里即可调整（2 = 26px，3 = 39px）。 */

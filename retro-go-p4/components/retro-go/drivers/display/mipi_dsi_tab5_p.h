@@ -703,7 +703,9 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
          * 有界重试：最多 5 次、每次让出 200µs（比 1ms 的 RTOS tick 细得多；
          * 用 ROM 忙等而非 vTaskDelay，既不进调度器也不会去抢总线）。
          * **必须有上限** —— 老笔记记的"队列深度 2 会楔死显示通路"就是缺限流的教训。 */
-        for (int tries = 0; err == ESP_ERR_INVALID_STATE && tries < 5; ++tries) {
+        /* 2026-09-28：5 次 → 2 次。实测丢弃是持续性的（面板 DMA 一直忙），
+ * 5 次重试基本全败却白烧 ~1ms/次。丢掉的帧由脏区在下一帧补推。 */
+        for (int tries = 0; err == ESP_ERR_INVALID_STATE && tries < 2; ++tries) {
             esp_rom_delay_us(200);
             err = tab5_draw(x0, y0, x0 + w, y0 + rows, tab5_scratch);
         }
