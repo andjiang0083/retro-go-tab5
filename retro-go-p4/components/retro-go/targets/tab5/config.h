@@ -47,7 +47,9 @@
 #define RG_SCREEN_WIDTH             720
 #define RG_SCREEN_HEIGHT            1280
 #define RG_SCREEN_ROTATE            0
-#define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 0}  // Left, Top, Right, Bottom
+/* 【竖屏分支】游戏画面锚定顶部 y=0..480（720x480 顶满宽度），
+ * 下方 800px 全给虚拟按键 —— 与 touch_layout.h 的分区一致。 */
+#define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 800}  // Left, Top, Right, Bottom
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}  // Left, Top, Right, Bottom
 #define RG_SCREEN_PARTIAL_UPDATES   1
 /* 无 SPI 命令序列：面板初始化在驱动里走 Tab5 BSP（lcd_init 会调用本宏） */
