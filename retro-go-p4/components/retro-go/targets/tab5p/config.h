@@ -8,6 +8,17 @@
 /****************************************************************************
  * Target definition                                                        *
  ****************************************************************************/
+/* ── 身份声明（必须！）─────────────────────────────────────────────────
+ * 本 target 是 Tab5 的**竖屏变体**，硬件与 tab5 完全相同。共享代码里有大量
+ * `#if RG_BUILD_TARGET == RG_TARGET_TAB5` 的硬件分支（ADC/音频/电源等），
+ * 构建系统给的名字却是 RG_TARGET_TAB5P → 那些分支会全部落空，落到默认值，
+ * 报出「你的芯片没有 DAC」这类错。所以这里把构建身份别名回 TAB5：
+ * 本 target 只改**显示方向**，硬件身份必须与 tab5 一致。 */
+#define RG_TARGET_TAB5P_IS_TAB5     1
+#undef  RG_BUILD_TARGET
+#define RG_BUILD_TARGET             RG_TARGET_TAB5
+
+
 #define RG_TARGET_NAME             "M5Stack Tab5"
 
 
