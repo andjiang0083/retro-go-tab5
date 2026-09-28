@@ -133,12 +133,12 @@ void app_main(void)
     // app = rg_system_init(AUDIO_SAMPLE_RATE * 0.7, &handlers, NULL);
     // rg_system_set_overclock(2);
 
-    updates[0] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_FAST);
+    updates[0] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_BE, MEM_FAST);
     /* 2026-09-28 融合自 rapha-tech/retro-go@a00997b（动态双帧缓冲）：
      * 核心渲染第 N+1 帧时，显示任务还在推第 N 帧 —— 不再争同一块内存。
      * 单帧缓冲时 submit 之后核心立刻覆盖同一块，显示任务读到的可能是半新半旧。
      * ⚠ 多占 240x161x2 ≈ 77KB 片内 SRAM；拿不到就**显式告警**退回单缓冲（不 panic、不带病跑）。 */
-    updates[1] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_FAST);
+    updates[1] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_BE, MEM_FAST);
     if (!updates[1])
     {
         RG_LOGW("Double frame buffering: second surface alloc failed (%d bytes), falling back to single buffer\n",
