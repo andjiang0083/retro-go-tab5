@@ -315,15 +315,6 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         uint8_t count = 0;
         if (esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS))
         {
-            /* 诊断（临时）：打印触摸 IC 的原始坐标，用来定死"物理→逻辑"的旋转关系 */
-            static int s_c = -1, s_x = -1, s_y = -1;
-            if ((int)count != s_c || (int)px[0] != s_x || (int)py[0] != s_y)
-            {
-                RG_LOGI("TOUCH-DBG: count=%d p0=(%d,%d) p1=(%d,%d)\n", (int)count,
-                        (int)px[0], (int)py[0],
-                        count > 1 ? (int)px[1] : -1, count > 1 ? (int)py[1] : -1);
-                s_c = (int)count; s_x = (int)px[0]; s_y = (int)py[0];
-            }
 #if RG_TOUCH_OVERLAY
             /* "看得见"和"点得到"必须同源，两个条件都要满足：
              *   ① 用户没关掉按键（visible）—— 否则黑边上一按就触发，用户以为触摸坏了；
@@ -406,17 +397,6 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
     if (out)
         *out = state;
     return true;
-    /* 诊断（临时）：只在按键状态变化时打印，定位 LEFT 是谁给的 */
-    static uint32_t s_prev = 0xFFFFFFFFu;
-    if (state != s_prev) {
-        RG_LOGI("INPUT-DBG: 0x%04X [%s%s%s%s%s%s%s%s%s%s]\n", (unsigned)state,
-            (state & RG_KEY_UP)?"UP ":"", (state & RG_KEY_DOWN)?"DOWN ":"",
-            (state & RG_KEY_LEFT)?"LEFT ":"", (state & RG_KEY_RIGHT)?"RIGHT ":"",
-            (state & RG_KEY_A)?"A ":"", (state & RG_KEY_B)?"B ":"",
-            (state & RG_KEY_MENU)?"MENU ":"", (state & RG_KEY_START)?"START ":"",
-            (state & RG_KEY_SELECT)?"SEL ":"", (state & RG_KEY_L)?"L ":"");
-        s_prev = state;
-    }
 }
 
 static void input_task(void *arg)
