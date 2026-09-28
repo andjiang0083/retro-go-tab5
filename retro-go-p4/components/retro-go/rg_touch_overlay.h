@@ -79,6 +79,10 @@ void rg_overlay_get_toggle_rect(int *x, int *y, int *w, int *h);
  * 由 rg_system.c 的 update_statistics() 每秒推一次值 —— 用的是 statistics 里
  * partialFPS + fullFPS（"真正显示出去的帧率"），与日志 FPS:(跳过+部分+完整) 的后两项同口径。
  * 传负值 = 不显示。直绘，不走按键掩码。 */
+/* 屏幕帧率数字（开发调试用）：
+   发布版关闭，保持画面干净。需要看帧率时把 0 改成 1 重新编译即可。 */
+#define RG_OVERLAY_SHOW_FPS 0
+
 void rg_overlay_set_fps(int value);
 
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */
