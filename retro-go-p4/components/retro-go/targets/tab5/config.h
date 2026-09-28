@@ -101,6 +101,14 @@
 /* 键位表抽到 touch_layout.h —— 命中判定 / 可视层绘制 / PC 预览三方共用一份，
  * 抄成两份必然漂移（表现：画的和点的不是一回事）。改键位改那个文件。 */
 #include "touch_layout.h"
+/* 【竖屏分支】触摸坐标换算覆盖：
+ * rg_input.c 默认实现是横屏的 90° 逆映射（lx=py, ly=phys_w-1-px）。
+ * 竖屏下显示驱动的映射是恒等的（px=lx, py=ly），触摸必须同向，否则
+ * 手指位置会被换算到旋转后的逻辑点、落在命中区之外 —— 表现就是
+ * 「按键画出来了但按不动」。 */
+#define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly) \
+    do { (lx) = (px); (ly) = (py); } while (0)
+
 #define RG_GAMEPAD_TOUCH_MAP RG_TAB5_TOUCH_MAP
 /* 若真机上触摸方向不对（点左选中右之类），改这个变换，不用动读点逻辑 */
 #define RG_TOUCH_PHYS_W 720
