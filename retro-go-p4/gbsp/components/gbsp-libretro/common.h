@@ -79,10 +79,10 @@
 #endif
 
 #if defined(USE_XBGR1555_FORMAT)
-  #define gpsp_conv_palette_raw(value)  \
+  #define convert_palette(value)  \
     (value & 0x7FFF)
 #else
-  #define gpsp_conv_palette_raw(value) \
+  #define convert_palette(value) \
     (((value & 0x1F) << 11) | ((value & 0x03E0) << 1) | ((value >> 10) & 0x1F))
 #endif
 
@@ -175,9 +175,3 @@ typedef u32 fixed8_24;
 #include "serial.h"
 
 #endif
-
-/* 2026-09-28 融合 rapha-tech 的 INTEGRATION_DYNAREC.md 建议：把字节交换**烘进调色板**。
- * 原来 rg_display 每帧要对 720x480 的输出像素逐个 swap（几十万次），
- * 而这里的 LUT 只有 512 项 —— 交换成本几乎归零。surface 随之标记为 565_BE，
- * 让 rg_display 走"不交换"分支；驱动的单次交换仍保留，最终画面字节序与改前一致。 */
-#define convert_palette(value) ((uint16_t)__builtin_bswap16((uint16_t)gpsp_conv_palette_raw(value)))
