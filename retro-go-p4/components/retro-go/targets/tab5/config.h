@@ -141,9 +141,11 @@
  ***************************************************************************/
 #ifndef RG_TAB5_BATTERY_CONFIGURED
 #define RG_TAB5_BATTERY_CONFIGURED
-#define RG_BATTERY_DRIVER           1
-#define RG_BATTERY_ADC_UNIT         ADC_UNIT_2
-#define RG_BATTERY_ADC_CHANNEL      ADC_CHANNEL_4
-#define RG_BATTERY_CALC_PERCENT(raw) (((raw) * 1.68f - 3300.f) / (4200.f - 3300.f) * 100.f)
-#define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 1.68f * 0.001f)
+/* Tab5 没有可用的电池 ADC 脚（GPIO53 在官方 BSP 里是 I2C SDA），
+ * 电量走 INA226 电源监测芯片：I2C 0x41，寄存器 0x02 = Bus Voltage（1.25mV/LSB）。
+ * 它报的是电池真实电压 → 换算宏用恒等，不再乘分压比。
+ * 见 wiki/tab5-sensor-components.md 与 m5stack_tab5 BSP。 */
+#define RG_BATTERY_DRIVER           3
+#define RG_BATTERY_CALC_PERCENT(raw) (((raw) - 3300.f) / (4200.f - 3300.f) * 100.f)
+#define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)
 #endif

@@ -217,6 +217,16 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
         return false;
     raw_value = data[4];
     charging = data[4] == 255;
+#elif RG_BATTERY_DRIVER == 3 /* INA226 @0x41, reg 0x02 = Bus Voltage (1.25mV/LSB) */
+    /* Tab5 的电池电压由 INA226 电源监测芯片给出（I2C 0x41，见 wiki/tab5-sensor-components.md）。
+     * 它报的就是电池真实电压，所以 CALC 宏用恒等换算、不再乘分压比。 */
+    uint8_t rv[2] = {0};
+    if (!rg_i2c_read(0x41, 0x02, rv, 2))
+        return false;
+    uint16_t word = (uint16_t)(((uint16_t)rv[0] << 8) | rv[1]);
+    if (word == 0 || word == 0xFFFF)
+        return false;
+    raw_value = (uint32_t)(word * 1.25f);   /* μV→... 统一换算成 mV */
 #else
     return false;
 #endif
