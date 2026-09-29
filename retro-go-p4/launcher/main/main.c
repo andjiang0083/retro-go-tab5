@@ -355,6 +355,7 @@ static void retro_loop(void)
         {
             overlay_gen_seen = rg_overlay_get_generation();
             redraw_pending = true;
+            RG_LOGI("launcher: overlay gen %u -> redraw\n", (unsigned)overlay_gen_seen);
         }
 #endif
 

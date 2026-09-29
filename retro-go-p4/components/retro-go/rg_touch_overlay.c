@@ -592,6 +592,16 @@ void rg_overlay_init(void)
         build_button(&tmp, c565(0xE8, 0xA2, 0x2C), swap_yx ? "X/Y" : "L/R");
         swap_btn.mask_alt = tmp.mask;
     }
+    {
+        /* 备用的那一套必须真的建出来了 —— 少了它"点一下"只会改配色、标签不动。
+         * 一行日志是这条链路上最便宜的体检（开机就能看到，不用点）。 */
+        int alt_count = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (btns[i].mask_alt)
+                alt_count++;
+        RG_LOGI("touch overlay: swap variants built: %d/4 key alts, switch btn alt=%d\n",
+                alt_count, swap_btn.mask_alt != NULL);
+    }
 
     ready = true;
     /* 这一行会出现在串口上：app 切换（进出游戏）时 lcd_init 里会重跑建层，
@@ -722,11 +732,17 @@ void rg_overlay_set_swap(bool on)
     apply_swap_variants();                                  /* 立刻生效（只对换，无分配） */
     rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
     pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
-    /* 让画面也跟着立刻变：把覆盖层所在的逻辑行置脏。
-     * 不做这一步，菜单界面的"重绘"在行校验和层面是 no-op（内容没变 → 一行都不重推），
-     * 驱动就不会重新合成覆盖层 —— 标签要等下一次内容真的变化（进入/退出游戏）才更新。
-     * 真机反馈"点切换后要切界面才生效"就是这个（游戏里每帧都写，所以游戏内看不出来）。 */
-    rg_display_invalidate_lines(RG_TAB5_SWAP_DIRTY_TOP, RG_TAB5_SWAP_DIRTY_LINES);
+    /* 让画面也跟着立刻变。这里有两件事，缺一不可：
+     *  ① 行置脏：菜单这类界面视口==整屏，重绘的"行校验和"过滤会把内容没变的行全挡住，
+     *     不置脏就一行都不重推、覆盖层也就不会被重新合成。
+     *  ② `rg_display_force_redraw()`：**游戏里**覆盖层所在的那条黑边在视口之外
+     *     （gba 视口 720x480，黑边 y=480..1279），显示层推帧时根本循环不到那些行 ——
+     *     只有"视口变化/整屏重来"这条路径才会把黑边连同覆盖层重新画一遍。
+     *     （本项目帧率数字用的也是这条路径，见 rg_display_invalidate_lines 的注释。）
+     * 这一步是安全的：只置标志 + 等显示队列排空，真正的绘制仍在显示线程里做。
+     * 真机反馈"点切换后要进出游戏才生效""不是马上变"都是缺了这两步之一。 */
+    rg_display_invalidate_lines(0, RG_SCREEN_HEIGHT);
+    rg_display_force_redraw();
     RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u)\n", on, (unsigned)swap_generation);
 }
 
