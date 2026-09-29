@@ -529,6 +529,115 @@ static void tab5_batt_led_refresh(void)
 }
 #endif
 
+/* ── 竖屏"每帧交给 PPA"生产形态测量（2026-09-29）────────────────────────────
+ * 动机（本机实测）：显示路径的三段开销里，**xpose 占 79%**（launcher 空闲态
+ *   PERF: display=67.06/1023ms [xpose=53.08 ovl=7.56 draw=6.04] rows=30.9）
+ *   → xpose 折算 0.48ms/44KB 块 = **~92MB/s**，正好等于 CPU 顺序读 PSRAM 的实测带宽。
+ *   即瓶颈是"把源像素从 PSRAM 读出来"这件事本身，换字节序的算术几乎不花时间。
+ *   一帧 720x480 = 691KB ⇒ 光读就要 ~7.5ms/帧，16.7ms 预算里占掉一半 ——
+ *   这就是 frameskip 关不掉的第一嫌疑。
+ *
+ * 与 2026-09-25 那次"PPA 比 CPU 慢 25 倍"的区别（那次判定的是别的形态）：
+ *   那次 = **按块 + BLOCKING + 写面板帧缓冲**，每块都在等硬件搬完，且与 DPI 抢带宽；
+ *   这次直接测**真实生产的两种形态**，落点就是面板帧缓冲顶部的游戏区：
+ *     A) 一帧一次：720x480 → fb@(0,0)，旋转 0 / 缩放 1 / 换字节序（"整帧交给 PPA"）
+ *     B) 按块 15 次：720x31 → fb@(0,i*31)（今天的推送粒度，看每次调用的固定开销）
+ *   两者都 BLOCKING —— 与今天的 CPU 路径同样"同步等完"，数字可直接对比。
+ * 判据：A ≤ 3ms/帧 → 架构可行（CPU 侧只剩按键合成）；A ≳ 7ms → 与 CPU 同档，不值得改。
+ * 副作用：测试内容会写进面板帧缓冲顶部（开机闪一下），随后 launcher 重画覆盖。
+ * 默认 0（发行不带这个探针）。 */
+#define TAB5_PPA_PROD_PROBE 0
+
+#if TAB5_PPA_PROD_PROBE
+static void tab5_ppa_prod_probe(void)
+{
+    if (!tab5_fb)
+        return;
+    const int SRC_W = 720, SRC_H = 480;
+    const size_t src_bytes = (size_t)SRC_W * SRC_H * 2;
+    uint16_t *src = heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (!src) { RG_LOGW("PPA-PROD: 源缓冲申请失败\n"); return; }
+    for (size_t i = 0; i < src_bytes / 2; ++i)
+        src[i] = (uint16_t)(0x1084 + (i & 0xFF));
+
+    ppa_client_handle_t cli = NULL;
+    ppa_client_config_t ccfg = {
+        .oper_type = PPA_OPERATION_SRM,
+        .max_pending_trans_num = 4,
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+    };
+    if (ppa_register_client(&ccfg, &cli) != ESP_OK || !cli)
+    {
+        RG_LOGW("PPA-PROD: client 注册失败\n");
+        heap_caps_free(src);
+        return;
+    }
+
+    /* A：一帧一次（整帧 720x480 → fb 顶部）*/
+    for (int run = 0; run < 5; ++run)
+    {
+        ppa_srm_oper_config_t op = {0};
+        op.in.buffer = src;
+        op.in.pic_w = SRC_W; op.in.pic_h = SRC_H;
+        op.in.block_w = SRC_W; op.in.block_h = SRC_H;
+        op.in.block_offset_x = 0; op.in.block_offset_y = 0;
+        op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.out.buffer = tab5_fb;
+        op.out.buffer_size = (uint32_t)(TAB5_PHYS_W * TAB5_PHYS_H * 2);
+        op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+        op.out.block_offset_x = 0; op.out.block_offset_y = 0;
+        op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+        op.scale_x = 1.0f; op.scale_y = 1.0f;
+        op.mirror_x = false; op.mirror_y = false;
+        op.rgb_swap = false;
+        op.byte_swap = true;
+        op.mode = PPA_TRANS_MODE_BLOCKING;
+        int64_t t0 = esp_timer_get_time();
+        esp_err_t err = ppa_do_scale_rotate_mirror(cli, &op);
+        int64_t dt = esp_timer_get_time() - t0;
+        const int tenths = dt > 0 ? (int)((src_bytes + src_bytes) * 10 / dt) : 0;
+        RG_LOGI("PPA-PROD A(整帧 %dx%d 阻塞): run#%d = %d us (%d.%d MB/s) err=0x%x\n",
+                SRC_W, SRC_H, run, (int)dt, tenths / 10, tenths % 10, (unsigned)err);
+    }
+
+    /* B：按块 15 次（720x31 → fb 对应行带），模拟今天的推送粒度 */
+    {
+        const int blk_h = 31, nblk = 15;
+        int64_t tot = 0;
+        esp_err_t last = ESP_OK;
+        for (int b = 0; b < nblk; ++b)
+        {
+            ppa_srm_oper_config_t op = {0};
+            op.in.buffer = src;
+            op.in.pic_w = SRC_W; op.in.pic_h = SRC_H;
+            op.in.block_w = SRC_W; op.in.block_h = blk_h;
+            op.in.block_offset_x = 0; op.in.block_offset_y = (uint32_t)(b * blk_h);
+            op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+            op.out.buffer = tab5_fb;
+            op.out.buffer_size = (uint32_t)(TAB5_PHYS_W * TAB5_PHYS_H * 2);
+            op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+            op.out.block_offset_x = 0; op.out.block_offset_y = (uint32_t)(b * blk_h);
+            op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+            op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+            op.scale_x = 1.0f; op.scale_y = 1.0f;
+            op.mirror_x = false; op.mirror_y = false;
+            op.rgb_swap = false;
+            op.byte_swap = true;
+            op.mode = PPA_TRANS_MODE_BLOCKING;
+            int64_t t0 = esp_timer_get_time();
+            last = ppa_do_scale_rotate_mirror(cli, &op);
+            tot += esp_timer_get_time() - t0;
+        }
+        RG_LOGI("PPA-PROD B(按块 %dx%d x%d): 合计 %d us (每块 %d us) err=0x%x\n",
+                SRC_W, blk_h, nblk, (int)tot, (int)(tot / nblk), (unsigned)last);
+    }
+
+    ppa_unregister_client(cli);
+    heap_caps_free(src);
+}
+#endif /* TAB5_PPA_PROD_PROBE */
+
 static void tab5_perf_report(void)
 {
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
@@ -543,12 +652,13 @@ static void tab5_perf_report(void)
     /* 2026-09-29（走查 P2-2）：探针任务已完成（结论 = PPA 可用，但"按块调用"这条路
      * 已被实测判死），把它关掉 —— 它每次开机会申请约 768KB PSRAM、跑 5 次 PPA op、
      * 打 6 行日志。要复测时改回 1。 */
-#if 0
-    static bool ppa_frame_probe_done = false;
-    if (!ppa_frame_probe_done && tab5_fb)
+#if TAB5_PPA_PROD_PROBE
+    static bool ppa_prod_probe_done = false;
+    if (!ppa_prod_probe_done && tab5_fb)
     {
-        ppa_frame_probe_done = true;
-        tab5_ppa_frame_probe();
+        ppa_prod_probe_done = true;
+        tab5_ppa_prod_probe();
+        RG_LOGI("PPA-PROD: 探针完成（A=整帧一次 / B=按块 15 次，见上面两行读数）\n");
     }
 #endif
     int64_t now = esp_timer_get_time();

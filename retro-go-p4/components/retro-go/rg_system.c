@@ -338,16 +338,35 @@ static void system_monitor_task(void *arg)
             }
 #else
             float speed = ((float)statistics.totalFPS / app.tickRate) * 100.f / app.speed;
-            // We don't fully go back to 0 frameskip because if we dip below 95% once, we're clearly
-            // borderline in power and going back to 0 is just asking for stuttering...
-            if (speed > 99.f && statistics.busyPercent < 85.f && app.frameskip > 1)
+            /* ── 跳帧策略：现在**允许降到 0**（= 每帧都渲染，60fps 满帧）───────────
+             * 为什么敢改（2026-09-29 真机实测，把 frameskip 钉死 0 跑一局）：
+             *   skippedFPS=0、partial=61、速度 100%、**BUSY 只有 62~69%**；
+             *   显示路径仅 216ms/s（xpose 180 + ovl 12 + draw 22，318 块/秒），
+             *   0 次 drop / 0 次 failed ⇒ 整机还有 ~30% 空闲，60fps 满帧扛得住。
+             * 上游原不肯降到 0（原注释：低于 95% 一次就说明余量不足，降回 0 纯属自找卡顿），
+             * 那是怕在临界点上反复上下跳。所以这里按**滞回**做，两个方向门槛不同：
+             *   降档：speed>99 且 busy<85（沿用原门槛）
+             *   但**降到 0 额外要求 busy<75%** —— 因为降下去之后的开销比现在高，
+             *        富余不够就停在 1，形成 75~85% 的死区；
+             *   升档后 20 秒内不再尝试降回 0（防"重游戏里 0/1 来回抖"）；
+             *   升档：speed<96 且 busy>85（门槛不动）。
+             * ⚠ 旧的 `app.frameskip > 1` 下限正是"跳帧关不掉"的唯一原因，已去掉。 */
+            const float busy = statistics.busyPercent;
+            static int64_t last_raise_us = 0;
+            const int64_t now_us = rg_system_timer();
+            if (speed > 99.f && busy < 85.f && app.frameskip > 0)
             {
-                app.frameskip--;
-                RG_LOGI("Reduced frameskip to %d", app.frameskip);
+                const bool allow_zero = (busy < 75.f) && (now_us - last_raise_us > 20000000);
+                if (app.frameskip > 1 || allow_zero)
+                {
+                    app.frameskip--;
+                    RG_LOGI("Reduced frameskip to %d", app.frameskip);
+                }
             }
-            else if (speed < 96.f && statistics.busyPercent > 85.f && app.frameskip < 5)
+            else if (speed < 96.f && busy > 85.f && app.frameskip < 5)
             {
                 app.frameskip++;
+                last_raise_us = now_us;
                 RG_LOGI("Raised frameskip to %d", app.frameskip);
             }
 #endif
