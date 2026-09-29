@@ -241,20 +241,35 @@ static void update_statistics(void)
         // Hard to fix this sync issue without a lock, which I don't want to use...
         ticks = RG_MAX(ticks, frames);
 
-        statistics.busyPercent = busyTime / totalTime * 100.f;
-        statistics.totalFPS = ticks / totalTimeSecs;
-        statistics.skippedFPS = (ticks - frames) / totalTimeSecs;
-        statistics.fullFPS = fullFrames / totalTimeSecs;
-        statistics.partialFPS = partFrames / totalTimeSecs;
+        /* 换应用时 rg_display 的计数会从 0 重新开始，而上一拍的基准还属于旧应用 ⇒ 差值全为负，
+         * 硬算出来的 FPS 是天文数字（真机日志见过 `FPS:198891 (198887+0+0)`，屏幕上也会闪一下）；
+         * 两拍几乎同时到期（totalTimeSecs 极小）同样会把比值放大到无意义。
+         * 这两种情况**这一拍不更新派生统计** —— counters 每次都会被下面覆盖成当前值，
+         * 所以它自然成为新基准，下一拍就恢复正常，只丢这一拍。
+         * 屏幕上的帧率数字与日志读的是同一份 statistics，跳过等于两边都不被污染。 */
+        if (ticks >= 0 && frames >= 0 && fullFrames >= 0 && partFrames >= 0 && totalTimeSecs >= 0.05f)
+        {
+            statistics.busyPercent = busyTime / totalTime * 100.f;
+            statistics.totalFPS = ticks / totalTimeSecs;
+            statistics.skippedFPS = (ticks - frames) / totalTimeSecs;
+            statistics.fullFPS = fullFrames / totalTimeSecs;
+            statistics.partialFPS = partFrames / totalTimeSecs;
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-        /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
-         * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
-        rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
-        /* 数字变了，把它所在的逻辑行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
-         * 真机表现为"屏幕上的帧率不刷新，点开 menu 才更新"。
-         * 44 / 32 对应 rg_touch_overlay.c 里数字的纵向范围（中心 y=60、高 8x4=32px）。 */
-        rg_display_invalidate_lines(44, 32);
+            /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
+             * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
+            rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
+            /* 数字变了，把它所在的逻辑行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
+             * 真机表现为"屏幕上的帧率不刷新，点开 menu 才更新"。
+             * 44 / 32 对应 rg_touch_overlay.c 里数字的纵向范围（中心 y=60、高 8x4=32px）。 */
+            rg_display_invalidate_lines(44, 32);
 #endif
+        }
+        else
+        {
+            /* 只用整数格式化：ESP-IDF 日志不支持 %f/%lld（会错位） */
+            RG_LOGD("stats: counters reset (frames=%d part=%d full=%d ticks=%d dt=%dus) -> skip sample\n",
+                    (int)frames, (int)partFrames, (int)fullFrames, (int)ticks, (int)(totalTimeSecs * 1000000.f));
+        }
     }
     statistics.uptime = rg_system_timer() / 1000000;
 
