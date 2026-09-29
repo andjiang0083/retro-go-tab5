@@ -19,12 +19,10 @@ tools/log-tab5-nr.sh [秒]（不复位）；SD 卡只读；出错必记到 ~/esp
 **改了项目级编译宏，必须去 build/compile_commands.json 确认目标文件真的带上了它**（§126）。
 
 待办按顺序做：
-1) 发布 v0.4.3（需用户本人动手的部分）：
-   - M5Burner 里点 Publish：字段照抄 dist/m5burner-0.4.3/PUBLISH_FIELDS.md（Version 0.4.3、
-     FirmWare 选 merged bin、Cover 沿用 0.4.2 的）；
-   - GitHub：`sh tools/publish-github.sh "…"` 同步公开仓（若用户已授权），然后
-     `gh release create v0.4.3` 附 merged bin + 封面 + GITHUB_RELEASE_NOTES.md；
-     公开仓 README 要补"哪个渠道装哪一份"那张表（M5Burner vs M5Launcher）。
+1) 发布 v0.4.3（**GitHub 侧已完成**：代码已同步、公开仓 README 已补两张表与新命令、
+   Release v0.4.3 已建并回读验证）。**只剩用户本人**在 M5Burner 里点 Publish：
+   字段照抄 dist/m5burner-0.4.3/PUBLISH_FIELDS.md（Version 0.4.3、FirmWare 选 merged bin、
+   Cover 沿用 0.4.2 的）。
 2) ③ SD 读不到（用户要求稍后处理，见 HANDOFF 四、0.5）：真机复现 + 4-bit→1-bit 回退候选修法。
 3) 显示性能（唯一还有量级空间的方向，PPA 已排除）：
    a. 合并 lcd_send_buffer() 调用（每 block 0.6~1.0ms 固定开销；先加只统计不改行为的探针量一局）；

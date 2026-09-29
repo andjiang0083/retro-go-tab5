@@ -25,7 +25,12 @@
   **§127** CMake 缓存变量是"粘"的 → 布尔开关必须每次显式传 0/1，否则双 app 构建会混进单 app 产物。
 - **发布物料**：`dist/m5burner-0.4.3/`（两份包：merged 给 M5Burner/esptool、launcher-singleapp 给
   M5Launcher）+ 仓库根新增 `README.md`（第一屏就是"你是从哪儿装 → 装哪一份"）。
-- ⏳ **待办**：用户本人发布（M5Burner Publish + GitHub Release）；③ 的 SD/Launcher 实机复现。
+- **GitHub 侧已完成**（本轮）：代码已同步到公开仓（`publish-github.sh` → `27965b5`），
+  公开仓 README/README_CN 补上"先选对文件"表与 `--single-app` 构建命令（`fbdba20`），
+  **Release 已建并回读验证**：<https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.3>
+  （附件 merged bin 2,424,832 B / 单 app 包 1,441,152 B / 封面，均 uploaded）。
+- ⏳ **仅剩**：用户本人在 M5Burner 里点 Publish（字段照抄 `PUBLISH_FIELDS.md`）；
+  以及 ③ 的 SD/Launcher 实机复现。
 
 ### 上一轮（v0.4.1/0.4.2 时期，保留备查）
 - **v0.4.1 已发布**：M5Burner 0.4.1 由用户本人发布；GitHub Release v0.4.1 含 merged bin / sha256 / 封面 / 说明。
@@ -199,4 +204,5 @@ python3 tools/make-cover.py --hero docs/screenshot-portrait.png
   - README（公开仓自己维护，不随 rsync 覆盖）：已改成竖屏说明 + `docs/screenshot-portrait.png`；
     **0.4.3 起补上"哪个渠道装哪一份"（M5Burner vs M5Launcher）**——这是对外最容易装错的一处
   - 已发布：<https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4>；
-    0.4.1 / 0.4.2 的 Release 见仓库 Releases 页；**0.4.3 待本轮推送后创建**（附件用 0.4.3 的 merged bin）
+    **v0.4.3 已于本轮发布**（回读验证过：附件 merged bin 2,424,832 B / 单 app 包 1,441,152 B / 封面，
+    均 uploaded）：<https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.3>
