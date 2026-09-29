@@ -834,13 +834,24 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
          * 在 98 个尺寸组合上验证为逐字节相同（含 1 行/1 列/非 32 倍数边界）。 */
         /* E3：整块顺序读进片内 SRAM（理由见 tab5_stage 声明处）。
          * 源数据本身连续，所以这是一次纯顺序读；转置随后从 SRAM 读，不再受 PSRAM 行缓冲惩罚。
-         * 块超过 48KB 缓冲则自动退回原分块路径，行为与之前完全一致。 */
+         * 块超过 48KB 缓冲则自动退回原分块路径，行为与之前完全一致。
+         *
+         * 2026-09-29：**竖屏线性化之后这一趟搬运已经没必要了** —— 它当年是为「转置访问」修的
+         * （那时目标下标步长 = rows，一条 cache line 只被用上 2 字节，PSRAM 行缓冲被反复惩罚），
+         * 而现在源块顺序 == 目标顺序，下面的字节序循环就是纯顺序读，直接读 PSRAM 没有行缓冲惩罚，
+         * 反而省掉「PSRAM→SRAM 一趟 + SRAM 再读一趟」的额外访问。
+         * 保留开关做 A/B：1 = 仍旧先搬进 SRAM（旧行为），0 = 直接读源（预期更快）。 */
+#define TAB5_STAGE_COPY 0
+#if TAB5_STAGE_COPY
         const size_t tab5_blk_bytes = (size_t)rows * w * 2;
         const uint16_t *xsrc = buffer;
         if (tab5_blk_bytes <= TAB5_STAGE_BYTES) {
             memcpy(tab5_stage, buffer, tab5_blk_bytes);
             xsrc = tab5_stage;
         }
+#else
+        const uint16_t *xsrc = buffer;
+#endif
         /* 线性版：源块顺序 = 目标顺序，只需字节序转换（源 565 大端 → 面板小端）。
          * 纯顺序读写，无转置、无分块、无步长跳跃。 */
         {
