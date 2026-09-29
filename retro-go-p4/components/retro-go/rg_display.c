@@ -536,7 +536,8 @@ bool rg_display_sync(bool block)
         pf_calls++;
         if (pf_win == 0) pf_win = now;
         if (now - pf_win >= 1000000) {
-            RG_LOGI("SYNC-PF: 等显示=%d us/秒  calls=%d\n", (int)pf_wait, (int)pf_calls);
+            /* 探针已停用（性能排查期临时加入，疑与游戏内改音量崩溃相关） */
+    /* RG_LOGI("SYNC-PF: 等显示=%d us/秒  calls=%d\n", (int)pf_wait, (int)pf_calls); */
             pf_win = now; pf_wait = 0; pf_calls = 0;
         }
     }

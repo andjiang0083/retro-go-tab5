@@ -172,9 +172,10 @@ void rg_audio_submit(const rg_audio_frame_t *frames, size_t count)
         pf_calls++;
         if (pf_win == 0) pf_win = now;
         if (now - pf_win >= 1000000) {
-            RG_LOGI("AUDIO-PF: busy=%d us/秒  calls=%d  (占每秒 %d.%d%%)\n",
+            /* 探针已停用（性能排查期临时加入，疑与游戏内改音量崩溃相关） */
+    /* RG_LOGI("AUDIO-PF: busy=%d us/秒  calls=%d  (占每秒 %d.%d%%)\n",
                     (int)pf_busy, (int)pf_calls,
-                    (int)(pf_busy / 10000), (int)((pf_busy / 1000) % 10));
+                    (int)(pf_busy / 10000), (int)((pf_busy / 1000) % 10)); */
             pf_win = now; pf_busy = 0; pf_calls = 0;
         }
     }
