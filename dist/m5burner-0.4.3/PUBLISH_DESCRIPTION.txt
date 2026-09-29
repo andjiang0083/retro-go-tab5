@@ -1,0 +1,45 @@
+retro-go Tab5 —— M5Stack Tab5 上的 GBA 模拟器（竖屏版）
+Game Boy Advance emulator for the M5Stack Tab5 (portrait layout)
+
+【v0.4.3 新增】**支持从 M5Launcher 安装运行** —— 另出一份"单 app 包"（菜单与模拟器核心编进同一个镜像）：那个平台只能装单个 app 镜像，而本固件原本是双 app，从它装进来只会装上菜单、进不了游戏。**M5Burner / esptool 用户照旧用完整镜像，不受影响。**
+[NEW in v0.4.3] Installable from M5Launcher (bmorcelli/Launcher) via a dedicated "single-app" build — that platform can only install one app image, and this firmware used to ship as two, so installing it there gave you a menu whose games could never start. M5Burner / esptool users keep using the regular full image.
+
+【v0.4.3 改进】中文字库改为编进固件（不再占独立 flash 分区）：有些启动器安装时会按自己的规则重建数据分区，独立字库分区会因此丢失（中文变方块）。跳帧真正关到 0（60fps 满帧），并带入开机 -90ms、显示通路满屏一帧 -2ms 等优化。
+[IMPROVED in v0.4.3] The CJK font is now compiled into the firmware instead of its own flash partition (installers like M5Launcher recreate data partitions by their own rules, so the standalone font partition would be lost and Chinese text would show as boxes). Frame skip can now truly reach 0 (60 fps), plus a faster boot (-90 ms) and a cheaper display path (-2 ms per full frame).
+
+【v0.4.2 新增】X/Y ↔ L/R **调换键**（L 与 R 之间的琥珀色按钮）：点一下把菱形位与肩键位那两对互换 —— 格斗、赛车这类"肩键和菱形位都要用"的游戏，可以把肩键挪到更好点的地方。标签常显当前是哪一对，断电保存。
+[NEW in v0.4.2] X/Y ↔ L/R swap key (amber button between L and R): one tap exchanges the diamond pair with the shoulder pair — useful in fighting/racing games where you need both. The label always shows which pair is on the diamond; the choice survives a reboot.
+
+【v0.4.2 修复】游戏里虚拟按键按下去不亮、调换键点了不变（要进出游戏才生效）；列表里点触摸键偶尔短暂花屏；手指抬起后按键偶发粘住。方向键 8 向判定改用矢量扇区（斜向更准，十字外观不变）。
+[FIXED in v0.4.2] On-screen buttons gave no press feedback inside games and the swap key seemed inert until you switched screens; brief screen corruption when tapping in the launcher; keys could stick after lifting the finger. D-pad diagonals are now sector-based (more accurate, identical look).
+
+【v0.4.1 修复】插 USB-C 不充电 —— 板级充电使能从未被拉高，充电芯片一直禁用；现已照官方初始化序列使能，实测充电电流 -0.75~-0.87 A。电量圆灯"充电中"改为柔和呼吸。
+[FIXED in v0.4.1] USB-C charging now actually works — the board's charge-enable pin was never asserted, so the charge IC stayed disabled; now enabled (measured -0.75~-0.87 A into the pack). The charging indicator breathes softly instead of hard-blinking.
+
+【v0.4 新增】界面改为竖屏布局：游戏画面在上、触摸手柄在下（按键更大）；新增电量圆灯（绿/橙/红，低电闪、充电呼吸）；修好电量显示（之前恒为 0%）；launcher 标题不再被截断；修掉十字键串键；游戏内存档重启不再丢
+[NEW in v0.4] Reworked for portrait: game on top, touch gamepad below (bigger buttons); battery indicator light (green/amber/red, blinks when low, breathes while charging); battery percentage now works (was stuck at 0%); launcher header no longer clipped; d-pad ghost-input fixed; in-game SRAM saves now survive a reboot
+
+SD 卡目录结构 / SD card layout:
+<SD 卡根目录>/
+├── roms/gba/            ← GBA ROM 放这里（.gba 或 .zip，zip 内放一个 ROM）
+│   └── gba_bios.bin     ← 可选：GBA BIOS
+├── retro-go/            ← 模拟器工作目录（自动创建，一般不用手动碰）
+│   ├── saves/           ← 游戏存档
+│   ├── config/          ← 设置、最近游玩、收藏
+│   ├── cache/ themes/ borders/
+├── romart/              ← 游戏封面图（可选，按 ROM 文件名匹配：游戏.gba → 游戏.png）
+└── crash.log            ← 崩溃时自动生成；反馈问题请带上这个文件
+
+操作方式 / Controls:
+竖屏布局 —— 游戏画面在顶部，触摸手柄在下方控制区：
+方向键（左下）· A/B/X/Y 菱形（右下，X/Y = Turbo A/B 连发）· L/R 肩键（控制区顶部左右角）·
+X/Y ↔ L/R 调换键（控制区顶部正中，L 与 R 之间：点一下把菱形位与肩键位整对互换）·
+SELECT/START（底部中间）· MENU（游戏内菜单，底部右侧）· 电量圆灯（控制区正中，不挡按键）
+界面默认英文，可在 Options → Language 切换中文（设置会保存）
+
+Portrait layout — game screen on top, touch gamepad in the lower control area:
+D-pad (bottom-left) · A/B/X/Y diamond (bottom-right; X/Y = Turbo A/B) · L/R shoulders (top corners of
+the control area) · X/Y ↔ L/R swap key (top-centre, between L and R: exchanges the two pairs) ·
+SELECT/START (bottom-centre) · MENU (in-game menu, bottom-right) ·
+battery light (centre of the control area). UI language defaults to English; switch to Chinese in
+Options → Language.
