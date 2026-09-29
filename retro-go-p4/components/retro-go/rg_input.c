@@ -432,6 +432,12 @@ static uint32_t rg_dpad_keys_at(int lx, int ly)
 }
 #endif
 
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+/* 「X/Y ↔ L/R 调换」按钮（L/R 中间那颗）的按下状态：用于边沿检测 ——
+ * 手指按着不放时每一轮读点都会命中它，不做边沿就会疯狂来回切。 */
+static bool swap_btn_down = false;
+#endif
+
 bool rg_input_read_gamepad_raw(uint32_t *out)
 {
     uint32_t state = 0;
@@ -548,13 +554,49 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                      * 就不再依赖"表里必须留缝"这个隐含前提（走查 P2-13）。 */
                     if (lx >= mapping->x - mapping->w / 2 && lx < mapping->x + mapping->w / 2 &&
                         ly >= mapping->y - mapping->h / 2 && ly < mapping->y + mapping->h / 2)
-                        state |= mapping->key;
+                        /* 调换开着时这个**位置**代表的是别的键（X↔R、Y↔L）——
+                         * 规则只有一处（rg_touch_overlay.h 的 rg_touch_swap_key），
+                         * 可视层的标签/配色读同一份，所以按下高亮与手感永远一致。 */
+                        state |= rg_touch_swap_key(mapping->key);
                 }
             }
 
             /* 手指离开方向键区（或整体抬指）→ 清掉滞回状态，下次按下按"进入"门槛判 */
             if (!dpad_touched)
                 rg_dpad_reset();
+
+#if RG_TOUCH_OVERLAY
+            /* ── X/Y ↔ L/R 调换按钮（L/R 中间那颗）─────────────────────────────
+             * 不是游戏按键：不注入任何 RG_KEY_*，只切映射。边沿检测见 swap_btn_down
+             * 的注释（按着不放不能反复切）。几何来自可视层（单一数据源）。 */
+            if (pad_visible)
+            {
+                int sx = 0, sy = 0, sw = 0, sh = 0;
+                rg_overlay_get_swap_rect(&sx, &sy, &sw, &sh);
+                bool hit = false;
+                for (int t = 0; t < count; ++t)
+                {
+                    int lx = 0, ly = 0;
+                    RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                    if (lx >= sx && lx < sx + sw && ly >= sy && ly < sy + sh)
+                    {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (hit && !swap_btn_down)
+                {
+                    const bool on = !rg_overlay_get_swap();
+                    rg_overlay_set_swap(on);
+                    RG_LOGI("touch swap: X/Y <-> L/R -> %s\n", on ? "L/R" : "X/Y");
+                }
+                swap_btn_down = hit;
+            }
+            else
+            {
+                swap_btn_down = false;
+            }
+#endif
 
             /* ── 恢复入口：点左上角那个可见开关 ────────────────────────────────
              * 按键隐藏时可视层会在左上角画一个十字键图标的开关（rg_touch_overlay.c），

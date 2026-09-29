@@ -38,6 +38,7 @@
 /* NVS 键（与 rg_gui.c 菜单共用同一份定义，见 rg_touch_overlay.h） */
 #define SETTING_VISIBLE RG_TOUCH_SETTING_VISIBLE
 #define SETTING_ALPHA   RG_TOUCH_SETTING_ALPHA
+#define SETTING_SWAP    RG_TOUCH_SETTING_SWAP
 
 const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT] = {100, 80, 60, 40, 20};
 
@@ -97,6 +98,18 @@ static uint8_t acov_p[4][17];             /* 按下态 */
  * RG_KEY_* 是位掩码（RG_KEY_R = 1<<13 = 8192），拿它当下标越界 32KB —— 实机第一帧合成就
  * LoadProhibited 崩溃；宿主 .bss 邻页可读，所以 SDL2 预览完全看不出来（教训见经验沉淀 §92）。 */
 static uint32_t last_press_ms[RG_OVERLAY_MAX_BUTTONS];
+
+/* ---- X/Y ↔ L/R 调换（L/R 之间那颗切换按钮）----------------------------------
+ * swap_yx      当前是否已调换（NVS: RG_TOUCH_SETTING_SWAP）
+ * swap_btn     那颗按钮自己的掩码（不在 btns[] 里：它不是游戏键）
+ * swap_flash_ms 上次点击时刻（点一下亮一次）
+ * 颜色用 MENU 那颗琥珀 —— 调色板里琥珀专属于"系统/UI 控件"，一看就不是游戏键。 */
+static bool swap_yx = false;
+static rg_overlay_btn_t swap_btn;
+static bool swap_btn_ready = false;
+static uint32_t swap_flash_ms = 0;
+static bool swap_rebuild_pending = false;   /* 状态变了、等渲染线程重建掩码 */
+#define RG_OVERLAY_SWAP_PAD 10      /* 命中矩形比视觉矩形外扩（和左上角开关同一思路） */
 static uint32_t visual_mask;              /* 含"高亮保持"的显示用按下掩码 */
 static uint32_t debug_mask;               /* 预览用强制按下 */
 static uint8_t glyphs[128][8];            /* ASCII 8x8 点阵，MSB = 最左列 */
@@ -191,6 +204,32 @@ static void load_glyphs(void)
 
 /* ---------------------------------------------------------------- 标签几何 */
 
+/* 文字标签（从 label_geom 里拆出来的独立入口）：那颗调换按钮没有 rg_key_t，
+ * 标签是运行时的字符串（"X/Y" / "L/R"），需要和按键走同一套排版与掩码。 */
+static void label_geom_text(int w, int h, const char *text, rg_overlay_label_t *L)
+{
+    memset(L, 0, sizeof(*L));
+    if (!text || !*text)
+        return;
+
+    int n = (int)strlen(text);
+    int sx = (w * 80 / 100) / (n * 8);   /* 横向：留 20% 边距能放下的最大整数倍 */
+    int sy = (h * 45 / 100) / 8;         /* 纵向：留 45% 高度 */
+    int s = sx < sy ? sx : sy;
+    if (s < 1) s = 1;
+    L->kind = 2;
+    L->text = text;
+    L->text_len = n;
+    L->scale = s;
+    L->inv_scale = 1.0f / (float)s;
+    L->tx = (w - n * 8 * s) * 0.5f;
+    L->ty = h * 0.5f - 3.5f * s;         /* 字形墨迹占 7 行，按墨迹居中（不是按 8 行格） */
+    L->bx0 = L->tx - 1.0f;
+    L->by0 = L->ty - 1.0f;
+    L->bx1 = L->tx + (float)(n * 8 * s) + 1.0f;
+    L->by1 = L->ty + (float)(8 * s) + 1.0f;
+}
+
 static void label_geom(int w, int h, rg_key_t key, rg_overlay_label_t *L)
 {
     memset(L, 0, sizeof(*L));
@@ -235,25 +274,8 @@ static void label_geom(int w, int h, rg_key_t key, rg_overlay_label_t *L)
         return;
     }
 
-    if (!text)
-        return;
-
-    int n = (int)strlen(text);
-    int sx = (w * 80 / 100) / (n * 8);   /* 横向：留 20% 边距能放下的最大整数倍 */
-    int sy = (h * 45 / 100) / 8;         /* 纵向：留 45% 高度 */
-    int s = sx < sy ? sx : sy;
-    if (s < 1) s = 1;
-    L->kind = 2;
-    L->text = text;
-    L->text_len = n;
-    L->scale = s;
-    L->inv_scale = 1.0f / (float)s;
-    L->tx = (w - n * 8 * s) * 0.5f;
-    L->ty = h * 0.5f - 3.5f * s;         /* 字形墨迹占 7 行，按墨迹居中（不是按 8 行格） */
-    L->bx0 = L->tx - 1.0f;
-    L->by0 = L->ty - 1.0f;
-    L->bx1 = L->tx + (float)(n * 8 * s) + 1.0f;
-    L->by1 = L->ty + (float)(8 * s) + 1.0f;
+    if (text)
+        label_geom_text(w, h, text, L);
 }
 
 /* ⚠ 这个函数在预渲染热路径里被调用百万次，必须保持 float（P4 的 FPU 只有单精度，
@@ -318,11 +340,15 @@ static bool in_rrect(float x, float y, float w, float h, float r)
 
 /* ---------------------------------------------------------------- 建层 */
 
-static void build_button(rg_overlay_btn_t *b, uint16_t color)
+/* text_override != NULL 时用它当标签（那颗调换按钮不是游戏键，没有 rg_key_t 可查）。 */
+static void build_button(rg_overlay_btn_t *b, uint16_t color, const char *text_override)
 {
     const int w = b->w, h = b->h;
     rg_overlay_label_t L;
-    label_geom(w, h, b->key, &L);
+    if (text_override)
+        label_geom_text(w, h, text_override, &L);
+    else
+        label_geom(w, h, b->key, &L);
 
     float r = (float)((w < h ? w : h) * 18 / 100);
     if (r < 2) r = 2;
@@ -462,6 +488,13 @@ static void update_acov(void)
     }
 }
 
+/* 调换按钮的标签 = "菱形位上现在是谁"（默认 X/Y；调换后变成 L/R）——
+ * 用户原话："点击后，这个切换按钮应该变为 l/r"，也就是当状态指示用。 */
+static const char *swap_label(void)
+{
+    return swap_yx ? "L/R" : "X/Y";
+}
+
 void rg_overlay_init(void)
 {
     if (ready)
@@ -476,6 +509,8 @@ void rg_overlay_init(void)
      * 反馈"点不动"，先放一边）——等于把设备锁死。等蓝牙手柄能用了再放开。 */
     visible = true;
     rg_overlay_set_alpha((int)rg_settings_get_number(NS_GLOBAL, SETTING_ALPHA, 100));
+    /* X/Y ↔ L/R 调换（持久化）：必须在建掩码之前读进来，标签/配色才能一次到位 */
+    swap_yx = rg_settings_get_boolean(NS_GLOBAL, SETTING_SWAP, false);
 
     size_t n = 0;
     const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&n);
@@ -500,19 +535,32 @@ void rg_overlay_init(void)
 
     for (size_t i = 0; i < n; ++i)
     {
-        btns[i].key = map[i].key;
+        /* 位置固定、**功能键可调换**：btn.key 存的是"这个位置现在代表哪个键"
+         * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 btn.key
+         * → 视觉与手感永远一致；也正因为存的是功能键，高亮匹配不用额外改。 */
+        btns[i].key = swap_yx ? rg_touch_swap_key(map[i].key) : map[i].key;
         btns[i].w = map[i].w;
         btns[i].h = map[i].h;
         btns[i].x = map[i].x - map[i].w / 2;
         btns[i].y = map[i].y - map[i].h / 2;
-        build_button(&btns[i], overlay_key_color(map[i].key));
+        build_button(&btns[i], overlay_key_color(btns[i].key), NULL);
     }
+
+    /* L/R 之间那颗「X/Y ↔ L/R 调换」按钮：几何来自键位表（RG_TAB5_SWAP_*），
+     * key=0（不是游戏键，不注入输入），颜色借用 MENU 的琥珀 = "系统/UI 控件"。 */
+    swap_btn.key = RG_KEY_NONE;
+    swap_btn.w = RG_TAB5_SWAP_W;
+    swap_btn.h = RG_TAB5_SWAP_H;
+    swap_btn.x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2;
+    swap_btn.y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2;
+    build_button(&swap_btn, c565(0xE8, 0xA2, 0x2C), swap_label());
+    swap_btn_ready = (swap_btn.mask != NULL);
 
     ready = true;
     /* 这一行会出现在串口上：app 切换（进出游戏）时 lcd_init 里会重跑建层，
      * 耗时直接决定黑屏等待时长 —— 所以别把 double/除法/strlen 放回热路径。 */
-    RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, built in %d ms\n",
-            (unsigned)btn_count, visible, alpha_pct,
+    RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, X/Y<->L/R swapped=%d, built in %d ms\n",
+            (unsigned)btn_count, visible, alpha_pct, swap_yx,
             (int)((rg_system_timer() - t_start) / 1000));
 }
 
@@ -580,6 +628,74 @@ void rg_overlay_cycle_alpha(int direction)
     rg_overlay_set_alpha(rg_overlay_alpha_levels[idx]);
 }
 
+/* ---------------------------------------------------------------- X/Y ↔ L/R 调换 */
+
+void rg_overlay_get_swap_rect(int *x, int *y, int *w, int *h)
+{
+    if (x) *x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2 - RG_OVERLAY_SWAP_PAD;
+    if (y) *y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2 - RG_OVERLAY_SWAP_PAD;
+    if (w) *w = RG_TAB5_SWAP_W + 2 * RG_OVERLAY_SWAP_PAD;
+    if (h) *h = RG_TAB5_SWAP_H + 2 * RG_OVERLAY_SWAP_PAD;
+}
+
+bool rg_overlay_get_swap(void)
+{
+    return swap_yx;
+}
+
+/* 重建会被调换影响的按键掩码：只有 X/Y/L/R 四个。
+ * 集合 {X,Y,L,R} 在调换下闭合，所以按 btn.key 过滤无论切换前/后都对。 */
+static void rebuild_swapped_buttons(void)
+{
+    if (!ready || !btns)
+        return;
+    for (size_t i = 0; i < btn_count; ++i)
+    {
+        const rg_key_t k = btns[i].key;
+        if (k != RG_KEY_X && k != RG_KEY_Y && k != RG_KEY_L && k != RG_KEY_R)
+            continue;
+        btns[i].key = rg_touch_swap_key(k);         /* 自反：应用一次 = 对调 */
+        if (btns[i].mask)                           /* 老掩码必须先还回去：这是"点一下重建一次"的路径 */
+        {
+            free(btns[i].mask);
+            btns[i].mask = NULL;
+        }
+        build_button(&btns[i], overlay_key_color(btns[i].key), NULL);
+    }
+
+    if (swap_btn.mask)
+    {
+        free(swap_btn.mask);
+        swap_btn.mask = NULL;
+    }
+    build_button(&swap_btn, c565(0xE8, 0xA2, 0x2C), swap_label());
+    swap_btn_ready = (swap_btn.mask != NULL);
+}
+
+void rg_overlay_set_swap(bool on)
+{
+    if (swap_yx == on)
+        return;
+    swap_yx = on;
+    swap_flash_ms = (uint32_t)(rg_system_timer() / 1000);   /* 点一下亮一次 */
+    rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
+    /* ⚠ 掩码重建**不在这里做**：输入任务和显示线程是两条线，blit_one 正解引用
+     * b->mask 时 free 掉它会读到野内存。改标记，让渲染线程在下一帧开头重建
+     * （见 swap_rebuild_if_pending()）。输入侧不受影响：它只查状态、即时生效。 */
+    swap_rebuild_pending = true;
+    pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
+    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d\n", on);
+}
+
+/* 由合成路径每帧检查一次（渲染线程内），天然无并发 */
+static void swap_rebuild_if_pending(void)
+{
+    if (!swap_rebuild_pending)
+        return;
+    swap_rebuild_pending = false;
+    rebuild_swapped_buttons();
+}
+
 void rg_overlay_debug_set_pressed(uint32_t mask)
 {
     debug_mask = mask;
@@ -637,7 +753,7 @@ static inline void blend_px(uint16_t *dst, uint16_t src, int a)
 /* 单个按键的合成（两种朝向共用一份）。cw90=1 时按 tab5 物理朝向换算索引：
  * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)。早退条件由调用方保证。 */
 static void blit_one(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
-                     const rg_overlay_btn_t *b, bool cw90)
+                     const rg_overlay_btn_t *b, bool cw90, bool force_press)
 {
     if (!b->mask)
         return;   /* init 时分配失败的按键：跳过，别解引用空指针 */
@@ -657,7 +773,9 @@ static void blit_one(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
     if (ix0 >= ix1 || iy0 >= iy1)
         return;
 
-    const bool pr = b->key && (visual_mask & b->key) != 0;
+    /* force_press：给"没有游戏键位"的自绘按钮用（L/R 之间那颗调换按钮 key=0，
+     * 靠 visual_mask 永远匹配不上，按下反馈由调用方传进来）。 */
+    const bool pr = force_press || (b->key && (visual_mask & b->key) != 0);
     const uint8_t (*ac)[17] = pr ? acov_p : acov;
     const uint16_t *pal = pr ? b->pal_p : b->pal;
 
@@ -766,6 +884,20 @@ static void blit_toggle(uint16_t *buf, int stride, int rx, int ry, int rw, int r
     }
 }
 
+/* L/R 之间那颗「X/Y ↔ L/R 调换」按钮的合成。
+ * 它不是游戏键（key=0），按下反馈不来自 visual_mask 而是来自"刚点过"的时间戳
+ * （点一下亮一次 = 告诉用户"点到了，换过来了"）。隐藏态不画：整排按键都没了，
+ * 单独留一颗 UI 按钮反而奇怪（恢复入口是左上角那颗开关）。 */
+static void blit_swap_btn(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
+                          bool cw90)
+{
+    if (!swap_btn_ready)
+        return;
+    const uint32_t now = (uint32_t)(rg_system_timer() / 1000);
+    const bool flash = (uint32_t)(now - swap_flash_ms) < RG_OVERLAY_PRESS_LINGER_MS;
+    blit_one(buf, stride, rx, ry, rw, rh, phys_w, &swap_btn, cw90, flash);
+}
+
 void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
 {
     if (!buf || rw <= 0 || rh <= 0)
@@ -773,6 +905,7 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
 
     retry_init_if_needed();
     commit_if_pending();
+    swap_rebuild_if_pending();   /* 调换状态变了就在这里重建掩码（渲染线程内，无并发） */
     poll_pressed();
 
     if (!visible || !ready)
@@ -783,7 +916,9 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
     }
 
     for (size_t i = 0; i < btn_count; ++i)
-        blit_one(buf, stride, rx, ry, rw, rh, 0, &btns[i], false);
+        blit_one(buf, stride, rx, ry, rw, rh, 0, &btns[i], false, false);
+
+    blit_swap_btn(buf, stride, rx, ry, rw, rh, 0, false);
 }
 
 /* ---------------------------------------------------------------- 屏幕上的显示帧率数字
@@ -1045,6 +1180,7 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
     retry_init_if_needed();
     commit_if_pending();
+    swap_rebuild_if_pending();   /* 调换状态变了就在这里重建掩码（渲染线程内，无并发） */
     poll_pressed();
 
     if (!visible || !ready)
@@ -1056,8 +1192,9 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
     }
 
     for (size_t i = 0; i < btn_count; ++i)
-        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], true);
+        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], true, false);
 
+    blit_swap_btn(buf, stride, rx, ry, rw, rh, phys_w, true);
     blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }
 
@@ -1071,6 +1208,7 @@ void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, i
 
     retry_init_if_needed();
     commit_if_pending();
+    swap_rebuild_if_pending();   /* 调换状态变了就在这里重建掩码（渲染线程内，无并发） */
     poll_pressed();
 
     if (!visible || !ready)
@@ -1081,8 +1219,9 @@ void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, i
     }
 
     for (size_t i = 0; i < btn_count; ++i)
-        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], false);
+        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], false, false);
 
+    blit_swap_btn(buf, stride, rx, ry, rw, rh, phys_w, false);
     blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }
 

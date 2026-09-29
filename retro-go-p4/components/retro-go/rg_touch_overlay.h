@@ -44,6 +44,7 @@
 /* NVS 键（NS_GLOBAL）——菜单和本模块共用一份，别各写各的字面量 */
 #define RG_TOUCH_SETTING_VISIBLE "TouchButtons"
 #define RG_TOUCH_SETTING_ALPHA   "TouchOpacity"
+#define RG_TOUCH_SETTING_SWAP    "TouchSwapYX"    /* X/Y ↔ L/R 调换开关（持久化） */
 
 extern const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT];
 
@@ -75,6 +76,31 @@ void rg_overlay_debug_set_pressed(uint32_t mask);
 /* 左上角开关的命中矩形（逻辑坐标）—— 触摸层用它判断"是不是点了开关"。
  * 开关只在按键隐藏时显示，但矩形始终可查（单一数据源，别在别处再写一遍坐标）。 */
 void rg_overlay_get_toggle_rect(int *x, int *y, int *w, int *h);
+
+/* ---------------------------------------------------------------- X/Y ↔ L/R 调换
+ * L/R 之间那颗切换按钮（几何在 targets/tab5/touch_layout.h 的 RG_TAB5_SWAP_*）：
+ *   默认菱形位是 X/Y；点一下 → X↔R、Y↔L 对调（菱形位变 R/L，肩键位变 X/Y），
+ *   标签显示"菱形上现在是哪一对"（X/Y ↔ L/R）。不是游戏按键，不注入任何 RG_KEY_*。
+ * 状态存 NVS（RG_TOUCH_SETTING_SWAP），断电不丢；切完立刻重建那四个键的掩码。
+ * 输入层（rg_input.c）负责命中这颗按钮并调用 set_swap()。 */
+void rg_overlay_get_swap_rect(int *x, int *y, int *w, int *h);
+bool rg_overlay_get_swap(void);
+void rg_overlay_set_swap(bool on);
+
+/* X/Y ↔ L/R 的调换规则 —— **只此一处**（输入命中、可视层标签、可视层配色共用）：
+ *   X↔R、Y↔L；A/B、十字键、系统键都不动。
+ * 它是自反的（应用两次回原样），所以"调换/换回"是同一个调用。 */
+static inline rg_key_t rg_touch_swap_key(rg_key_t k)
+{
+    switch (k)
+    {
+        case RG_KEY_X: return RG_KEY_R;
+        case RG_KEY_R: return RG_KEY_X;
+        case RG_KEY_Y: return RG_KEY_L;
+        case RG_KEY_L: return RG_KEY_Y;
+        default:       return k;
+    }
+}
 
 /* 屏幕上的"显示帧率"数字：画在**控制区顶部正中**（逻辑 360,500 —— L/R 肩键之间的空白带；
  * 竖屏下 y<480 是游戏画面，不能占用）。坐标与线性映射都在 rg_touch_overlay.c 里
