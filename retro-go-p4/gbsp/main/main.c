@@ -141,6 +141,24 @@ static void sram_setup_path(void)
     RG_LOGI("SRAM-DBG step1: save path would be '.../saves/gba/%s.srm'\n", sram_path);
 }
 
+static void sram_load(void)
+{
+    if (!sram_path[0]) return;
+    char path[320];
+    snprintf(path, sizeof path, RG_BASE_PATH_SAVES "/gba/%s.srm", sram_path);
+    void *buf = NULL;
+    size_t size = 0;
+    if (!rg_storage_read_file(path, &buf, &size, 0) || !buf)
+    {
+        RG_LOGI("SRAM step2: no save file yet (%s)\n", path);
+        return;
+    }
+    size_t n = size < sizeof(gamepak_backup) ? size : sizeof(gamepak_backup);
+    memcpy(gamepak_backup, buf, n);
+    free(buf);
+    RG_LOGI("SRAM step2: loaded %u bytes <- %s\n", (unsigned)n, path);
+}
+
 void app_main(void)
 {
     const rg_handlers_t handlers = {
@@ -183,6 +201,7 @@ void app_main(void)
 
     RG_LOGI("emulation loop");
 
+    sram_load();   /* step2：开机读回 .srm（只读，文件不存在就跳过）*/
     while (true)
     {
         // RG_TIMER_INIT();
