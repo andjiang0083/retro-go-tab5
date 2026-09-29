@@ -152,7 +152,7 @@ def clean_app(app):
     print("Done.\n")
 
 
-def build_app(app, device_type, with_profiling=False, no_networking=False, is_release=False):
+def build_app(app, device_type, with_profiling=False, no_networking=False, is_release=False, single_app=False):
     # To do: clean up if any of the flags changed since last build
     print("Building app '%s'" % app)
     args = [IDF_PY, "app"]
@@ -162,6 +162,9 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     args.append(f"-DRG_BUILD_RELEASE={1 if is_release else 0}")
     args.append(f"-DRG_ENABLE_PROFILING={1 if with_profiling else 0}")
     args.append(f"-DRG_ENABLE_NETWORKING={0 if no_networking else 1}")
+    if single_app:
+        # 单 app 形态：把核心也编进 launcher（见 base.cmake / launcher/CMakeLists.txt）
+        args.append("-DRG_SINGLE_APP=1")
     with open("partitions.csv", "w") as f:
         f.write("# This table isn't used, it's just needed to avoid esp-idf build failures.\n")
         f.write("dummy, app, ota_0, 65536, 3145728\n")
@@ -214,6 +217,10 @@ parser.add_argument(
     "--no-networking", action="store_const", const=True, help="Build without networking support"
 )
 parser.add_argument(
+    "--single-app", action="store_const", const=True,
+    help="把菜单与核心编成单个 app 镜像（供 M5Launcher 这类只装一个 app 的启动器使用）"
+)
+parser.add_argument(
     "--port", default=DEFAULT_PORT, help="Serial port to use for flash and monitor"
 )
 parser.add_argument(
@@ -243,6 +250,11 @@ else:
     apps = [app for app in PROJECT_APPS.keys() if app in args.apps]
 
 try:
+    if args.single_app and ("all" in args.apps or len(apps) > 1):
+        # 单 app 形态下核心被编进 launcher 本身，再多编一个独立 app 没有意义（也没有分区放）
+        print("\nWARNING: --single-app 只产出 launcher 这一个 app，其余已忽略！\n")
+        apps = ["launcher"]
+
     if command in ["build-fw", "build-img", "release", "install"] and "launcher" not in apps:
         print("\nWARNING: The launcher is mandatory for those apps and will be included!\n")
         apps.insert(0, "launcher")
@@ -255,7 +267,7 @@ try:
     if command in ["build", "build-fw", "build-img", "release", "run", "profile", "install"]:
         print("=== Step: Building ===\n")
         for app in apps:
-            build_app(app, args.target, command == "profile", args.no_networking, command == "release")
+            build_app(app, args.target, command == "profile", args.no_networking, command == "release", args.single_app)
 
     if command in ["build-fw", "release"]:
         print("=== Step: Packing ===\n")
@@ -267,13 +279,15 @@ try:
 
     if command in ["build-img", "release", "install"]:
         print("=== Step: Packing ===\n")
-        img_file = ("%s_%s_%s.img" % (PROJECT_NAME, PROJECT_VER, args.target)).lower()
+        img_file = ("%s_%s_%s%s.img" % (PROJECT_NAME, PROJECT_VER, args.target,
+                    "-single" if args.single_app else "")).lower()
         build_image(img_file, apps, IDF_TARGET, args.fatsize)
 
     if command in ["install"]:
         print("=== Step: Flashing entire image to device ===\n")
         # Should probably show a warning here and ask for confirmation...
-        img_file = ("%s_%s_%s.img" % (PROJECT_NAME, PROJECT_VER, args.target)).lower()
+        img_file = ("%s_%s_%s%s.img" % (PROJECT_NAME, PROJECT_VER, args.target,
+                    "-single" if args.single_app else "")).lower()
         flash_image(img_file, args.port, args.baud)
 
     if command in ["flash", "run", "profile"]:

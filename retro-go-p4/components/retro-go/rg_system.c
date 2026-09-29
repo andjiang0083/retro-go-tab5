@@ -28,6 +28,8 @@ extern void rg_display_invalidate_lines(int top, int count);
 #include <freertos/semphr.h>
 #include <esp_heap_caps.h>
 #include <esp_partition.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 #include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -157,6 +159,60 @@ IRAM_ATTR void esp_panic_putchar_hook(char c)
     logbuf_putc(&panicTrace, c);
 }
 
+#if defined(ESP_PLATFORM)
+/* ── 单 app 形态的"待续标志"（编译期 RG_SINGLE_APP）────────────────────────────
+ * 双 app 形态用 esp_ota_set_boot_partition 记住"下次开机进哪个分区"；单 app 形态里菜单
+ * 与核心编在同一个 app（见 launcher/components/gbsp-core），没有第二个分区可切，于是改用
+ * 这一位 NVS 标志：置位 = 下次开机进核心，清位 = 进菜单。
+ * 之所以用原生 nvs API 而不是 rg_settings：分发器在 rg_system_init() **之前**就要做决定，
+ * 那时 retro-go 的设置层还没起来。
+ * 谁写：update_boot_config() —— 切核心时置位；回菜单时清位（回菜单 = 名字为空，
+ *       rg_system_exit() 走的就是 switch_app(RG_APP_LAUNCHER, 0, 0, 0)）。 */
+#define RG_SINGLE_APP_NVS_NS  "rgapp"
+#define RG_SINGLE_APP_NVS_KEY "core"
+
+static void single_app_set_core_pending(bool on)
+{
+    nvs_handle_t h;
+    if (nvs_open(RG_SINGLE_APP_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
+        return;
+    if (on)
+        nvs_set_u8(h, RG_SINGLE_APP_NVS_KEY, 1);
+    else
+        nvs_erase_key(h, RG_SINGLE_APP_NVS_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+}
+#endif
+
+bool rg_system_single_app_take_core_pending(void)
+{
+#if defined(ESP_PLATFORM) && defined(RG_SINGLE_APP)
+    /* 本函数在 rg_system_init() 之前被调用，那时 NVS 可能还没初始化 —— 先确保它可用。
+     * nvs_flash_init() 幂等，后面 rg_system_init() 再调一次没有副作用。 */
+    nvs_flash_init();
+
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(RG_SINGLE_APP_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
+        return false;
+    if (nvs_get_u8(h, RG_SINGLE_APP_NVS_KEY, &v) == ESP_OK && v)
+    {
+        /* 取走即清：标志只对"这一次"生效。核心自己从 NS_BOOT 取 romPath/configNs（不依赖
+         * 本标志），所以提前清掉不影响它；而万一核心启动就崩溃，重启后会回落菜单而不是
+         * 反复重启进核心。 */
+        nvs_erase_key(h, RG_SINGLE_APP_NVS_KEY);
+        nvs_commit(h);
+        nvs_close(h);
+        return true;
+    }
+    nvs_close(h);
+    return false;
+#else
+    return false;   /* 双 app 形态：进哪个 app 由 otadata 决定，这里永远为假 */
+#endif
+}
+
 static bool update_boot_config(const char *partition, const char *name, const char *args, uint32_t flags)
 {
     if (app.initialized)
@@ -170,7 +226,14 @@ static bool update_boot_config(const char *partition, const char *name, const ch
     {
         rg_storage_delete(RG_BASE_PATH_CONFIG "/boot.json");
     }
-#if defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM) && defined(RG_SINGLE_APP)
+    /* 单 app 形态：没有第二个 app 分区可切（otadata 永远指向本 app），改用"置待续标志 +
+     * 重启自己"。partition 参数只用于日志；name/args 上一步已经写进 NS_BOOT，核心照旧从
+     * 那里取 configNs 与 romPath。名字为空 = 回菜单（rg_system_exit 正是 name=0），
+     * 这时必须清标志，否则会自己反复重启进核心出不来。 */
+    (void)partition;
+    single_app_set_core_pending(app.initialized && name != NULL && name[0] != 0);
+#elif defined(ESP_PLATFORM)
     // Check if the OTA settings are already correct, and if so do not call esp_ota_set_boot_partition
     // This is simply to avoid an unecessary flash write...
     const esp_partition_t *current = esp_ota_get_boot_partition();
@@ -1023,7 +1086,15 @@ void rg_system_switch_app(const char *partition, const char *name, const char *a
 bool rg_system_have_app(const char *app)
 {
 #if defined(ESP_PLATFORM)
+#if defined(RG_SINGLE_APP)
+    /* 单 app 形态：核心被编进同一个镜像，没有独立分区可查 —— 唯一的"已安装应用"就是编进来的
+     * 那个核心（RG_SINGLE_APP_CORE，见 base.cmake；launcher 是菜单自己，不算）。
+     * ⚠ 这条判断决定菜单会不会列出该核心的游戏（applications.c 的 application() 早退）——
+     *   漏了就是"菜单里一个游戏都没有"。 */
+    return app && !strcmp(app, RG_SINGLE_APP_CORE);
+#else
     return esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, app) != NULL;
+#endif
 #elif defined(RG_TARGET_SDL2)
     char exe[strlen(app) + 5];
     sprintf(exe, "%s.exe", app);

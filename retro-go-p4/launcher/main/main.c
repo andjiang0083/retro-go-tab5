@@ -451,7 +451,9 @@ static void options_handler(rg_gui_option_t *dest)
 static void about_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Build CRC cache"), NULL, RG_DIALOG_FLAG_NORMAL, &prebuild_cache_cb};
-    #if defined(RG_ENABLE_NETWORKING) && RG_UPDATER_ENABLE
+    #if defined(RG_ENABLE_NETWORKING) && RG_UPDATER_ENABLE && !defined(RG_SINGLE_APP)
+    // 单 app 形态没有第二个 app 分区给 updater 落新固件，所以这一项不显示（见 rg_system.c 的
+    // update_boot_config）。升级改用 M5Burner / esptool 整包刷。
     *dest++ = (rg_gui_option_t){0, _("Check for updates"), NULL, RG_DIALOG_FLAG_NORMAL, &updater_cb};
     #endif
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
@@ -459,6 +461,19 @@ static void about_handler(rg_gui_option_t *dest)
 
 void app_main(void)
 {
+#if defined(RG_SINGLE_APP)
+    /* ── 单 app 形态的分发 ───────────────────────────────────────────────────────
+     * 菜单与模拟器核心编在同一个 app 里，靠"重启自己 + NVS 待续标志"切换（写标志的是
+     * components/retro-go/rg_system.c 的 update_boot_config；核心入口被改名为 rg_core_main，
+     * 见 launcher/components/gbsp-core）。
+     * ⚠ 必须放在任何 rg_* 初始化之前：核心进去后会自己跑一遍完整的 rg_system_init()，
+     *   那时它会按 NS_BOOT 里的名字取到自己的 configNs 与 romPath（与双 app 形态一致）。
+     * ⚠ 核心永不返回（退出走 rg_system_exit → 清标志 → 重启回本函数），所以下面不会被执行。 */
+    extern void rg_core_main(void);
+    if (rg_system_single_app_take_core_pending())
+        rg_core_main();
+#endif
+
     const rg_handlers_t handlers = {
         .event = &event_handler,
         .options = &options_handler,
