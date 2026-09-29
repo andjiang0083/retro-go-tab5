@@ -143,9 +143,15 @@
 #define RG_TAB5_BATTERY_CONFIGURED
 /* Tab5 没有可用的电池 ADC 脚（GPIO53 在官方 BSP 里是 I2C SDA），
  * 电量走 INA226 电源监测芯片：I2C 0x41，寄存器 0x02 = Bus Voltage（1.25mV/LSB）。
- * 它报的是电池真实电压 → 换算宏用恒等，不再乘分压比。
- * 见 wiki/tab5-sensor-components.md 与 m5stack_tab5 BSP。 */
+ * 它挂在 BSP 主 I2C 总线上（SDA=31/SCL=32），读法见 rg_input.c 的 RG_BATTERY_DRIVER==3。 */
 #define RG_BATTERY_DRIVER           3
-#define RG_BATTERY_CALC_PERCENT(raw) (((raw) - 3300.f) / (4200.f - 3300.f) * 100.f)
+/* 【换算口径】INA226 监测的是 **2S 锂电包**（NP-F550 7.4V, 6.0~8.4V），不是单节，
+ * 所以 raw（电包 mV）不能直接套单节的 3300~4200。
+ * 官方口径（M5Unified Power_Class::getBatteryLevel，杜撰不得）：
+ *     mv  = busVoltage(V) * 500        // = 电包 mV / 2 = 单节平均 mV
+ *     lvl = (mv - 3300) * 100 / (4150 - 3350)
+ * 这里就按这个来（1.25mV/LSB 的原始值已在上游乘法里换算成电包 mV）。 */
+#define RG_BATTERY_CALC_PERCENT(raw) ((((raw) / 2.f) - 3300.f) / 850.f * 100.f)
+/* 显示用电包电压（7.4V 那种，与 M5Unified getBatteryVoltage 一致），不折半 */
 #define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)
 #endif
