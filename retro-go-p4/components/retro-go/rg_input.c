@@ -172,6 +172,7 @@ uint32_t rg_input_get_pressed_mask(void)
 }
 static uint32_t gamepad_mapped = 0;
 static rg_battery_t battery_state = {0};
+static int battery_state_prev_charging = -1;   /* 去抖用：上一次"已确认"的充电状态（-1 = 还没初始化） */
 
 #define UPDATE_GLOBAL_MAP(keymap)                 \
     for (size_t i = 0; i < RG_COUNT(keymap); ++i) \
@@ -548,6 +549,24 @@ static void input_task(void *arg)
                     temp.volts = battery_state.volts;
             }
             battery_state = temp;
+            /* 【充电标志去抖】2026-09-29：INA226 的分流读值会抖（实测 -871mA 与 +1mA 交替采样），
+             * 单次采样直接翻转 charging 会让圆灯"闪一下停一下"，很不自然。
+             * 规则：连续两次同向才改变充电状态（插/拔线各只多等 2s，无感）。
+             * ⚠ 第一次采样的 battery_state.charging 是 0，所以开机即充电时要约 2 个周期才点亮。 */
+            {
+                static int pending = 0;
+                if (battery_state_prev_charging == -1)
+                    battery_state_prev_charging = battery_state.charging ? 1 : 0;
+                if ((int)battery_state.charging == battery_state_prev_charging)
+                    pending = 0;                                  /* 与现值一致 → 无待决 */
+                else if (++pending >= 2)
+                {
+                    battery_state_prev_charging = battery_state.charging ? 1 : 0;
+                    pending = 0;                                  /* 连续两次同向 → 采纳 */
+                }
+                else
+                    battery_state.charging = (battery_state_prev_charging != 0);   /* 只抖一次 → 维持现值 */
+            }
             next_battery_update = rg_system_timer() + 2 * 1000000; // update every 2 seconds
         }
 

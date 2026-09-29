@@ -890,13 +890,16 @@ static uint16_t batt_led_color(int idx)
     }
 }
 
-/* 返回要保留的色相（1 绿 / 2 橙 / 3 红；0 = 无电池，不画），*lit = 这一相位亮不亮。
- * 闪烁相位只降"亮度"不动色相，所以 "灭" 时外圈仍是同一个色。 */
-static int batt_led_state(bool *lit)
+/* 返回要保留的色相（1 绿 / 2 橙 / 3 红；0 = 无电池，不画）。
+ * *lit = 这一相位亮不亮（硬闪，仅用于低电告警）；*bright = 0~255 亮度系数
+ * （充电态用它做**柔和呼吸**：4 档/340ms → 整周期 ≈1.4s，最暗只降到 148/255。
+ *  用户 2026-09-29 反馈 1Hz 硬闪"闪了但不是很自然"，故充电改为呼吸、告警保留硬闪）。 */
+static int batt_led_state(bool *lit, int *bright)
 {
     const rg_battery_t b = rg_input_read_battery();
 
     *lit = true;
+    *bright = 255;
     if (!b.present)
         return 0;                              /* 没装电池 / 读不到 → 不显示（不是红色告警） */
 
@@ -905,9 +908,11 @@ static int batt_led_state(bool *lit)
 
     if (b.charging)
     {
-        idx = 1; blink = true;                 /* 充电中：绿闪（压过一切电量颜色） */
+        static const int breath[4] = {255, 196, 148, 196};   /* 亮→暗→亮，来回是正弦的味道 */
+        *bright = breath[(int)((rg_system_timer() / 340000) & 3)];
+        return 1;                              /* 充电中：绿 + 呼吸（压过一切电量颜色） */
     }
-    else if (b.level < 10.f) { idx = 3; blink = true; }   /* <10%：红闪 */
+    else if (b.level < 10.f) { idx = 3; blink = true; }   /* <10%：红闪（故意保持硬闪，告警要抓眼） */
     else if (b.level < 20.f) { idx = 3; }
     else if (b.level < 60.f) { idx = 2; }
     else                     { idx = 1; }
@@ -921,7 +926,9 @@ bool rg_batt_led_refresh_needed(void)
 {
     static int last = -1;
     bool lit = true;
-    const int code = batt_led_state(&lit) * 2 + (lit ? 1 : 0);   /* 色相+亮灭一起编码 */
+    int bright = 255;
+    /* 色相 + 亮灭 + 呼吸档位一起编码（档位取 >>5 得 8 级，够区分我们的 4 档） */
+    const int code = batt_led_state(&lit, &bright) * 8192 + (lit ? 4096 : 0) + (bright >> 5);
     if (code == last)
         return false;
     last = code;
@@ -942,7 +949,8 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
         return;
 
     bool lit = true;
-    const int idx = batt_led_state(&lit);
+    int bright = 255;
+    const int idx = batt_led_state(&lit, &bright);
     if (!idx)
         return;                                /* 无电池：条带已被驱动擦成背景，这里什么都不画 */
 
@@ -980,8 +988,9 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
                 }
             if (!cov_out)
                 continue;
-            /* 圈与芯同源（芯 = 键色*0.55）→ 合成一次缩放：分子 = Σ α*覆盖率*色深% */
-            const int num = a_ring * (cov_out - cov_in) * ring_pct + a_fill * cov_in * fill_pct;
+            /* 圈与芯同源（芯 = 键色*0.55）→ 合成一次缩放：分子 = Σ α*覆盖率*色深%
+             * 再乘充电呼吸的亮度系数 bright/255（硬闪时 bright=255，行为与以前一致）。 */
+            const int num = (a_ring * (cov_out - cov_in) * ring_pct + a_fill * cov_in * fill_pct) * bright / 255;
             row[lx] = c565_scale(base, num, 4 * 255 * 100);
         }
     }
