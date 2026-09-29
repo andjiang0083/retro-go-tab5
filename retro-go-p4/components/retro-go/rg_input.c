@@ -196,6 +196,81 @@ static inline int adc_get_raw(adc_unit_t unit, adc_channel_t channel)
 }
 #endif
 
+#if RG_BATTERY_DRIVER == 3
+/* ---- INA226 电量芯片（Tab5 专用）-------------------------------------------
+ * 读法以官方实现为准（M5Tab5-UserDemo hal_esp32.cpp + M5Unified Power_Class）：
+ * INA226 挂在 **BSP 的主 I2C 总线**上（`bsp_i2c_get_handle()`，SDA=31/SCL=32），
+ * 地址 0x41；同一条总线上还有触摸一体屏 ST7123(0x55)、IO 扩展器(0x43/0x44)。
+ *
+ * ⚠ 所以**不能**在这里自己装一套 I2C 驱动：老 API 的 i2c_driver_install 会占住
+ * I2C_NUM_0，BSP 随后的 i2c_new_master_bus 建不起来 → 扩展器初始化失败 →
+ * 面板/触摸停在复位（黑屏）。必须复用 BSP 的 bus handle（新 i2c_master API，
+ * 总线自带仲裁与加锁，多设备共存是它的正常用法）。
+ *
+ * 寄存器：0xFF = 器件 ID（应读回 0x2260）；0x02 = Bus Voltage，1.25mV/LSB，
+ * 报的是**2S 电包**电压（换算见 targets/tab5/config.h）。
+ * 出厂 CONFIG 就是连续转换（shunt+bus），只读电压不必先写配置。 */
+#ifdef ESP_PLATFORM
+#include <driver/i2c_master.h>
+
+extern esp_err_t bsp_i2c_init(void);
+extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
+
+static i2c_master_dev_handle_t ina226_dev = NULL;
+static int ina226_dbg_count = 0;
+
+static bool rg_ina226_ensure(void)
+{
+    if (ina226_dev)
+        return true;
+    if (bsp_i2c_init() != ESP_OK)
+        return false;
+    i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+    if (!bus)
+        return false;
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x41,
+        .scl_speed_hz = 100000,
+    };
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &ina226_dev) != ESP_OK)
+    {
+        ina226_dev = NULL;
+        return false;
+    }
+    /* 器件 ID 自检：读不到就不是"没配置"，是总线/地址不对，早点暴露 */
+    uint8_t id_reg = 0xFF, id[2] = {0};
+    if (i2c_master_transmit_receive(ina226_dev, &id_reg, 1, id, 2, 50) != ESP_OK)
+        RG_LOGE("INA226: device ID read failed (bus down?)\n");
+    else
+        RG_LOGI("INA226 ready: ID=0x%02X%02X (expect 2260)\n", id[0], id[1]);
+    return true;
+}
+
+static bool rg_ina226_read_reg16(uint8_t reg, uint16_t *out)
+{
+    uint8_t buf[2] = {0};
+    if (!rg_ina226_ensure())
+        return false;
+    if (i2c_master_transmit_receive(ina226_dev, &reg, 1, buf, 2, 50) != ESP_OK)
+        return false;
+    *out = (uint16_t)((buf[0] << 8) | buf[1]);
+    return true;
+}
+/* 分流电流（mA） = 寄存器原始值 * 0.5：
+ * 分流电压 LSB = 2.5µV、分流电阻 5mΩ → I = raw * 2.5µV / 5mΩ = raw * 0.5 mA。
+ * （5mΩ 与官方 M5Unified 对 Tab5 的 cfg.shunt_res 一致，见 Power_Class.inl。） */
+static int rg_ina226_shunt_ma(int16_t raw)
+{
+    return (int)(raw * 0.5f);
+}
+
+#else /* 宿主（SDL 预览）没有 BSP：不参与电量读取 */
+static int ina226_dbg_count = 0;
+static bool rg_ina226_read_reg16(uint8_t reg, uint16_t *out) { return false; }
+#endif
+#endif /* RG_BATTERY_DRIVER == 3 */
+
 bool rg_input_read_battery_raw(rg_battery_t *out)
 {
     uint32_t raw_value = 0;
@@ -217,6 +292,37 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
         return false;
     raw_value = data[4];
     charging = data[4] == 255;
+#elif RG_BATTERY_DRIVER == 3 /* INA226 @0x41: reg 0x02 总线电压(1.25mV/LSB) + reg 0x01 分流电压(2.5µV/LSB) */
+    /* Tab5 的电池电压由 INA226 给出，读法见本文件上方的 rg_ina226_*（走 BSP 主 I2C）。
+     * 它报的是 2S 电包电压 → 百分比换算在 targets/tab5/config.h 里折半。 */
+    uint16_t word = 0, shunt = 0;
+    bool ok = rg_ina226_read_reg16(0x02, &word);
+    /* 充电判定走**分流电流方向**（分流电阻 5mΩ，官方口径：充电时该值为负）。
+     * 只读寄存器、不写配置：INA226 出厂 CONFIG 已是连续转换（shunt+bus），
+     * 而电流方向不需要 CALIBRATION（那是给 CURRENT 寄存器用的），读 0x01 就够。 */
+    bool ok_shunt = rg_ina226_read_reg16(0x01, &shunt);
+    const int cur_ma = ok_shunt ? rg_ina226_shunt_ma((int16_t)shunt) : 0;
+    charging = ok_shunt && (cur_ma < -RG_TAB5_CHARGE_CURRENT_MA);
+    if (ina226_dbg_count < 6)
+    {
+        RG_LOGI("INA226-DBG: rc=%d raw=0x%04X (%d mV) shunt=%d (%d mA) chg=%d\n",
+                (int)ok, (unsigned)word, ok ? (int)(word * 1.25f) : -1,
+                (int)(int16_t)shunt, cur_ma, (int)charging);
+        ina226_dbg_count++;
+    }
+    /* 充电状态一变就打一行 —— 真机插/拔充电器各一次，用这行确认符号约定 */
+    {
+        static int last_chg = -1;
+        int chg = (int)charging;
+        if (chg != last_chg)
+        {
+            RG_LOGI("INA226-CHG: shunt=%d (%d mA) -> charging=%d\n", (int)(int16_t)shunt, cur_ma, chg);
+            last_chg = chg;
+        }
+    }
+    if (!ok || word == 0 || word == 0xFFFF)
+        return false;
+    raw_value = (uint32_t)(word * 1.25f);   /* 寄存器原始值 → 电包 mV */
 #else
     return false;
 #endif

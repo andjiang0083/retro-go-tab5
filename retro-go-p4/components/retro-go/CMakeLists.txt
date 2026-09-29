@@ -1,7 +1,7 @@
 set(COMPONENT_SRCDIRS ". drivers/audio fonts libs/netplay libs/lodepng")
 set(COMPONENT_ADD_INCLUDEDIRS ". libs/netplay libs/lodepng")
 if((IDF_VERSION_MAJOR EQUAL 5) AND (IDF_VERSION_MINOR GREATER 2)) # esp-idf 5.3+
-    set(COMPONENT_REQUIRES "spi_flash fatfs app_update json nvs_flash esp_adc esp_timer esp_psram esp_wifi esp_http_client esp_driver_ledc esp_driver_i2c esp_driver_ppa esp_mm driver esp_lcd m5stack_tab5 esp_codec_dev")
+    set(COMPONENT_REQUIRES "spi_flash fatfs app_update json nvs_flash esp_adc esp_timer esp_psram esp_wifi esp_http_client esp_driver_ledc esp_driver_i2c esp_driver_ppa esp_mm driver esp_lcd m5stack_tab5 esp_codec_dev ppa_engine")
     if(RG_BUILD_TARGET STREQUAL "RG_TARGET_TAB5")
         # Tab5 的触摸虚拟手柄要用 ST7123 触摸组件（BSP 已依赖它，这里显式声明以便本组件 include 其头文件）
         list(APPEND COMPONENT_REQUIRES esp_lcd_touch esp_lcd_touch_st7123)

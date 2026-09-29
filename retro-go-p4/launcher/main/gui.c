@@ -470,7 +470,14 @@ void gui_draw_header(tab_t *tab, int offset)
     if (tab->banner)
         rg_gui_draw_image(LOGO_WIDTH + 1, offset + 8, 0, HEADER_HEIGHT - 8, false, tab->banner);
     else
-        rg_gui_draw_text(LOGO_WIDTH + 8, offset + 8, 0, tab->desc, gui.theme->foreground, C_TRANSPARENT, RG_TEXT_BIGGER);
+        /* 【竖屏 720 宽】这里原来带 RG_TEXT_BIGGER（2× → 78px 高）：标题量得 1076px 宽，
+         * 720 宽的竖屏必然被右缘裁掉（日志 "Texbox (pos: 1076x80, ...) will be truncated!"，
+         * 实机表现就是 "Nintendo Gameboy Advance" 显示不全）。
+         * 退回 1×（39px，与菜单同字号）后约 538px，连 LOGO 偏移 54px 一共 592px，宽高都装得下；
+         * 其余 UI 的字号（RG_GUI_FONT_SCALE=3）一律不动。同时给出可用宽度，
+         * 万一以后有更长的 desc 也会在框内截断，不会画到屏幕外。 */
+        rg_gui_draw_text(LOGO_WIDTH + 8, offset + 8, gui.width - (LOGO_WIDTH + 8), tab->desc,
+                         gui.theme->foreground, C_TRANSPARENT, 0);
 }
 
 void gui_draw_tab_indicator(void)

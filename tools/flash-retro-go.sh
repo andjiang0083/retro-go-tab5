@@ -16,7 +16,16 @@ PORT="${PORT:-$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)}"
 ROOT="$HOME/esp32/retro-go-tab5"
 PY="$HOME/.espressif/python_env/idf5.5_py3.14_env/bin/python"
 
-IMG="${1:-$(ls -t "$ROOT"/retro-go-p4/retro-go_*_tab5.img 2>/dev/null | head -1)}"
+if [ $# -gt 0 ]; then
+  # 传了参数就用参数；**空参数直接报错**，绝不静默退化成"按时间取最新"——
+  # 2026-09-29 踩过：点名用的提交号写成了 7 位（%h），而镜像名里只有 5 位，
+  # grep 结果为空 → 脚本悄悄 ls -t 刷了"最新"，差点又刷错版本。
+  IMG="$1"
+  [ -n "$IMG" ] && [ -f "$IMG" ] || { echo "✗ 传入的镜像路径为空或不存在：'$1' —— 不猜，先修好点名命令"; exit 1; }
+else
+  IMG="$(ls -t "$ROOT"/retro-go-p4/retro-go_*_tab5.img 2>/dev/null | head -1)"
+  [ -n "$IMG" ] && echo "⚠ 未点名镜像，按修改时间取最新：$(basename "$IMG")（纪律：按提交号点名，建议显式传参）"
+fi
 [ -f "$IMG" ] || { echo "找不到 img（先跑 rg_tool.py --target tab5 build-img launcher gbsp --no-networking）"; exit 1; }
 
 echo "=== 待刷镜像 ==="; ls -la "$IMG"; shasum -a 256 "$IMG"

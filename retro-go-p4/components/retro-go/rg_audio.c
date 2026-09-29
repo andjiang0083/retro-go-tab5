@@ -160,6 +160,25 @@ void rg_audio_submit(const rg_audio_frame_t *frames, size_t count)
 
     counters.totalSamples += count;
     counters.busyTime += rg_system_timer() - time_start;
+
+    /* 2026-09-28 性能盲区仪表：音频忙时占每秒的比例（此前无任何可见读数）。
+     * 用自己的窗口计数，不改 counters 的累计语义（别处可能在读）。 */
+    {
+        static int64_t pf_win = 0;
+        static int64_t pf_busy = 0;
+        static uint32_t pf_calls = 0;
+        int64_t now = rg_system_timer();
+        pf_busy += now - time_start;
+        pf_calls++;
+        if (pf_win == 0) pf_win = now;
+        if (now - pf_win >= 1000000) {
+            /* 探针已停用（性能排查期临时加入，疑与游戏内改音量崩溃相关） */
+    /* RG_LOGI("AUDIO-PF: busy=%d us/秒  calls=%d  (占每秒 %d.%d%%)\n",
+                    (int)pf_busy, (int)pf_calls,
+                    (int)(pf_busy / 10000), (int)((pf_busy / 1000) % 10)); */
+            pf_win = now; pf_busy = 0; pf_calls = 0;
+        }
+    }
 }
 
 rg_audio_counters_t rg_audio_get_counters(void)

@@ -1,7 +1,8 @@
 /* Configuration for M5Stack Tab5 (ESP32-P4)
  *
  * 显示：官方 Tab5 BSP（vendor/m5stack_tab5）+ MIPI DSI/ST7123，走 RG_SCREEN_DRIVER 2。
- * 面板原生 720x1280 竖屏；逻辑画面 1280x720 横向，90° 映射在驱动里做（见驱动头部注释）。
+ * 【竖屏分支】面板原生 720x1280 竖屏 = 逻辑画面同向，**无旋转**、顺序读写
+ * （横屏主线为逻辑 1280x720 + 90° 映射；本分支走驱动编号 3 = mipi_dsi_tab5_p.h）。
  * 构建：python rg_tool.py --target tab5 build-img launcher gbsp --no-networking
  */
 
@@ -39,14 +40,16 @@
 /****************************************************************************
  * Video — MIPI DSI / ST7123, 走官方 Tab5 BSP                                *
  ****************************************************************************/
-#define RG_SCREEN_DRIVER            2   // 2 = MIPI DSI (Tab5 BSP)，0=SPI, 99=SDL2
+#define RG_SCREEN_DRIVER            3   // 3 = MIPI DSI 竖屏线性（本分支专用，无旋转）
 #define RG_SCREEN_BACKLIGHT         1
 /* 逻辑分辨率（用户自然持机的横向视角）。物理面板是 720x1280 竖屏，
  * 驱动按 90° 映射写入，所以这里必须是横向的那一组数。 */
-#define RG_SCREEN_WIDTH             1280
-#define RG_SCREEN_HEIGHT            720
+#define RG_SCREEN_WIDTH             720
+#define RG_SCREEN_HEIGHT            1280
 #define RG_SCREEN_ROTATE            0
-#define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 0}  // Left, Top, Right, Bottom
+/* 【竖屏分支】游戏画面锚定顶部 y=0..480（720x480 顶满宽度），
+ * 下方 800px 全给虚拟按键 —— 与 touch_layout.h 的分区一致。 */
+#define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 800}  // Left, Top, Right, Bottom
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}  // Left, Top, Right, Bottom
 #define RG_SCREEN_PARTIAL_UPDATES   1
 /* 无 SPI 命令序列：面板初始化在驱动里走 Tab5 BSP（lcd_init 会调用本宏） */
@@ -90,7 +93,10 @@
 /* 每帧"算一块推一块"的块大小（像素）。默认 RG_SCREEN_WIDTH*4=4 行 => 一帧 180 次推送，
  * 播游戏时面板 DMA 会持续忙、触发 tab5_draw 的重试风暴。这里放到 16 行（一帧 45 次）。
  * 内存代价：驱动里两个 LCD_BUFFER_LENGTH 大小的缓冲 = 2 × 40KB。 */
-#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 16)
+/* 2026-09-28：16→32 行/块。真机实测每 16 行推一次 → 一帧 30 次推送，
+ * DMA2D 大量丢弃(ESP_ERR_INVALID_STATE)、重试烧掉 224ms/秒。
+ * 32 行一块 = 46KB，正好装进 48KB 的片内 SRAM 暂存(tab5_stage)，推送次数减半。 */
+#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 32)
 
 /* GUI 字体放大倍数：默认字体 VeraBold11 渲染高度 13px，在 1280x720 上太小（实机反馈）。
  * 3 倍 = 39px。改这里即可调整（2 = 26px，3 = 39px）。 */
@@ -100,6 +106,14 @@
 /* 键位表抽到 touch_layout.h —— 命中判定 / 可视层绘制 / PC 预览三方共用一份，
  * 抄成两份必然漂移（表现：画的和点的不是一回事）。改键位改那个文件。 */
 #include "touch_layout.h"
+/* 【竖屏分支】触摸坐标换算覆盖：
+ * rg_input.c 默认实现是横屏的 90° 逆映射（lx=py, ly=phys_w-1-px）。
+ * 竖屏下显示驱动的映射是恒等的（px=lx, py=ly），触摸必须同向，否则
+ * 手指位置会被换算到旋转后的逻辑点、落在命中区之外 —— 表现就是
+ * 「按键画出来了但按不动」。 */
+#define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly) \
+    do { (lx) = (px); (ly) = (py); } while (0)
+
 #define RG_GAMEPAD_TOUCH_MAP RG_TAB5_TOUCH_MAP
 /* 若真机上触摸方向不对（点左选中右之类），改这个变换，不用动读点逻辑 */
 #define RG_TOUCH_PHYS_W 720
@@ -115,3 +129,32 @@
     /* Arbitrary code executed very early during retro-go init */
 
 // See components/retro-go/config.h for more things you can define here!
+
+/****************************************************************************
+ * 电池电量读取（2026-09-29 新增）
+ * ---------------------------------------------------------------------------
+ * 此前本 target 完全没有电量配置 → rg_input_read_battery_raw() 直接 return
+ * false → 状态栏 BATT 恒为 0。
+ * 硬件参数取自 gywan94/tab5-vgbanext 的 odroid_input.c：
+ *   GPIO 53 = ADC2_CH4，分压 68K(电池侧) + 100K(GND侧) → 比例 1.68
+ * 百分比按锂电 3.3V(0%) ~ 4.2V(100%) 线性换算（够用；偏了再校准）。
+ ***************************************************************************/
+#ifndef RG_TAB5_BATTERY_CONFIGURED
+#define RG_TAB5_BATTERY_CONFIGURED
+/* Tab5 没有可用的电池 ADC 脚（GPIO53 在官方 BSP 里是 I2C SDA），
+ * 电量走 INA226 电源监测芯片：I2C 0x41，寄存器 0x02 = Bus Voltage（1.25mV/LSB）。
+ * 它挂在 BSP 主 I2C 总线上（SDA=31/SCL=32），读法见 rg_input.c 的 RG_BATTERY_DRIVER==3。 */
+#define RG_BATTERY_DRIVER           3
+/* 【换算口径】INA226 监测的是 **2S 锂电包**（NP-F550 7.4V, 6.0~8.4V），不是单节，
+ * 所以 raw（电包 mV）不能直接套单节的 3300~4200。
+ * 官方口径（M5Unified Power_Class::getBatteryLevel，杜撰不得）：
+ *     mv  = busVoltage(V) * 500        // = 电包 mV / 2 = 单节平均 mV
+ *     lvl = (mv - 3300) * 100 / (4150 - 3350)
+ * 这里就按这个来（1.25mV/LSB 的原始值已在上游乘法里换算成电包 mV）。 */
+#define RG_BATTERY_CALC_PERCENT(raw) ((((raw) / 2.f) - 3300.f) / 850.f * 100.f)
+/* 显示用电包电压（7.4V 那种，与 M5Unified getBatteryVoltage 一致），不折半 */
+#define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)
+/* 充电判定阈值（mA，取分流电流绝对值）：小于这个充电电流不算"在充电"，
+ * 免得不插充电器时被噪声抖成闪烁。官方口径：分流电流**为负**表示在充电。 */
+#define RG_TAB5_CHARGE_CURRENT_MA   40
+#endif

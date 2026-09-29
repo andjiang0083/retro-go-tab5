@@ -3,7 +3,9 @@ set(COMPONENT_ADD_INCLUDEDIRS ". libretro/libretro-common/include")
 set(COMPONENT_REQUIRES "retro-go esp_mm heap")
 register_component()
 rg_setup_compile_options(
-    -O2
+    # 2026-09-28 融合自 rapha-tech/retro-go@f3e8527（对齐 Ducalex 的选项）：
+    # -O2 → -O3，对方实测 3D 重载标题 +10% 性能、体积 +25%。
+    -O3
     -fomit-frame-pointer -ffast-math
     -DOVERCLOCK_60FPS
     # ↓ RISC-V dynarec（后端移植自 Irak4t0n/HowBoyAdvance，GPLv2）
@@ -12,7 +14,7 @@ rg_setup_compile_options(
     #   MMAP_JIT_CACHE JIT 缓存走 map_jit_block（P4: esp_mmu_map 可执行映射）
     #   SMALL_TRANSLATION_CACHE 缓存 1MB ROM + 256KB RAM（默认 10MB 太大）
     #   -msmall-data-limit=0 防止 .sbss 溢出（HowBoyAdvance 实测必需）
-    -DHAVE_DYNAREC -DRISCV_ARCH -DMMAP_JIT_CACHE -DSMALL_TRANSLATION_CACHE
+    -DHAVE_DYNAREC -DHAVE_JIT -DRISCV_ARCH -DMMAP_JIT_CACHE -DSMALL_TRANSLATION_CACHE
     -msmall-data-limit=0
     -Wno-unused-variable
     -Wno-implicit-fallthrough

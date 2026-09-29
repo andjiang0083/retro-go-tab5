@@ -22,16 +22,16 @@ import argparse
 import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 LAYOUT_H = ROOT / "retro-go-p4/components/retro-go/targets/tab5/touch_layout.h"
 FONT_C = ROOT / "retro-go-p4/components/retro-go/fonts/basic8x8.c"
 OUT_DIR = ROOT / "docs"
 
-SCR_W, SCR_H = 1280, 720
-GAME_W, GAME_H = 720, 480          # 240x160 @ 3x 整数缩放
-GAME_X, GAME_Y = (SCR_W - GAME_W) // 2, (SCR_H - GAME_H) // 2   # (280, 120)
+SCR_W, SCR_H = 720, 1280          # 【竖屏分支】逻辑空间 720x1280（横屏 1280x720 是旧版）
+GAME_W, GAME_H = 720, 480          # 240x160 @ 3x 整数缩放，贴顶
+GAME_X, GAME_Y = 0, 0
 SS = 4                              # 超采样倍数（固件预渲染用同一倍数）
 
 ALPHA_FILL, ALPHA_BORDER, ALPHA_LABEL = 0.50, 0.90, 1.00
@@ -275,12 +275,85 @@ def stack(rows, gap=8, bgcol=(16, 16, 20)):
     return out
 
 
+# ---------------------------------------------------------------- 电量圆灯（按键同款配方）
+# 用户反馈两轮：① 位置（"不居中"）② 风格（"其他按键都是加个框的"）。
+# 结论：圆灯 = 把按键那套视觉配方套到圆上 —— 外圈 = 键色(α*0.90)、内芯 = 压暗 0.55(α*0.50)、
+# 圈宽 3px（与按键边框同宽），颜色直接取现有调色板里的三个色，天然与整屏同一语言：
+#   绿 #4CB05A（= Y 键绿）/ 橙 #E8A22C（= MENU 琥珀）/ 红 #E24B3F（= A 键红）
+LED_R = 12                      # 半径（直径 24px）
+LED_CX = 360                    # = 屏幕中线 = START/十字/ABXY 的对称轴
+LED_GREEN, LED_ORANGE, LED_RED = hx("#4CB05A"), hx("#E8A22C"), hx("#E24B3F")
+
+
+def build_led(color, on=True, r=LED_R, alpha_pct=100):
+    """按键配方套到圆上。on=False = 熄灭（圈还在但压暗 → 闪烁时不会整块凭空消失）。"""
+    size = 2 * r + 2
+    W = size * SS
+    layer = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    a = alpha_pct / 100.0
+    if on:
+        ring, fill = color, shade(color, 0.55)
+        ra, fa = int(255 * a * ALPHA_BORDER), int(255 * a * ALPHA_FILL)
+    else:
+        ring, fill = shade(color, 0.26), shade(color, 0.06)
+        ra, fa = int(255 * a * ALPHA_BORDER * 0.8), int(255 * a * ALPHA_FILL)
+    d.ellipse([0, 0, W - 1, W - 1], fill=ring + (ra,))
+    bw = 3 * SS
+    d.ellipse([bw, bw, W - 1 - bw, W - 1 - bw], fill=fill + (fa,))
+    return layer.resize((size, size), Image.BOX)
+
+
+def led_control_area(led_y, on=True, color=LED_GREEN, crop=(150, 880, 570, 1230), scale=1.8):
+    """整屏（含按键）渲染后在指定 y 合成圆灯，再裁控制区（带上/下两排按键做参照）。"""
+    im = render(100, PALETTE_A).convert("RGBA")
+    led = build_led(color, on=on)
+    im.alpha_composite(led, (LED_CX - led.width // 2, led_y - led.height // 2))
+    im = im.crop(crop).convert("RGB")
+    return im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+
+
+def _cn_font(size):
+    for p in ("/System/Library/Fonts/PingFang.ttc",
+              "/System/Library/Fonts/STHeiti Medium.ttc",
+              "/System/Library/Fonts/Supplemental/Songti.ttc"):
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def label_row(im, text):
+    band = Image.new("RGB", (im.width, 36), (22, 24, 30))
+    ImageDraw.Draw(band).text((10, 6), text, fill=(232, 232, 238), font=_cn_font(22))
+    return stack([band, im], gap=0)
+
+
+def led_variants():
+    """最终位置 y=1025 的四个状态（刷机前存证 + 以后调色的参照）。"""
+    rows = [
+        label_row(led_control_area(1025, color=LED_GREEN), "绿：≥60%（充电时闪的就是它）"),
+        label_row(led_control_area(1025, color=LED_ORANGE), "橙：20~60%"),
+        label_row(led_control_area(1025, color=LED_RED), "红：10~20%（<10% 会闪）"),
+        label_row(led_control_area(1025, on=False, color=LED_GREEN), "暗相位：只灭内芯，外圈压暗保留"),
+    ]
+    out = stack(rows)
+    out.save(OUT_DIR / "led-variants.png")
+    print("wrote", OUT_DIR / "led-variants.png", out.size)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--alpha", type=int, default=None, help="只出这一档透明度")
     ap.add_argument("--scale", type=float, default=1.0, help="整体缩放（默认 1:1）")
+    ap.add_argument("--led", action="store_true", help="只出电量圆灯的位置/样式对比图")
     args = ap.parse_args()
     OUT_DIR.mkdir(exist_ok=True)
+
+    if args.led:
+        led_variants()
+        return
 
     if args.alpha is not None:
         out = OUT_DIR / f"touch-overlay-a{args.alpha}.png"

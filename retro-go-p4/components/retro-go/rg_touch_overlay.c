@@ -849,6 +849,144 @@ static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
     draw_fps_text(buf, stride, rx, ry, rw, rh, phys_w, lx, ly, c565(255, 255, 255));        /* 正文 */
 }
 
+/* ---------------------------------------------------------------- 电量圆灯
+ *
+ * 位置：控制区**上下两排按键之间的空档正中** —— 十字/ABXY 底边 907、系统键顶边 1142，
+ *       取 (907+1142)/2 ≈ 1025。x=360 是屏幕中线，也正好是 START / 十字 / ABXY 的对称轴。
+ *       （2026-09-29 用户第一版反馈："不居中" → 原来贴在 START 上方显得偏下，已上移到空档中心。）
+ * 样式：**按键同款配方**（用户反馈："其他按键都是加个框的"）——
+ *       外圈 = 键色 @ α*0.90（与按键边框同配方）、内芯 = 键色*0.55 @ α*0.50、圈宽 3px；
+ *       颜色不新造，直接复用调色板里已有的三个色（见 batt_led_color 注释）。
+ * 闪烁：只灭内芯、外圈压暗保留（26%）—— 像一盏没点亮的指示灯，不会整块凭空消失又冒出来。
+ * 亮度：跟随叠加层透明度档位（α 调到 20% 时灯一起暗下去，整屏一致）。
+ * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪；充电中 → 绿闪（优先级最高）。
+ * 相位：500ms 亮 / 500ms 暗（由 rg_system_timer 决定，无状态、免定时器）。
+ * 背景：控制区这块没有任何内容 → 直写时先擦黑再画（不擦会新旧叠加，同帧率数字的教训）。
+ * 边缘：2x2 子采样求覆盖率（外圈/内芯各一次），背景是黑 → 按覆盖率压暗即向背景混合。
+ *
+ * ⚠ 行号必须是 4 的倍数：帧缓冲一行 = 720px×2B = 1440B，1440 % 128 = 32，
+ *   只有每 4 行才落到 128B 边界上 —— cache 写回（esp_cache_msync）要求 128B 对齐。
+ *   圆占 y 1013..1037，取 [1012,1040) 正好满足。 */
+#define RG_BATT_LED_CX       360
+#define RG_BATT_LED_CY       1025
+#define RG_BATT_LED_R        12
+#define RG_BATT_LED_RING     3
+#define RG_BATT_LED_BAND_Y0  1012
+#define RG_BATT_LED_BAND_Y1  1040
+#ifndef RG_SCREEN_WIDTH
+#define RG_SCREEN_WIDTH 720
+#endif
+
+/* 键色取自现成调色板（保证整屏同一语言）：绿 #4CB05A = Y 键绿、橙 #E8A22C = MENU 琥珀、
+ * 红 #E24B3F = A 键红。颜色只表示电量档位，不承担别的语义。 */
+static uint16_t batt_led_color(int idx)
+{
+    switch (idx)
+    {
+        case 1:  return c565(0x4C, 0xB0, 0x5A);
+        case 2:  return c565(0xE8, 0xA2, 0x2C);
+        case 3:  return c565(0xE2, 0x4B, 0x3F);
+        default: return c565(0x4C, 0xB0, 0x5A);
+    }
+}
+
+/* 返回要保留的色相（1 绿 / 2 橙 / 3 红；0 = 无电池，不画），*lit = 这一相位亮不亮。
+ * 闪烁相位只降"亮度"不动色相，所以 "灭" 时外圈仍是同一个色。 */
+static int batt_led_state(bool *lit)
+{
+    const rg_battery_t b = rg_input_read_battery();
+
+    *lit = true;
+    if (!b.present)
+        return 0;                              /* 没装电池 / 读不到 → 不显示（不是红色告警） */
+
+    int idx;
+    bool blink = false;
+
+    if (b.charging)
+    {
+        idx = 1; blink = true;                 /* 充电中：绿闪（压过一切电量颜色） */
+    }
+    else if (b.level < 10.f) { idx = 3; blink = true; }   /* <10%：红闪 */
+    else if (b.level < 20.f) { idx = 3; }
+    else if (b.level < 60.f) { idx = 2; }
+    else                     { idx = 1; }
+
+    if (blink && ((rg_system_timer() / 500000) & 1))
+        *lit = false;                          /* 500ms 暗相位（外圈保留、内芯灭） */
+    return idx;
+}
+
+bool rg_batt_led_refresh_needed(void)
+{
+    static int last = -1;
+    bool lit = true;
+    const int code = batt_led_state(&lit) * 2 + (lit ? 1 : 0);   /* 色相+亮灭一起编码 */
+    if (code == last)
+        return false;
+    last = code;
+    return true;
+}
+
+void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1)
+{
+    if (x0) *x0 = 0;
+    if (y0) *y0 = RG_BATT_LED_BAND_Y0;
+    if (x1) *x1 = RG_SCREEN_WIDTH;
+    if (y1) *y1 = RG_BATT_LED_BAND_Y1;
+}
+
+void rg_batt_led_draw(uint16_t *buf, int stride)
+{
+    if (!buf || stride <= 0)
+        return;
+
+    bool lit = true;
+    const int idx = batt_led_state(&lit);
+    if (!idx)
+        return;                                /* 无电池：条带已被驱动擦成背景，这里什么都不画 */
+
+    const uint16_t base = batt_led_color(idx);
+    /* 与按键同配方（背景是黑，所以按系数压暗 = 向背景混合，不必走 blend_px）：
+     * 外圈 键色*100%（亮）/ 26%（暗） @ α*0.90（暗相位 α*0.72）；内芯 键色*55% / 6% @ α*0.50 */
+    const int ring_pct = lit ? 100 : 26;
+    const int fill_pct = lit ? 55 : 6;
+    const int a_ring = alpha_level * (lit ? 90 : 72) / 100;
+    const int a_fill = alpha_level * 50 / 100;
+    const int R = RG_BATT_LED_R, Ri = R - RG_BATT_LED_RING;
+
+    for (int dy = -R; dy <= R; ++dy)
+    {
+        const int ly = RG_BATT_LED_CY + dy;
+        if (ly < RG_BATT_LED_BAND_Y0 || ly >= RG_BATT_LED_BAND_Y1)
+            continue;
+        uint16_t *row = buf + (size_t)ly * stride;
+        for (int dx = -R; dx <= R; ++dx)
+        {
+            const int lx = RG_BATT_LED_CX + dx;
+            if (lx < 0 || lx >= RG_SCREEN_WIDTH)
+                continue;
+            int cov_out = 0, cov_in = 0;
+            for (int sy = 0; sy < 2; ++sy)
+                for (int sx = 0; sx < 2; ++sx)
+                {
+                    const float px = dx + (sx ? 0.25f : -0.25f);
+                    const float py = dy + (sy ? 0.25f : -0.25f);
+                    const float d2 = px * px + py * py;
+                    if (d2 <= (float)(R * R))
+                        cov_out++;
+                    if (d2 <= (float)(Ri * Ri))
+                        cov_in++;
+                }
+            if (!cov_out)
+                continue;
+            /* 圈与芯同源（芯 = 键色*0.55）→ 合成一次缩放：分子 = Σ α*覆盖率*色深% */
+            const int num = a_ring * (cov_out - cov_in) * ring_pct + a_fill * cov_in * fill_pct;
+            row[lx] = c565_scale(base, num, 4 * 255 * 100);
+        }
+    }
+}
+
 /* tab5 专用：面板是原生竖屏，逻辑画面按 90°CW 写进物理帧缓冲。
  * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)，与显示驱动的映射必须完全一致。
  * 这里不做第二份旋转位图，只在索引上换算 —— 一份数据、两种朝向。 */
@@ -871,6 +1009,31 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
     for (size_t i = 0; i < btn_count; ++i)
         blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], true);
+
+    blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
+}
+
+
+/* 竖屏线性版（tab5p 分支）：逻辑坐标 = 物理坐标，不做 90° 换算。
+ * 与 cw90 版共用同一份绘制代码，只是 cw90=false。 */
+void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
+{
+    if (!buf || rw <= 0 || rh <= 0)
+        return;
+
+    retry_init_if_needed();
+    commit_if_pending();
+    poll_pressed();
+
+    if (!visible || !ready)
+    {
+        blit_toggle(buf, stride, rx, ry, rw, rh, phys_w, false);
+        blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
+        return;
+    }
+
+    for (size_t i = 0; i < btn_count; ++i)
+        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], false);
 
     blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }

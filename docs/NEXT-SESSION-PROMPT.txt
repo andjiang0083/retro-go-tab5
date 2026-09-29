@@ -1,0 +1,16 @@
+继续做 Tab5 竖屏 retro-go 的收尾工作。项目在 ~/esp32/retro-go-tab5（分支 portrait），
+先读 docs/PORTRAIT-TAB5-HANDOFF.md，里面是完整交接：当前状态、构建/刷机命令、纪律、待办、已知坑。
+重点纪律：一次只改一个变量；实验被否整笔回退到已验证基线，不在失败点叠加修复；
+刷机必须按提交号点名挑镜像（不许 ls -t，曾刷错过）；抓日志用 tools/log-tab5-nr.sh（不复位版）；
+SD 卡只读；出错必记到 ~/esp32/ESP32-经验沉淀.md（§N 格式）；遇到别人做过的功能先读参考实现注释，别自造插桩。
+
+待办按顺序做：
+1) 电量读不通：根因是 targets/tab5/config.h 从没定义 RG_GPIO_I2C_SDA/SCL，
+   所以 rg_i2c 总线没挂在 INA226 上。去官方 demo ~/esp32/M5Tab5-UserDemo/platforms/tab5/main/hal/hal_esp32.cpp
+   读内部总线 i2c_bus_handle 的引脚，写进 tab5 config，然后验日志里 BATT 出真实百分比。
+   （硬件事实：INA226 @ I2C 0x41，寄存器 0x02 = Bus Voltage，1.25mV/LSB；
+    参考项目 gywan94/tab5-vgbanext 说的 "GPIO53=电池ADC" 与官方 BSP 冲突，不要照抄。）
+2) 竖屏字体过大导致 launcher 标题被截断：rg_gui.c:226 的字体放大倍数是按横屏 1280x720 设的，按竖屏 720 宽改正。
+3) 在 START 正上方居中画电量圆灯：实心小圆，绿 100-60% / 橙 60-20% / 红 20-10% / <10% 红闪，
+   充电中绿闪（优先级最高）。充电判定用 INA226 电流方向，符号要真机实测确定。
+每完成一项就真机验证一次再进下一项。
