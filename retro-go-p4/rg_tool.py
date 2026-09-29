@@ -162,9 +162,9 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     args.append(f"-DRG_BUILD_RELEASE={1 if is_release else 0}")
     args.append(f"-DRG_ENABLE_PROFILING={1 if with_profiling else 0}")
     args.append(f"-DRG_ENABLE_NETWORKING={0 if no_networking else 1}")
-    if single_app:
-        # 单 app 形态：把核心也编进 launcher（见 base.cmake / launcher/CMakeLists.txt）
-        args.append("-DRG_SINGLE_APP=1")
+    # ⚠ 必须每次都显式传 0/1：CMake 缓存变量是"粘"的，上一次留在 build 目录里的 1 会影响后续
+    # 所有构建（症状：双 app 构建里混进单 app 的产物、体积对不上）。
+    args.append(f"-DRG_SINGLE_APP={1 if single_app else 0}")
     with open("partitions.csv", "w") as f:
         f.write("# This table isn't used, it's just needed to avoid esp-idf build failures.\n")
         f.write("dummy, app, ota_0, 65536, 3145728\n")
