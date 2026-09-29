@@ -1,5 +1,8 @@
 #include "rg_system.h"
 #include "rg_display.h"
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+#include "rg_touch_overlay.h"   /* 叠加层改内容后请求"整屏重推"（见 write_update） */
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -104,6 +107,24 @@ static inline unsigned blend_pixels(unsigned a, unsigned b)
 static inline void write_update(const rg_surface_t *update)
 {
     const int64_t time_start = rg_system_timer();
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 触摸覆盖层（虚拟按键）改了内容 —— 例如那颗 X/Y ↔ L/R 调换按钮。
+     * 这类改动**必须**由本函数（显示线程）来"让画面跟上"，因为：
+     *   ① 行校验和过滤会跳过源缓冲没变的行，而叠加层不在源缓冲里，靠置脏推不动；
+     *   ② 游戏里覆盖层所在的黑边在视口之外（gba 视口 720x480，黑边 y=480..1279），
+     *      下面的推帧循环根本遍历不到那些行；
+     *   ③ 于是只能"整屏重来"：清零校验和（本帧全部重推）+ 置 display.changed
+     *      （下一轮走视口重来那条路，把黑边连同覆盖层重画一遍）。
+     * ⚠ 千万不要把这段挪到输入任务/覆盖层那边去调 rg_display_force_redraw()：
+     *   它会派发 RG_EVENT_REDRAW，启动器的 event_handler 收到就 gui_redraw() ——
+     *   等于在输入任务里重画界面，两个线程抢同一块 surface（真机花屏，2026-09-29）。 */
+    if (rg_overlay_consume_repaint_request())
+    {
+        memset(screen_line_checksum, 0, sizeof(screen_line_checksum));
+        display.changed = true;
+    }
+#endif
 
     bool filter_x = display.viewport.filter_x;
     bool filter_y = display.viewport.filter_y;

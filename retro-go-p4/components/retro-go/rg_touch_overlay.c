@@ -10,7 +10,6 @@
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
 
 #include "fonts/fonts.h"
-#include "rg_display.h"
 #include "rg_gui.h"
 #include "rg_settings.h"
 #include "rg_system.h"
@@ -120,6 +119,7 @@ static rg_overlay_btn_t swap_btn;
 static bool swap_btn_ready = false;
 static uint32_t swap_flash_ms = 0;
 static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它发现"该重画了" */
+static bool swap_repaint_requested = false; /* 请求显示线程把画面整片重推（见 consume 函数） */
 #define RG_OVERLAY_SWAP_PAD 10      /* 命中矩形比视觉矩形外扩（和左上角开关同一思路） */
 static uint32_t visual_mask;              /* 含"高亮保持"的显示用按下掩码 */
 static uint32_t debug_mask;               /* 预览用强制按下 */
@@ -732,18 +732,21 @@ void rg_overlay_set_swap(bool on)
     apply_swap_variants();                                  /* 立刻生效（只对换，无分配） */
     rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
     pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
-    /* 让画面也跟着立刻变。这里有两件事，缺一不可：
-     *  ① 行置脏：菜单这类界面视口==整屏，重绘的"行校验和"过滤会把内容没变的行全挡住，
-     *     不置脏就一行都不重推、覆盖层也就不会被重新合成。
-     *  ② `rg_display_force_redraw()`：**游戏里**覆盖层所在的那条黑边在视口之外
-     *     （gba 视口 720x480，黑边 y=480..1279），显示层推帧时根本循环不到那些行 ——
-     *     只有"视口变化/整屏重来"这条路径才会把黑边连同覆盖层重新画一遍。
-     *     （本项目帧率数字用的也是这条路径，见 rg_display_invalidate_lines 的注释。）
-     * 这一步是安全的：只置标志 + 等显示队列排空，真正的绘制仍在显示线程里做。
-     * 真机反馈"点切换后要进出游戏才生效""不是马上变"都是缺了这两步之一。 */
-    rg_display_invalidate_lines(0, RG_SCREEN_HEIGHT);
-    rg_display_force_redraw();
-    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u)\n", on, (unsigned)swap_generation);
+    /* ⚠ 画面刷新交给**显示线程**去做（见 rg_overlay_consume_repaint_request 的注释）：
+     * 这里只置一个请求标志。绝不能在这里直接调 rg_display_force_redraw() ——
+     * 它会 dispatch RG_EVENT_REDRAW，而启动器的 event_handler 收到该事件就调 gui_redraw()，
+     * 于是**在输入任务的上下文里重画整个界面**，和启动器自己的循环抢同一块 surface
+     * （真机 2026-09-29：列表里点击会短暂花屏）。 */
+    swap_repaint_requested = true;
+    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u, repaint requested)\n",
+            on, (unsigned)swap_generation);
+}
+
+bool rg_overlay_consume_repaint_request(void)
+{
+    const bool pending = swap_repaint_requested;
+    swap_repaint_requested = false;
+    return pending;
 }
 
 uint32_t rg_overlay_get_generation(void)
