@@ -582,11 +582,14 @@ static void tab5_perf_flush(const char *app)
 
 /* 把 retro-go 送来的逻辑行（可能很窄，例如 4 行 x 1280 列）整体转成一块
  * 物理矩形后一次性推给面板：90° 旋转下"若干逻辑行"恰好等于"物理上的一竖条"。 */
-/* 把一块逻辑矩形（w 列 x rows 行）转成物理矩形推给面板。
- * staged=true 表示源已经在 tab5_stage 里（小推送合并的 flush 路径），跳过那次搬运。 */
-static void tab5_push_block(uint16_t *buffer, int w, int x0, int y0, int rows, bool staged)
+static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 {
-    if (!tab5_panel || w <= 0 || rows <= 0)
+    if (!tab5_panel || length == 0 || tab5_win_width <= 0)
+        return;
+
+    const int w = tab5_win_width;                       /* 逻辑列数 */
+    const int rows = (int)(length / (size_t)w);         /* 本次的逻辑行数 */
+    if (rows <= 0)
         return;
 
     /* ── 竖屏线性映射（2026-09-27，本 target 专用）───────────────────────────
@@ -596,7 +599,8 @@ static void tab5_push_block(uint16_t *buffer, int w, int x0, int y0, int rows, b
      * 转置版相比 x/y 跨度互换 —— 逻辑块多宽，物理块就多宽）。
      * 收益：读写全部顺序化（横屏版逐行转置时每 1440B 只碰 64B，实测仅 28MB/s，
      * 顺序读可达 89MB/s），这正是 transpose= 那 6~8ms/帧 的来源。 */
-    /* x0/y0/w/rows 由调用方给定（见 tab5_push_block 签名） */
+    const int x0 = tab5_win_left;
+    const int y0 = tab5_win_top;
 
     int64_t t_tr0 = esp_timer_get_time();
     bool done = false;
@@ -666,7 +670,7 @@ static void tab5_push_block(uint16_t *buffer, int w, int x0, int y0, int rows, b
          * 块超过 48KB 缓冲则自动退回原分块路径，行为与之前完全一致。 */
         const size_t tab5_blk_bytes = (size_t)rows * w * 2;
         const uint16_t *xsrc = buffer;
-        if (!staged && tab5_blk_bytes <= TAB5_STAGE_BYTES) {
+        if (tab5_blk_bytes <= TAB5_STAGE_BYTES) {
             memcpy(tab5_stage, buffer, tab5_blk_bytes);
             xsrc = tab5_stage;
         }
@@ -763,93 +767,6 @@ static void tab5_push_block(uint16_t *buffer, int w, int x0, int y0, int rows, b
     tab5_perf_report();
 
     tab5_win_top += rows;   /* 连续推送时窗口向下推进 */
-}
-
-/* ===========================================================================
- * 小推送合并（2026-09-28）
- * ---------------------------------------------------------------------------
- * 真机背景：GBA 的 UI 类更新（文本框、状态栏）只改 2 行，显示层于是送来 2 行的
- * 更新区域 —— 驱动统计 rows=2.0。但**每次提交面板的代价是固定的 ~1.3ms**（等
- * DPI 刷新时隙 + DMA2D 往返 + ESP_ERR_INVALID_STATE 重试），与数据量无关：
- * 120 次/秒 x 1.3ms = 155ms/秒，比转置本身还贵。
- *
- * 对策：把**相邻连续**的小推送攒起来，凑满 32 行 / 超过 12ms / 遇到不连续、
- * 大推送、零长调用时，一次性走原路径推出。攒点复用 tab5_stage（不额外占 SRAM），
- * 推出时置 staged=true 跳过那次搬运。
- *
- * 顺序安全：任何非合并路径进入前先 flush。
- * 窗口不变量：驱动推送后自己推进 tab5_win_top，显示层依赖它来省略重复的
- * lcd_set_window —— 所以攒的时候照常推进，推出前再把窗口拨回积攒起点。
- * =========================================================================== */
-#define TAB5_MERGE_MIN_ROWS      8
-#define TAB5_MERGE_MAX_ROWS      32
-#define TAB5_MERGE_TIMEOUT_US    12000
-
-static int tab5_merge_rows = 0, tab5_merge_x = 0, tab5_merge_y = 0, tab5_merge_w = 0;
-static int64_t tab5_merge_t0 = 0;
-
-static void tab5_merge_flush(void)
-{
-    if (tab5_merge_rows <= 0)
-        return;
-    const int rows = tab5_merge_rows;
-    tab5_merge_rows = 0;
-    /* 拨回积攒起点，让 push 内部按整块推送并正确推进窗口 */
-    tab5_win_left = tab5_merge_x;
-    tab5_win_width = tab5_merge_w;
-    tab5_win_top = tab5_merge_y;
-    tab5_push_block(tab5_stage, tab5_merge_w, tab5_merge_x, tab5_merge_y, rows, true);
-}
-
-static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
-{
-    if (!tab5_panel || tab5_win_width <= 0)
-        return;
-
-    const int w = tab5_win_width;
-
-    if (length == 0)
-    {
-        /* 零长调用 = 显示层"本块无变化"，正好当帧末刷点用 */
-        tab5_merge_flush();
-        return;
-    }
-
-    const int rows = (int)(length / (size_t)w);
-    if (rows <= 0)
-        return;
-
-    const int x0 = tab5_win_left;
-    const int y0 = tab5_win_top;
-
-    if (rows < TAB5_MERGE_MIN_ROWS)
-    {
-        const bool contiguous = (tab5_merge_rows > 0 && x0 == tab5_merge_x && w == tab5_merge_w &&
-                                 y0 == tab5_merge_y + tab5_merge_rows);
-        if (contiguous && tab5_merge_rows + rows <= TAB5_MERGE_MAX_ROWS)
-        {
-            memcpy(tab5_stage + (size_t)tab5_merge_rows * w, buffer, (size_t)rows * w * 2);
-            tab5_merge_rows += rows;
-            tab5_win_top += rows;       /* 与显示层的 window_top 追踪保持同步 */
-        }
-        else
-        {
-            tab5_merge_flush();         /* 不连续：先把旧的推出去 */
-            tab5_merge_x = x0; tab5_merge_y = y0; tab5_merge_w = w;
-            memcpy(tab5_stage, buffer, (size_t)rows * w * 2);
-            tab5_merge_rows = rows;
-            tab5_merge_t0 = esp_timer_get_time();
-            tab5_win_top += rows;
-        }
-
-        if (tab5_merge_rows >= TAB5_MERGE_MAX_ROWS ||
-            esp_timer_get_time() - tab5_merge_t0 >= TAB5_MERGE_TIMEOUT_US)
-            tab5_merge_flush();
-        return;
-    }
-
-    tab5_merge_flush();                 /* 大推送：先保证顺序 */
-    tab5_push_block(buffer, w, x0, y0, rows, false);
 }
 
 static void lcd_sync(void)
