@@ -116,6 +116,13 @@ static uint32_t last_press_ms[RG_OVERLAY_MAX_BUTTONS];
  * 颜色用 MENU 那颗琥珀 —— 调色板里琥珀专属于"系统/UI 控件"，一看就不是游戏键。 */
 static bool swap_yx = false;
 static rg_overlay_btn_t swap_btn;
+/* ── "控制条带上哪些单元需要整块重画"（取走即清，见 rg_overlay_take_dirty_rects）──
+ * 游戏里显示层只推视口（720x480），控制条带在黑边上推不到 —— 按压反馈和那颗调换按钮
+ * 都靠这套标记让显示层把条带重建一遍。 */
+static uint32_t dirty_units = 0;        /* bit i = btns[i] 的外观变了 */
+static bool dirty_swap_btn = false;     /* 那颗切换按钮（不在 btns[] 里） */
+static uint32_t dirty_last_visual = 0;  /* 上次看到的"高亮位"（含 linger 保持） */
+static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画（外观可能全变） */
 static bool swap_btn_ready = false;
 static uint32_t swap_flash_ms = 0;
 static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它发现"该重画了" */
@@ -630,6 +637,7 @@ void rg_overlay_set_visible(bool value)
     visible = value;
     rg_settings_set_boolean(NS_GLOBAL, SETTING_VISIBLE, value);
     pending_commit = true;   /* 立刻生效、延后落盘（落盘点见 commit_if_pending） */
+    dirty_all_units = true;  /* 显隐切换：条带整块重画（游戏里推帧到不了条带） */
     RG_LOGI("touch overlay %s\n", value ? "shown" : "hidden");
 }
 
@@ -730,6 +738,7 @@ void rg_overlay_set_swap(bool on)
     swap_yx = on;
     swap_flash_ms = (uint32_t)(rg_system_timer() / 1000);   /* 点一下亮一次 */
     apply_swap_variants();                                  /* 立刻生效（只对换，无分配） */
+    dirty_all_units = true;   /* 13 个单元的外观都可能变（键位/标签/配色一起换） */
     rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
     pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
     /* ⚠ 画面刷新交给**显示线程**去做（见 rg_overlay_consume_repaint_request 的注释）：
@@ -759,12 +768,13 @@ void rg_overlay_debug_set_pressed(uint32_t mask)
     debug_mask = mask;
 }
 
-/* 按下状态：真实按下 + 短暂保持（快速点按也能看到一次反馈） */
+/* ── "控制条带上哪些单元需要整块重画"：见文件上方 dirty_* 的声明 ── */
 static void poll_pressed(void)
 {
     uint32_t now = (uint32_t)(rg_system_timer() / 1000);
     uint32_t mask = rg_input_get_pressed_mask() | debug_mask;
 
+    /* 按下状态 = 真实按下 + 短暂保持（快速点按也能看到一次反馈） */
     visual_mask = mask;
     for (size_t i = 0; i < btn_count; ++i)
     {
@@ -779,6 +789,48 @@ static void poll_pressed(void)
         if ((uint32_t)(now - last_press_ms[i]) < RG_OVERLAY_PRESS_LINGER_MS)
             visual_mask |= k;
     }
+
+    /* 高亮位变了（按下/松手/linger 结束）→ 记下"哪些单元需要整块重画"。
+     * 谁用：显示层推帧循环到不了控制条带的场合（游戏里），见 rg_overlay_take_dirty_rects。 */
+    if (visual_mask != dirty_last_visual)
+    {
+        const uint32_t changed = visual_mask ^ dirty_last_visual;
+        for (size_t i = 0; i < btn_count; ++i)
+            if (changed & btns[i].key)
+                dirty_units |= (1u << i);
+        dirty_last_visual = visual_mask;
+    }
+}
+
+int rg_overlay_take_dirty_rects(int *out_xywh, int max)
+{
+    if (!out_xywh || max <= 0)
+        return 0;
+
+    int n = 0;
+    for (size_t i = 0; i < btn_count && n < max; ++i)
+    {
+        if (!(dirty_units & (1u << i)) && !dirty_all_units)
+            continue;
+        out_xywh[n * 4 + 0] = btns[i].x;
+        out_xywh[n * 4 + 1] = btns[i].y;
+        out_xywh[n * 4 + 2] = btns[i].w;
+        out_xywh[n * 4 + 3] = btns[i].h;
+        n++;
+    }
+    if (swap_btn_ready && n < max && (dirty_swap_btn || dirty_all_units))
+    {
+        out_xywh[n * 4 + 0] = swap_btn.x;
+        out_xywh[n * 4 + 1] = swap_btn.y;
+        out_xywh[n * 4 + 2] = swap_btn.w;
+        out_xywh[n * 4 + 3] = swap_btn.h;
+        n++;
+    }
+
+    dirty_units = 0;
+    dirty_swap_btn = false;
+    dirty_all_units = false;
+    return n;
 }
 
 /* ---------------------------------------------------------------- 合成 */
@@ -953,6 +1005,14 @@ static void blit_swap_btn(uint16_t *buf, int stride, int rx, int ry, int rw, int
         return;
     const uint32_t now = (uint32_t)(rg_system_timer() / 1000);
     const bool flash = (uint32_t)(now - swap_flash_ms) < RG_OVERLAY_PRESS_LINGER_MS;
+    /* 闪一下是这颗按钮自己的外观变化（它不是游戏键，不会进 visual_mask）：
+     * 记下闪的起止，让显示层把条带上的它重画一遍（游戏里推帧到不了条带）。 */
+    static bool flash_last = false;
+    if (flash != flash_last)
+    {
+        dirty_swap_btn = true;
+        flash_last = flash;
+    }
     blit_one(buf, stride, rx, ry, rw, rh, phys_w, &swap_btn, cw90, flash);
 }
 

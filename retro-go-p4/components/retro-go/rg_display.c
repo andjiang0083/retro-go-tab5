@@ -123,6 +123,9 @@ static inline void write_update(const rg_surface_t *update)
     {
         memset(screen_line_checksum, 0, sizeof(screen_line_checksum));
         display.changed = true;
+        RG_LOGI("overlay repaint: lines invalidated (viewport %d,%d %dx%d)\n",
+                display.viewport.left, display.viewport.top,
+                display.viewport.width, display.viewport.height);
     }
 #endif
 
@@ -149,6 +152,45 @@ static inline void write_update(const rg_surface_t *update)
         draw_height += draw_top * 2;
         draw_top = 0;
     }
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* ② 推帧循环覆盖不到的"控制条带"。游戏里视口是 720x480，条带在 y>=480 的黑边上，
+     *    上面的循环根本到不了那些行 —— 条带里的叠加层（**按压反馈**、那颗 X/Y↔L/R
+     *    调换按钮）就永远刷不出来。真机"点了不变、只有进出游戏才变"就是它
+     *    （进出游戏会触发整屏重画）。
+     *    做法：取"外观变了的单元矩形"，把条带的**背景**重建一遍（边框图或纯黑），
+     *    再走正常发送路径 —— 驱动在发送前会把叠加层合成上去（和推帧时同一条路），
+     *    所以按压高亮/新标签一起出来。只在"本帧推送覆盖不到该矩形"时才做；
+     *    视口==整屏（菜单）时全部交给正常推帧。 */
+    {
+        int rects[RG_OVERLAY_DIRTY_MAX * 4];
+        const int dirty_count = rg_overlay_take_dirty_rects(rects, RG_OVERLAY_DIRTY_MAX);
+        if (dirty_count)
+            RG_LOGI("overlay strip: %d rects, viewport %d,%d %dx%d\n",
+                    dirty_count, draw_left, draw_top, draw_width, draw_height);
+        for (int i = 0; i < dirty_count; ++i)
+        {
+            const int rx = rects[i * 4 + 0], ry = rects[i * 4 + 1];
+            const int rw = rects[i * 4 + 2], rh = rects[i * 4 + 3];
+            if (rx >= draw_left && ry >= draw_top &&
+                rx + rw <= draw_left + draw_width && ry + rh <= draw_top + draw_height)
+                continue;   /* 本帧推送会覆盖它 */
+            if (border)
+            {
+                /* 背景是边框图：把该矩形从边框图里搬过来（沿用 load_border_file 的画法） */
+                const uint8_t *src = (const uint8_t *)border->data +
+                                     (size_t)ry * border->stride + (size_t)rx * 2;
+                rg_display_write_rect(rx, ry, rw, rh, border->stride, (const uint16_t *)src,
+                                      RG_DISPLAY_WRITE_NOSYNC);
+            }
+            else
+            {
+                /* 背景是纯黑（视口外的填充色，见 rg_display_clear_except） */
+                rg_display_clear_rect(rx, ry, rw, rh, C_BLACK);
+            }
+        }
+    }
+#endif
 
     const int format = update->format;
     const int stride = update->stride;
