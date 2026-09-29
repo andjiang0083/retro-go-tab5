@@ -9,6 +9,17 @@ control area below it.
 
 ## 这一版新增 / What's new in 0.4.2
 
+**跳帧现在能真正关到 0（60fps 满帧）。** 此前自动跳帧两处下限都是 1 —— 所以画面渲染永远封顶
+30fps，跟机器快不快无关。真机实测（钉死 0 跑一局）：skipped=0、速度 100%、CPU 占用仅
+62~69%、显示路径 216ms/s ⇒ 60fps 满帧扛得住，还剩约 30% 余量。现在的策略是"能 60fps 就 60fps"，
+只在真的吃紧时升档，并且带滞回，不会 0/1 来回抖。
+
+**Frame skip can now truly reach 0 (60 fps rendering).** The auto frame-skip policy used to have a
+floor of 1 at both ends, so rendering was hard-capped at 30 fps regardless of headroom. Measured on
+device with frame skip pinned to 0: nothing skipped, 100% speed, only 62-69% CPU busy, display path
+216 ms/s — 60 fps full-frame has ~30% headroom. The policy now prefers 60 fps and only steps up under
+real load, with hysteresis so it never oscillates between 0 and 1.
+
 **X/Y ↔ L/R 调换键** —— L 与 R 之间多了一颗琥珀色按钮。点一下：菱形位上那对换成 R / L，
 两个肩键位换成 X / Y。格斗、赛车这类"肩键和菱形位都得用"的游戏，可以把肩键挪到更好点的地方。
 按钮标签常显"菱形上现在是哪一对"，状态断电保存（NVS）。

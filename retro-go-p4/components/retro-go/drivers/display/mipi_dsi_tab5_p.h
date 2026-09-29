@@ -546,7 +546,7 @@ static void tab5_batt_led_refresh(void)
  * 判据：A ≤ 3ms/帧 → 架构可行（CPU 侧只剩按键合成）；A ≳ 7ms → 与 CPU 同档，不值得改。
  * 副作用：测试内容会写进面板帧缓冲顶部（开机闪一下），随后 launcher 重画覆盖。
  * 默认 0（发行不带这个探针）。 */
-#define TAB5_PPA_PROD_PROBE 1
+#define TAB5_PPA_PROD_PROBE 0
 
 #if TAB5_PPA_PROD_PROBE
 static void tab5_ppa_prod_probe(void)
