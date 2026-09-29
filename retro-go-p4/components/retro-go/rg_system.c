@@ -171,6 +171,16 @@ IRAM_ATTR void esp_panic_putchar_hook(char c)
 #define RG_SINGLE_APP_NVS_NS  "rgapp"
 #define RG_SINGLE_APP_NVS_KEY "core"
 
+/* 编进来的那个核心的分区名（决定"哪个核心算已安装"，见 rg_system_have_app）。
+ * 刻意用"不带引号的标识符 + 字符串化"，而不是 -DRG_SINGLE_APP_CORE="gbsp" —— 后者在 CMake
+ * 里要过两层转义，实测会被二次转义成 \\"gbsp\\"（见经验沉淀 §126）。 */
+#if !defined(RG_SINGLE_APP_CORE)
+#define RG_SINGLE_APP_CORE gbsp
+#endif
+#define RG_STR_IMPL(x) #x
+#define RG_STR(x)      RG_STR_IMPL(x)
+#define RG_SINGLE_APP_CORE_STR RG_STR(RG_SINGLE_APP_CORE)
+
 static void single_app_set_core_pending(bool on)
 {
     nvs_handle_t h;
@@ -1088,10 +1098,10 @@ bool rg_system_have_app(const char *app)
 #if defined(ESP_PLATFORM)
 #if defined(RG_SINGLE_APP)
     /* 单 app 形态：核心被编进同一个镜像，没有独立分区可查 —— 唯一的"已安装应用"就是编进来的
-     * 那个核心（RG_SINGLE_APP_CORE，见 base.cmake；launcher 是菜单自己，不算）。
+     * 那个核心（RG_SINGLE_APP_CORE，默认为 gbsp，见本文件上方；launcher 是菜单自己，不算）。
      * ⚠ 这条判断决定菜单会不会列出该核心的游戏（applications.c 的 application() 早退）——
      *   漏了就是"菜单里一个游戏都没有"。 */
-    return app && !strcmp(app, RG_SINGLE_APP_CORE);
+    return app && !strcmp(app, RG_SINGLE_APP_CORE_STR);
 #else
     return esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, app) != NULL;
 #endif

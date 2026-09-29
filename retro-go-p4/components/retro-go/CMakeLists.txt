@@ -57,6 +57,13 @@ set(RG_BUILD_INFO "${RG_BUILD_TARGET}-${RG_BUILD_RELEASE} ${PROJECT_VER} SDK:${I
 string(TIMESTAMP RG_BUILD_TIME "%s")
 
 component_compile_options(-D${RG_BUILD_TARGET}=1)
+# ⚠ 本组件不走 rg_setup_compile_options()（那是个宏，只对调用它的组件生效），单 app 形态的
+# 宏必须在下面这组里单独加 —— 否则 rg_system.c 编进去的还是老版本，表现为菜单里游戏列表全空。
+if(RG_SINGLE_APP)
+    # 只传不带引号的开关：带引号的宏在 CMake 里要过两层转义（实测被转义坏），
+    # 核心名用 C 侧默认值 + 字符串化，见 rg_system.c 的 RG_SINGLE_APP_CORE。
+    component_compile_options(-DRG_SINGLE_APP=1)
+endif()
 # Tab5 BSP 的 umbrella 头（bsp/m5stack_tab5.h）默认会 #include "lvgl.h"，而 retro-go 不编 LVGL。
 # 该开关在 BSP 里是 PRIVATE 定义（不会传给使用方），所以使用方必须自己加一份。
 component_compile_options(-DBSP_CONFIG_NO_GRAPHIC_LIB=1)

@@ -29,9 +29,11 @@ macro(rg_setup_compile_options)
         # 用途：M5Launcher 这类"只装一个 app 镜像"的启动器装进来也能玩（双 app 形态下它只装
         # 第一个 app，核心装不进去 → 游戏起不来）。实现见 launcher/components/gbsp-core 与
         # components/retro-go/rg_system.c 的 RG_SINGLE_APP 分支。
-        # 构建：idf.py -DRG_SINGLE_APP=1 ...
-        # RG_SINGLE_APP_CORE 必须与 launcher/CMakeLists.txt 里加进来的核心组件一致
-        # （它决定菜单认定"哪些核心已安装" —— 见 rg_system_have_app）。
-        component_compile_options(-DRG_SINGLE_APP=1 -DRG_SINGLE_APP_CORE=\"gbsp\")
+        # ⚠ 这里只放不带引号的 RG_SINGLE_APP：宏里的转义引号会被二次转义（写成 \"gbsp\" 最终
+        #   变成 \\\\gbsp），所以 RG_SINGLE_APP_CORE 放在 components/retro-go/CMakeLists.txt
+        #   里（那边不走宏，转义正常）。
+        # ⚠ 只用 rg_setup_compile_options() 的组件才会吃到这里 —— retro-go 组件自己写了一套
+        #   component_compile_options()，它也单独加了一份，改的时候两处都要动。
+        component_compile_options(-DRG_SINGLE_APP=1)
     endif()
 endmacro()
