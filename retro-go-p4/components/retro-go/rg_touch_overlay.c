@@ -122,6 +122,7 @@ static rg_overlay_btn_t swap_btn;
 static uint32_t dirty_units = 0;        /* bit i = btns[i] 的外观变了 */
 static bool dirty_swap_btn = false;     /* 那颗切换按钮（不在 btns[] 里） */
 static uint32_t dirty_last_visual = 0;  /* 上次看到的"高亮位"（含 linger 保持） */
+static uint32_t dirty_last_visual_before = 0; /* 再上一拍的高亮位：给抖动观测用（只统计） */
 static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画（外观可能全变） */
 static bool swap_btn_ready = false;
 /* "这个**位置**现在代表哪个键" —— 调换开着时 X↔R、Y↔L，关着时原样。
@@ -523,6 +524,9 @@ static const char *swap_label(void)
     return swap_yx ? "L/R" : "X/Y";
 }
 
+/* 备用（调换后）那套掩码还没建？见 rg_overlay_init 末尾的说明与 rg_overlay_ensure_variants()。 */
+static bool variants_pending = false;
+
 void rg_overlay_init(void)
 {
     if (ready)
@@ -588,38 +592,46 @@ void rg_overlay_init(void)
 
     /* ── 调换用的"另一套"掩码（预渲染，点击只对换）─────────────────────────
      * 只给 X/Y/L/R 四个键和这颗切换按钮建；集合在调换下闭合，所以"另一套"就是
-     * 同一个位置的另一个键（含它的标签与配色）。开机多花约 90ms，换"点一下立刻变"。 */
-    for (size_t i = 0; i < n; ++i)
+     * 同一个位置的另一个键（含它的标签与配色）。
+     * 2026-09-29：**改为延迟构建**。它占建层耗时约 1/3（真机 314ms 里约 99ms），
+     * 而用户不点调换键就永远用不到 —— 开机先只建基础那套，备用那套交给
+     * rg_overlay_ensure_variants() 在第一次真正需要时构建（= 玩家第一次点调换键）。
+     * 不起线程、不加锁：只有一个调用点（点调换键那条路），靠这个标记做到幂等。 */
+    variants_pending = true;
+
+    /* ── 键位表自检（移植到新机型时最省事的一道保险）───────────────────────────
+     * 两条规矩都是真机踩出来的：
+     *   ① 命中区之间不能重叠 —— 否则手指压在两键交界处会串键，症状是"按上键却出下键"
+     *      （gywan94/tab5-vgbanext 的 odroid_vpad.c 是**故意**让十字区重叠的，
+     *       照抄它就会照旧串键，见 touch_layout.h 的注释）；
+     *   ② 不能压进游戏画面 —— 竖屏视口在顶部（Tab5 是 y=0..480），压上去会盖住画面。
+     * 只在这两条上打 WARNING，正常布局一个字都不打。移植时改完 touch_layout.h
+     * 开机看一眼日志就知道有没有踩坑，不用等真机上摸出来。
+     * 检查的是 build_button() 算出的**真实矩形**（中心展开 -w/2/-h/2 之后），与判定一致。 */
     {
-        const rg_key_t k = btns[i].key;
-        if (k != RG_KEY_X && k != RG_KEY_Y && k != RG_KEY_L && k != RG_KEY_R)
-            continue;
-        const rg_key_t alt = rg_touch_swap_key(k);
-        rg_overlay_btn_t tmp = btns[i];
-        tmp.key = alt;
-        tmp.mask = NULL;
-        build_button(&tmp, overlay_key_color(alt), NULL);
-        btns[i].key_alt = alt;
-        btns[i].mask_alt = tmp.mask;
-        memcpy(btns[i].pal_alt, tmp.pal, sizeof(tmp.pal));
-        memcpy(btns[i].pal_p_alt, tmp.pal_p, sizeof(tmp.pal_p));
-    }
-    {
-        /* 这颗按钮的颜色/调色板两套相同（恒为琥珀），变的只有标签 → 只留备用掩码 */
-        rg_overlay_btn_t tmp = swap_btn;
-        tmp.mask = NULL;
-        build_button(&tmp, c565(0xE8, 0xA2, 0x2C), swap_yx ? "X/Y" : "L/R");
-        swap_btn.mask_alt = tmp.mask;
-    }
-    {
-        /* 备用的那一套必须真的建出来了 —— 少了它"点一下"只会改配色、标签不动。
-         * 一行日志是这条链路上最便宜的体检（开机就能看到，不用点）。 */
-        int alt_count = 0;
-        for (size_t i = 0; i < n; ++i)
-            if (btns[i].mask_alt)
-                alt_count++;
-        RG_LOGI("touch overlay: swap variants built: %d/4 key alts, switch btn alt=%d\n",
-                alt_count, swap_btn.mask_alt != NULL);
+        int bad = 0;
+        for (size_t i = 0; i < btn_count; ++i)
+        {
+            if (btns[i].y < 480)
+            {
+                RG_LOGW("touch layout: button #%u top y=%d 压进游戏画面（竖屏视口 0..480）\n",
+                        (unsigned)i, btns[i].y);
+                bad++;
+            }
+            for (size_t j = i + 1; j < btn_count; ++j)
+            {
+                const bool ox = btns[i].x < btns[j].x + btns[j].w && btns[j].x < btns[i].x + btns[i].w;
+                const bool oy = btns[i].y < btns[j].y + btns[j].h && btns[j].y < btns[i].y + btns[i].h;
+                if (ox && oy)
+                {
+                    RG_LOGW("touch layout: 命中区重叠 #%u/#%u —— 交界处会串键\n",
+                            (unsigned)i, (unsigned)j);
+                    bad++;
+                }
+            }
+        }
+        if (bad)
+            RG_LOGW("touch layout: 共 %d 处违规，规矩见 docs/PORTRAIT-TOUCH-LAYOUT-TEMPLATE.md\n", bad);
     }
 
     ready = true;
@@ -710,6 +722,61 @@ bool rg_overlay_get_swap(void)
     return swap_yx;
 }
 
+/* ── 备用（调换后）那套掩码：延迟构建（见 rg_overlay_init 末尾的说明）─────────
+ * 内容与"基础那套"一一对应，只是每个受影响的单元换成同一个位置的另一个键
+ * （含它的标签与配色）。构建代价约占整个建层的 1/3（真机 314ms 里约 99ms），
+ * 所以推到第一次真正需要时再做。只建 X/Y/L/R 四个键 + 那颗切换按钮：
+ * 调换集合在这几个位置上闭合，"另一套"必然还是这套键。 */
+static void rg_overlay_build_variants(void)
+{
+    for (size_t i = 0; i < btn_count; ++i)
+    {
+        const rg_key_t k = btns[i].key;
+        if (k != RG_KEY_X && k != RG_KEY_Y && k != RG_KEY_L && k != RG_KEY_R)
+            continue;
+        const rg_key_t alt = rg_touch_swap_key(k);
+        rg_overlay_btn_t tmp = btns[i];
+        tmp.key = alt;
+        tmp.mask = NULL;
+        build_button(&tmp, overlay_key_color(alt), NULL);
+        btns[i].key_alt = alt;
+        btns[i].mask_alt = tmp.mask;
+        memcpy(btns[i].pal_alt, tmp.pal, sizeof(tmp.pal));
+        memcpy(btns[i].pal_p_alt, tmp.pal_p, sizeof(tmp.pal_p));
+    }
+    {
+        /* 这颗按钮的颜色/调色板两套相同（恒为琥珀），变的只有标签 → 只留备用掩码 */
+        rg_overlay_btn_t tmp = swap_btn;
+        tmp.mask = NULL;
+        build_button(&tmp, c565(0xE8, 0xA2, 0x2C), swap_yx ? "X/Y" : "L/R");
+        swap_btn.mask_alt = tmp.mask;
+    }
+    {
+        /* 备用的那一套必须真的建出来了 —— 少了它"点一下"只会改配色、标签不动。
+         * 一行日志是这条链路上最便宜的体检（点一下之前就能在串口上看到）。 */
+        int alt_count = 0;
+        for (size_t i = 0; i < btn_count; ++i)
+            if (btns[i].mask_alt)
+                alt_count++;
+        RG_LOGI("touch overlay: swap variants built: %d/4 key alts, switch btn alt=%d\n",
+                alt_count, swap_btn.mask_alt != NULL);
+    }
+}
+
+/* 第一次真正需要"另一套"时构建它（幂等，只建一次）。
+ * 唯一调用点：rg_overlay_set_swap（输入线程）—— 全局只有它消费备用那套掩码
+ * （rg_input.c 点那颗按钮 → set_swap）。**故意不挂到合成路径上**：挂在"第一帧合成"
+ * 上只是把这 99ms 从建层挪到首帧，用户看到的开机时间一点没少；现在是首帧先出去、
+ * 备用那套等玩家第一次点调换键时再建（那一下就慢约 99ms，一次性，之后都是对换指针）。
+ * 也因此不需要锁：只有一个调用点。 */
+static void rg_overlay_ensure_variants(void)
+{
+    if (!variants_pending)
+        return;
+    variants_pending = false;
+    rg_overlay_build_variants();
+}
+
 /* 把当前生效的一套与备用的一套对换（X/Y/L/R 四个键 + 那颗切换按钮）。
  * 只做 key/掩码/调色板的对换 —— **不分配、不释放**：
  *   - 输入任务里直接调用也安全（显示线程不会读到正被释放的掩码），
@@ -751,6 +818,7 @@ void rg_overlay_set_swap(bool on)
         return;
     swap_yx = on;
     swap_flash_ms = (uint32_t)(rg_system_timer() / 1000);   /* 点一下亮一次 */
+    rg_overlay_ensure_variants();   /* 延迟构建：万一开机后第一次合成还没跑到就先点了它 */
     apply_swap_variants();     /* 立刻生效（只对换，无分配）；它自己标记"哪几个单元要重画" */
     rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
     pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
@@ -805,6 +873,32 @@ static void poll_pressed(void)
                 dirty_units |= (1u << i);
         dirty_last_visual = visual_mask;
     }
+
+    /* ── 触摸抖动观测（只统计，不改行为；先量再决定要不要加滤波）───────────────
+     * 判据：手指稳定按住时高亮位只应有"按下 / 松手"两次跳变；若在 30ms 内反复跳，
+     * 就是命中抖动（手指压在两个键的边界上，判定来回切）。正常点按因为 linger
+     * 机制至少隔 RG_OVERLAY_PRESS_LINGER_MS，不会误报。
+     * 只在"连续多次快跳"时打一行 DEBUG，避免刷屏；burst 每到 5 就清一次，
+     * 所以持续抖动会每 5 次跳变留一行，正好能数出抖动频率。 */
+    if (visual_mask != dirty_last_visual_before)
+    {
+        static uint32_t jitter_last_ms = 0;
+        static int jitter_burst = 0;
+        const uint32_t gap = now - jitter_last_ms;
+        if (jitter_last_ms != 0 && gap < 30)
+        {
+            if (++jitter_burst >= 5)
+            {
+                RG_LOGD("touch: jitter burst (%d transitions, last gap %u ms)\n",
+                        jitter_burst, (unsigned)gap);
+                jitter_burst = 0;
+            }
+        }
+        else if (jitter_burst)
+            jitter_burst = 0;
+        jitter_last_ms = now ? now : 1;
+    }
+    dirty_last_visual_before = visual_mask;
 }
 
 int rg_overlay_take_dirty_rects(int *out_xywh, int max)
