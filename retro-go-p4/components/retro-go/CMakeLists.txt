@@ -14,6 +14,12 @@ endif()
 
 register_component()
 
+# 内置 CJK 点阵字库：**编进 app 镜像**（rg_cjk.c 里用 _binary_cjk12_bin_start/_end 直接读）。
+# 为什么不放 flash 分区：M5Launcher 这类"只装一个 app 镜像"的启动器会把非 sys/system 的
+# 数据分区按它自己的规则重建，按名字找分区的做法在那条安装路径上必然拿不到字体。
+# 代价只是每个 app 各带一份 103KB（Tab5 只有 launcher + gbsp 两个 app，分区表自动扩容）。
+target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_LIST_DIR}/../../assets/cjk12.bin" BINARY)
+
 # Small size is preferred because of the small cache and most things here aren't performance sensitive!
 # rg_display and rg_audio benefit from higher optimization (which of -O2 or -O3 is better depends...)
 

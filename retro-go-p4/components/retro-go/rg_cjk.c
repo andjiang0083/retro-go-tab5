@@ -1,20 +1,23 @@
-/* 内置 CJK 点阵字库的读取端（生成端见 tools/gen_cjk_font.py，打包见 rg_tool.py）。
+/* 内置 CJK 点阵字库的读取端（生成端见 tools/gen_cjk_font.py）。
  *
- * 为什么要单独一个 flash 分区而不是放 SD 卡或塞进 app：
- *   * 不塞 app —— 13 个模拟器各带一份 103KB 就是 1.3MB 浪费，而 app 分区只有 960KB/1MB；
- *   * 不放 SD 卡 —— 用户得手动拷文件、换卡就丢（用户要求"便捷至上"）；
- *   * 独立分区 + mmap —— 一份共享、零加载时间、不占 app 空间、不掉数据。
+ * 字库**直接编进 app 镜像**（CMake 里 target_add_binary_data 把 assets/cjk12.bin 变成
+ * _binary_cjk12_bin_start/_end 两个符号），不再单独占一个 flash 分区。
+ * 为什么改：M5Launcher 这类启动器只装"一个 app 镜像"，并且会把不属于 sys/system 的
+ * 数据分区按它自己的规则重建 —— 按名字找 flash 分区的老做法在那种安装方式下必然拿不到
+ * 字体。编进镜像就跟安装方式无关了。
+ * 代价：每个 app 各带一份（Tab5 只有 launcher + gbsp 两个 app，共 103KB×2；少了 cjkfont
+ * 分区，总镜像大小基本不变）。数据在 flash 里，直接按指针读，没有运行期拷贝。
  */
 #include "rg_system.h"
 #include "rg_cjk.h"
 
 #if defined(ESP_PLATFORM)
 
-#include <esp_partition.h>
 #include <string.h>
 
-#define CJK_PART_NAME    "cjkfont"
-#define CJK_PART_SUBTYPE 0x40
+/* 由 CMake 的 target_add_binary_data(assets/cjk12.bin) 生成 */
+extern const uint8_t cjk12_bin_start[] asm("_binary_cjk12_bin_start");
+extern const uint8_t cjk12_bin_end[] asm("_binary_cjk12_bin_end");
 
 static const uint8_t *cjk_index = NULL;   /* 升序码位数组 */
 static const uint8_t *cjk_glyphs = NULL;  /* 字形数据起点 */
@@ -36,23 +39,13 @@ bool rg_cjk_init(void)
     if (cjk_glyphs)
         return true;
 
-    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, CJK_PART_SUBTYPE, CJK_PART_NAME);
-    if (!part)
+    const uint8_t *b = cjk12_bin_start;
+    const size_t blob_size = (size_t)(cjk12_bin_end - cjk12_bin_start);
+    if (!b || blob_size < 24)
     {
-        RG_LOGW("cjk: partition '%s' not found (firmware built without font?)\n", CJK_PART_NAME);
+        RG_LOGW("cjk: embedded font missing (blob %u bytes)\n", (unsigned)blob_size);
         return false;
     }
-
-    const void *ptr = NULL;
-    esp_partition_mmap_handle_t handle;
-    /* 整个分区映射：只读数据，直接按指针读，省掉 103KB 的 PSRAM 拷贝和加载耗时 */
-    if (esp_partition_mmap(part, 0, part->size, ESP_PARTITION_MMAP_DATA, &ptr, &handle) != ESP_OK || !ptr)
-    {
-        RG_LOGE("cjk: mmap failed (%u bytes)\n", (unsigned)part->size);
-        return false;
-    }
-
-    const uint8_t *b = ptr;
     if (memcmp(b, "RGF1", 4) != 0)
     {
         RG_LOGE("cjk: bad magic (expected RGF1)\n");
@@ -64,15 +57,15 @@ bool rg_cjk_init(void)
     uint32_t index_off = rd32(b + 12);
     uint32_t glyph_off = rd32(b + 16);
     if (!cjk_cell_w || !cjk_cell_h || !cjk_count ||
-        index_off + cjk_count * 4 > part->size || glyph_off > part->size)
+        index_off + cjk_count * 4 > blob_size || glyph_off > blob_size)
     {
         RG_LOGE("cjk: header out of range (count=%u idx=%u glyph=%u size=%u)\n",
-                (unsigned)cjk_count, (unsigned)index_off, (unsigned)glyph_off, (unsigned)part->size);
+                (unsigned)cjk_count, (unsigned)index_off, (unsigned)glyph_off, (unsigned)blob_size);
         return false;
     }
     /* 每行按整字节存放，向上取整（12 位 → 2 字节） */
     cjk_row_bytes = (uint16_t)((cjk_cell_w + 7) / 8);
-    if (glyph_off + (uint32_t)cjk_count * cjk_row_bytes * cjk_cell_h > part->size)
+    if (glyph_off + (uint32_t)cjk_count * cjk_row_bytes * cjk_cell_h > blob_size)
     {
         RG_LOGE("cjk: glyph data out of range\n");
         return false;
@@ -80,8 +73,8 @@ bool rg_cjk_init(void)
 
     cjk_index = b + index_off;
     cjk_glyphs = b + glyph_off;
-    RG_LOGI("cjk: font ready, %u glyphs, %ux%u cells, %u KB mmap'd\n",
-            (unsigned)cjk_count, cjk_cell_w, cjk_cell_h, (unsigned)(part->size / 1024));
+    RG_LOGI("cjk: font ready, %u glyphs, %ux%u cells, %u KB embedded\n",
+            (unsigned)cjk_count, cjk_cell_w, cjk_cell_h, (unsigned)(blob_size / 1024));
     return true;
 }
 

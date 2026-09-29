@@ -14,6 +14,12 @@ control area below it.
 62~69%、显示路径 216ms/s ⇒ 60fps 满帧扛得住，还剩约 30% 余量。现在的策略是"能 60fps 就 60fps"，
 只在真的吃紧时升档，并且带滞回，不会 0/1 来回抖。
 
+**Faster boot, cheaper display path.** The swap-button's alternate artwork is now built lazily
+(first use) instead of at boot — layer build time measured 328 ms → 237 ms on device. The display
+path also lost a redundant whole-block copy left over from the transpose era (~2 ms per full frame
+returned to the emulator). And the on-screen FPS readout no longer flashes an absurd number when the
+display counters reset on a game switch.
+
 **Frame skip can now truly reach 0 (60 fps rendering).** The auto frame-skip policy used to have a
 floor of 1 at both ends, so rendering was hard-capped at 30 fps regardless of headroom. Measured on
 device with frame skip pinned to 0: nothing skipped, 100% speed, only 62-69% CPU busy, display path

@@ -101,21 +101,12 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
         # Use "vfs" label, same as MicroPython, in case the storage is to be shared with a MicroPython install
         table_csv.append("vfs, data, fat, %d, %s" % (len(image_data), fatsize))
 
-    # 内置 CJK 点阵字库：单独一个只读分区，各 app 用 esp_partition_mmap 直接读。
-    # 为什么不放 SD 卡 / 不塞进每个 app：
-    #   * 不塞 app —— 13 个模拟器各带一份就是 1.3MB 浪费，而且 app 分区只有 960KB/1MB，塞不下；
-    #   * 不放 SD 卡 —— 用户要手动拷文件，换卡/拔卡还会丢（用户原话："便捷至上"）；
-    #   * 单独分区 + mmap —— 一份共享、零加载时间（不走 PSRAM 拷贝）、不占 app 空间。
-    font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cjk12.bin")
-    if os.path.exists(font_path):
-        with open(font_path, "rb") as f:
-            font_data = f.read()
-        font_size = math.ceil(len(font_data) / 0x10000) * 0x10000
-        table_csv.append("cjkfont, data, 0x40, %d, %d" % (len(image_data), font_size))
-        image_data += font_data + b"\xFF" * (font_size - len(font_data))
-        print("Embedded CJK font: %d bytes at 0x%x (partition %d bytes)" % (len(font_data), len(image_data) - font_size, font_size))
-    else:
-        print("WARNING: %s not found, building WITHOUT CJK font" % font_path)
+    # 内置 CJK 点阵字库现在**编进每个 app 镜像**（components/retro-go/CMakeLists.txt 的
+    # target_add_binary_data → rg_cjk.c 里的 _binary_cjk12_bin_start/_end），不再单独建
+    # cjkfont 分区。原因见 rg_cjk.c 顶部注释：M5Launcher 这类启动器只装一个 app、并且会
+    # 重建数据分区，按名字找 flash 分区在那条路径上必然拿不到字体。
+    # 代价是 launcher 与 gbsp 各带一份 103KB —— 分区容量不用手改：下面已经按
+    # max(PROJECT_APPS[app][2], ceil(len(data)/0x10000)*0x10000) 自动扩容。
 
     print("Generating partition table...")
     with open("partitions.csv", "w") as f:
