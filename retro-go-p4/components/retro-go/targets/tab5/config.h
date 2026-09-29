@@ -129,3 +129,21 @@
     /* Arbitrary code executed very early during retro-go init */
 
 // See components/retro-go/config.h for more things you can define here!
+
+/****************************************************************************
+ * 电池电量读取（2026-09-29 新增）
+ * ---------------------------------------------------------------------------
+ * 此前本 target 完全没有电量配置 → rg_input_read_battery_raw() 直接 return
+ * false → 状态栏 BATT 恒为 0。
+ * 硬件参数取自 gywan94/tab5-vgbanext 的 odroid_input.c：
+ *   GPIO 53 = ADC2_CH4，分压 68K(电池侧) + 100K(GND侧) → 比例 1.68
+ * 百分比按锂电 3.3V(0%) ~ 4.2V(100%) 线性换算（够用；偏了再校准）。
+ ***************************************************************************/
+#ifndef RG_TAB5_BATTERY_CONFIGURED
+#define RG_TAB5_BATTERY_CONFIGURED
+#define RG_BATTERY_DRIVER           1
+#define RG_BATTERY_ADC_UNIT         ADC_UNIT_2
+#define RG_BATTERY_ADC_CHANNEL      ADC_CHANNEL_4
+#define RG_BATTERY_CALC_PERCENT(raw) (((raw) * 1.68f - 3300.f) / (4200.f - 3300.f) * 100.f)
+#define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 1.68f * 0.001f)
+#endif
