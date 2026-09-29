@@ -128,7 +128,9 @@ void set_fastforward_override(bool fastforward)
  *   step2 开机读回 .srm（要建目录、要读 SD）
  *   step3 运行中检测变化写回
  * ========================================================================= */
-static char sram_path[256];
+static char sram_path[256];   /* ROM 主名（stem） */
+static char sram_file[320];   /* 完整存档路径 */
+static uint32_t sram_last_hash;
 
 static void sram_setup_path(void)
 {
@@ -138,25 +140,55 @@ static void sram_setup_path(void)
     snprintf(sram_path, sizeof sram_path, "%s", rel);
     char *dot = strrchr(sram_path, '.');
     if (dot) *dot = 0;
-    RG_LOGI("SRAM-DBG step1: save path would be '.../saves/gba/%s.srm'\n", sram_path);
+    snprintf(sram_file, sizeof sram_file, RG_BASE_PATH_SAVES "/gba/%s.srm", sram_path);
+    RG_LOGI("SRAM: save file = %s\n", sram_file);
 }
 
 static void sram_load(void)
 {
     if (!sram_path[0]) return;
-    char path[320];
-    snprintf(path, sizeof path, RG_BASE_PATH_SAVES "/gba/%s.srm", sram_path);
     void *buf = NULL;
     size_t size = 0;
-    if (!rg_storage_read_file(path, &buf, &size, 0) || !buf)
+    if (!rg_storage_read_file(sram_file, &buf, &size, 0) || !buf)
     {
-        RG_LOGI("SRAM step2: no save file yet (%s)\n", path);
+        RG_LOGI("SRAM step2: no save file yet (%s)\n", sram_file);
         return;
     }
     size_t n = size < sizeof(gamepak_backup) ? size : sizeof(gamepak_backup);
     memcpy(gamepak_backup, buf, n);
     free(buf);
-    RG_LOGI("SRAM step2: loaded %u bytes <- %s\n", (unsigned)n, path);
+    RG_LOGI("SRAM step2: loaded %u bytes <- %s\n", (unsigned)n, sram_file);
+}
+
+/* step3：运行中检测变化就写回。主循环是 while(1)、App 没有干净退出路径，
+ * 所以只能走"定期检测"，不能挂"退出时保存"。
+ * 建目录放在这里（第一次真要写时才建）——开机阶段一律不碰 SD。 */
+static void sram_autosave(void)
+{
+    static int64_t next_check = 0;
+    int64_t now = rg_system_timer();
+    if (now < next_check) return;
+    next_check = now + 2000000;            /* 每 2 秒看一次 */
+
+    if (!sram_file[0]) return;
+
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < sizeof(gamepak_backup); ++i)
+        h = (h ^ gamepak_backup[i]) * 16777619u;
+    if (h == sram_last_hash) return;       /* 没变就不写 */
+
+    char dir[320];
+    snprintf(dir, sizeof dir, "%s", sram_file);
+    for (char *p = dir + 1; *p; ++p)
+        if (*p == '/') { *p = 0; rg_storage_mkdir(dir); *p = '/'; }
+
+    if (rg_storage_write_file(sram_file, gamepak_backup, sizeof(gamepak_backup), 0))
+    {
+        sram_last_hash = h;
+        RG_LOGI("SRAM step3: saved %u bytes -> %s\n", (unsigned)sizeof(gamepak_backup), sram_file);
+    }
+    else
+        RG_LOGE("SRAM step3: save FAILED -> %s\n", sram_file);
 }
 
 void app_main(void)
@@ -223,7 +255,8 @@ void app_main(void)
         rumble_frame_reset();
 
         clear_gamepak_stickybits();
-        gba_execute_frame(execute_cycles);   // dynarec 可用时走 JIT，否则走解释器
+        gba_execute_frame(execute_cycles);
+        sram_autosave();          /* step3：电池存档变了就落盘 */   // dynarec 可用时走 JIT，否则走解释器
         // RG_TIMER_LAP("execute_arm");
 
         if (!skip_next_frame)
