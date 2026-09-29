@@ -166,7 +166,7 @@ static inline void write_update(const rg_surface_t *update)
         int rects[RG_OVERLAY_DIRTY_MAX * 4];
         const int dirty_count = rg_overlay_take_dirty_rects(rects, RG_OVERLAY_DIRTY_MAX);
         if (dirty_count)
-            RG_LOGI("overlay strip: %d rects, viewport %d,%d %dx%d\n",
+            RG_LOGD("overlay strip: %d rects, viewport %d,%d %dx%d\n",
                     dirty_count, draw_left, draw_top, draw_width, draw_height);
         for (int i = 0; i < dirty_count; ++i)
         {
