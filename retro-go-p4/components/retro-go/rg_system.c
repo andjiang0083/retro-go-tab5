@@ -8,6 +8,12 @@
  * 的包含顺序（那个头文件对 config.h 的可见性有要求）。 */
 extern void rg_display_invalidate_lines(int top, int count);
 
+/* ── 性能测量钩子开关（默认 0 = 发行行为，零影响）──────────────────────────
+ * 置 1 → 把 frameskip 钉死在 0（模拟器每帧都渲染 = 60fps），自动跳帧策略整段让位。
+ * 用途：测"关掉跳帧"时的真实开销。默认关，是因为它会让慢游戏失去自动降帧保护。
+ * 判读方法见 Auto frameskip 那段注释。 */
+#define RG_PERF_PIN_FRAMESKIP 0
+
 #include <sys/time.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -316,6 +322,21 @@ static void system_monitor_task(void *arg)
         // Auto frameskip
         if (statistics.ticks > app.tickRate * 2)
         {
+#if RG_PERF_PIN_FRAMESKIP
+            /* ── 性能测量钩子（只有测"关掉跳帧"的真实开销时置 1）────────────────
+             * 钉死 frameskip=0 = 模拟器**每帧都渲染**（60fps）。只做这一件事，
+             * 自动策略整段让位 —— 变量越少，数字越好判读。
+             * 背景（2026-09-29）：本项目的 frameskip 两处下限都是 1：
+             *   ① `app` 默认 1；② 自动策略只在 `frameskip > 1` 时下降（上游注释：
+             *      "低于 95% 一次就说明余量不足，降回 0 纯属自找卡顿"）。
+             * 所以"跳帧关闭(0)"在设计上不可能出现 —— 要看 60fps 渲染撑不撑得住，
+             * 必须显式钉住。实测结论与优化见 ~/esp32/ESP32-经验沉淀 §125。 */
+            if (app.frameskip != 0)
+            {
+                app.frameskip = 0;
+                RG_LOGI("PERF-PIN: frameskip pinned to 0 (every frame rendered)");
+            }
+#else
             float speed = ((float)statistics.totalFPS / app.tickRate) * 100.f / app.speed;
             // We don't fully go back to 0 frameskip because if we dip below 95% once, we're clearly
             // borderline in power and going back to 0 is just asking for stuttering...
@@ -329,6 +350,7 @@ static void system_monitor_task(void *arg)
                 app.frameskip++;
                 RG_LOGI("Raised frameskip to %d", app.frameskip);
             }
+#endif
         }
 
         if (statistics.lastTick < rg_system_timer() - app.tickTimeout)
