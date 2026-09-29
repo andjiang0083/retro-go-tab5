@@ -11,6 +11,20 @@ retro-go 是一个轻量多机种模拟器前端，本仓库是它的移植：�
 
 全部在真机上验证过。**非常欢迎一起共建** —— 见 [参与共建](#参与共建)。
 
+## 下载与安装 —— 先选对文件
+
+对外发布**两份固件**。**装错的那份，会出现"只有菜单、进不了游戏"。**
+
+| 你从哪里装 | 用哪个文件 | 为什么 |
+|---|---|---|
+| **M5Burner**（推荐）或 esptool | `retro-go-tab5-<版本>-merged.bin` | 完整镜像（bootloader@0x2000 + 分区表@0x8000 + launcher@0x10000 + gbsp@0x100000），从 0x0 整片写入。功能最全，菜单里保留"检查更新" |
+| **[M5Launcher](https://github.com/bmorcelli/Launcher)** | `retro-go-tab5-<版本>-launcher-singleapp.bin` | 该平台**只能装单个 app 镜像**。本固件是双 app（菜单与核心各占一个分区），装完整版只会装上菜单。单 app 包把两者编进同一个镜像 |
+
+单 app 包的唯一差异：菜单里没有 "Check for updates"（它需要一个额外的 app 分区来落新固件），
+以后升级请用 M5Burner / esptool 整包刷。
+
+两个文件都附在每个 [Release](../../releases) 上。
+
 ## 截图
 
 **竖屏布局（v0.4.1）** —— 这张图是按**固件自己那套渲染规则**（同一份键位表、同一组键色、同一个点阵字库）在 PC 上重渲染的，所以就是设备上真实画出来的样子：
@@ -41,7 +55,7 @@ drawn in the letterbox margins.*
 | 音频 | ✅ 可用 | ES8388 + I2S，32kHz，不影响帧率 |
 | 存档（Savestate） | ✅ 可用 | 核心级状态（约 416KB）写入 SD 卡 |
 | 触摸虚拟手柄 | ✅ 可用 | 竖屏布局：720x480 游戏画面固定贴顶，手柄在下方控制区（方向键左下、ABXY 菱形右下每键独立颜色、L/R 在控制区顶部两角、SELECT/START/MENU 底部一排），永不遮挡画面 |
-| 中文支持 | ✅ 可用 | 内置 3773 字形 CJK 字库（GB2312 一级全覆盖，OFL-1.1），存**独立 flash 分区**：零加载、全 app 共享、不依赖 SD 卡；界面菜单 197 条全中文化 |
+| 中文支持 | ✅ 可用 | 内置 3773 字形 CJK 字库（GB2312 一级全覆盖，OFL-1.1）**编进固件镜像**——与安装方式无关（独立字库*分区*会被 M5Launcher 这类启动器重建成 FAT 分区而静默丢失、中文变方块）；界面菜单 197 条全中文化 |
 | 显示通路 | ✅ 可用 | 整块顺序读进片内 SRAM + 总线 QoS 提权、像素转置改 32×32 分块，忙时改有界重试不再静默丢帧（v0.3 重做：约 30 帧/秒真实推送，长时间运行不再退化）—— 见[性能](#性能) |
 | 电池电量 | ✅ 可用 | 板载 INA226 电源监测（BSP 主 I2C，地址 0x41），按 2S 电包换算百分比；并以控制区中间的圆灯显示（低于 10% 红闪、充电时绿呼吸） |
 | USB-C 充电 | ✅ 可用 | 板级充电使能 `CHG_EN` 在厂商 BSP 的 IO 扩展器初始化里被**留成低电平**（它自己的注释却写着输出高电平），于是 IP2326 充电芯片一直处于禁用状态 —— 插着线也不进电。固件现在在初始化后**显式使能**（照 M5 官方 demo 的调用序列）。真机实测：充电电流 **-0.75 ~ -0.87 A**、电包电压持续上升（7627 → 7745 mV） |
@@ -78,6 +92,9 @@ drawn in the letterbox margins.*
 # 2. 构建两个 app（launcher + GBA），合成一个可刷镜像
 cd retro-go-p4
 python3 rg_tool.py --target tab5 --no-networking build-img launcher gbsp
+
+# 2b. 单 app 形态 —— 给只能装单个 app 镜像的 M5Launcher 用
+python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher
 
 # 3. 刷机
 python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \

@@ -11,6 +11,21 @@ and a GBA core that JIT-compiles ARM/Thumb into native RISC-V so the CPU-emulati
 
 Built and tested on real hardware. Contributions very welcome — see [Contributing](#contributing).
 
+## Download & install — pick the right file
+
+Two firmware builds are published. **Installing the wrong one gives you a menu whose games never start.**
+
+| Where you install from | File | Why |
+|---|---|---|
+| **M5Burner** (recommended) or esptool | `retro-go-tab5-<version>-merged.bin` | Full image (bootloader@0x2000 + partition table@0x8000 + launcher@0x10000 + gbsp@0x100000), written from 0x0. Most complete — keeps the in-menu "Check for updates" |
+| **[M5Launcher](https://github.com/bmorcelli/Launcher)** | `retro-go-tab5-<version>-launcher-singleapp.bin` | That platform can only install a **single app image**. This firmware ships as two apps (menu + emulator core in separate partitions), so installing the full image there installs only the menu. The single-app build compiles the core into the same image |
+
+**从 M5Launcher 安装请用单 app 包** —— 该平台只能装单个 app 镜像，装完整版只会装上菜单、进不了游戏。
+单 app 包的唯一差异：菜单里没有 "Check for updates"（它需要一个额外的 app 分区来落新固件），
+以后升级请用 M5Burner / esptool 整包刷。
+
+Both files are attached to each [release](../../releases).
+
 ## Screenshots
 
 **Portrait layout (v0.4.1)** — this image is rendered from the firmware's own drawing rules (same touch
@@ -45,7 +60,7 @@ Honest status, measured on the device (not aspirational):
 | Audio | ✅ Working | ES8388 codec over I2S, 32 kHz, no frame-rate impact |
 | Savestates | ✅ Working | Core-level state (~416 KB) written to the SD card |
 | Touch virtual gamepad | ✅ Working | Portrait layout: the 720x480 game screen is pinned to the top, the gamepad sits in the control area below it (D-pad bottom-left, diamond ABXY bottom-right with per-key colours, L/R in the top corners, SELECT/START/MENU along the bottom). Never overlaps the game |
-| Chinese (CJK) support | ✅ Working | Built-in 3773-glyph CJK font (full GB2312 level-1, OFL-1.1) in a **dedicated flash partition**: zero load time, shared by every app, no SD card needed; all 197 UI strings localized |
+| Chinese (CJK) support | ✅ Working | Built-in 3773-glyph CJK font (full GB2312 level-1, OFL-1.1) **compiled into the firmware image** — works no matter how the firmware was installed (a standalone font *partition* gets recreated as a FAT partition by installers like M5Launcher, which would silently lose it and turn Chinese text into boxes); all 197 UI strings localized |
 | Display path | ✅ Working | Block transpose into on-chip SRAM + AXI-QoS priority, and a bounded retry instead of silently dropped frames (v0.3 rework: ~30 fully-rendered frames/sec, no more drift over time) — see [Performance](#performance) |
 | Battery gauge | ✅ Working | INA226 power monitor on the BSP I2C bus (0x41), 2S pack voltage → percentage; shown as the coloured indicator light in the control area (blinks below 10%, breathes while charging) |
 | USB-C charging | ✅ Working | The board's charge-enable (`CHG_EN`) is left **low** by the vendor BSP's IO-expander init (its own comment claims otherwise), so the IP2326 charge IC stays disabled and the pack never charges. The firmware now asserts it explicitly after init, mirroring M5's own demo. Measured on hardware: **-0.75 ~ -0.87 A** into the pack, pack voltage climbing (7627 → 7745 mV) |
@@ -82,6 +97,9 @@ Note: the ESP32-P4 has **no Wi-Fi and no Bluetooth**. Anything network-related i
 # 2. Build both apps (launcher + GBA) into one flashable image
 cd retro-go-p4
 python3 rg_tool.py --target tab5 --no-networking build-img launcher gbsp
+
+# 2b. Single-app build — for M5Launcher, which can only install one app image
+python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher
 
 # 3. Flash
 python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \
