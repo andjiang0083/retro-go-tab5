@@ -394,7 +394,7 @@ static void rg_dpad_geom_update(void)
     dpad_geom.cy = left->y;
     dpad_geom.ready = true;
     RG_LOGI("dpad: 矢量扇区判定 ready（中心 %d,%d / 臂距 %d / 可触 %d / 死区 %d / 斜向门槛 %d）\n",
-            dpad_geom.cx, dpad_geom.cy, left->x - up->x,
+            dpad_geom.cx, dpad_geom.cy, up->x - left->x,
             RG_DPAD_PAD_R, RG_DPAD_DEAD_R, RG_DPAD_DIAG_R);
 }
 
