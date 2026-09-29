@@ -252,6 +252,25 @@ static void lcd_init(void)
             /* 复位释放后给触摸 IC 一点时间再探测：否则紧随其后的屏型探测会探不到 ST7123
              * （BSP 探测只是决定 ST7121/ST7123，探不到会退回 ILI9881C 分支）。 */
             vTaskDelay(pdMS_TO_TICKS(150));
+
+            /* 【充电使能 —— 必须显式开，BSP 不会开】2026-09-29 修：
+             * `bsp_io_expander_pi4ioe_init()` 往 PI4IOE2 的输出寄存器写的是
+             * `0b00001001`（只置 P0/WLAN_PWR_EN、P3/USB5V_EN），**P7(CHG_EN) 保持低** ——
+             * 它上一行的注释和被注释掉的 `0b10001001` 才是带 P7 高电平的版本。
+             * 结果是充电芯片 IP2326 一直被禁用：插 USB-C 也不充，INA226 分流电流恒为 0/放电方向，
+             * 于是 `battery_state.charging` 永远 false（屏上电量圆灯的"充电中绿闪"因此从未出现）。
+             * 官方 demo 在同一个位置显式补了两句：
+             *   M5Tab5-UserDemo/platforms/tab5/main/hal/hal_esp32.cpp:61
+             *   setChargeQcEnable(true); delay(50); setChargeEnable(true);
+             * 我们照抄官方口径（中间 50ms 也是官方的）。 */
+            {
+                extern void bsp_set_charge_qc_en(bool en);
+                extern void bsp_set_charge_en(bool en);
+                bsp_set_charge_qc_en(true);
+                vTaskDelay(pdMS_TO_TICKS(50));
+                bsp_set_charge_en(true);
+                RG_LOGI("charging enabled: CHG_QC=on, CHG_EN(P7)=high\n");
+            }
         } else {
             RG_LOGE("bsp_i2c_init failed, expander NOT initialized (panel/touch stay in reset)\n");
         }
