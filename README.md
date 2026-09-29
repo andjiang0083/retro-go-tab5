@@ -13,14 +13,14 @@ Built and tested on real hardware. Contributions very welcome — see [Contribut
 
 ## Screenshots
 
-**Portrait layout (v0.4)** — this image is rendered from the firmware's own drawing rules (same touch
+**Portrait layout (v0.4.1)** — this image is rendered from the firmware's own drawing rules (same touch
 layout table, same key colours, same bitmap font), so it is exactly what the device draws:
 
 ![retro-go Tab5 in portrait: the game screen on top, the touch gamepad in the control area below it](docs/screenshot-portrait.png)
 
 *The 720x480 game screen is anchored to the top of the native portrait 720x1280 panel; the touch gamepad
 lives in the control area underneath and never overlaps the game. The round light in the middle of the
-control area is the battery indicator (green ≥60% / amber 20-60% / red 10-20% / blinks below 10% and while charging).*
+control area is the battery indicator (green ≥60% / amber 20-60% / red 10-20% / blinks below 10%, breathes while charging).*
 *游戏画面固定在原生竖屏 720x1280 面板的顶部（720x480），触摸手柄在下方的控制区，永不遮挡画面；
 控制区正中那个圆灯是电量指示（绿 ≥60% / 橙 20~60% / 红 10~20% / 低于 10% 与充电时闪烁）。*
 
@@ -47,7 +47,8 @@ Honest status, measured on the device (not aspirational):
 | Touch virtual gamepad | ✅ Working | Portrait layout: the 720x480 game screen is pinned to the top, the gamepad sits in the control area below it (D-pad bottom-left, diamond ABXY bottom-right with per-key colours, L/R in the top corners, SELECT/START/MENU along the bottom). Never overlaps the game |
 | Chinese (CJK) support | ✅ Working | Built-in 3773-glyph CJK font (full GB2312 level-1, OFL-1.1) in a **dedicated flash partition**: zero load time, shared by every app, no SD card needed; all 197 UI strings localized |
 | Display path | ✅ Working | Block transpose into on-chip SRAM + AXI-QoS priority, and a bounded retry instead of silently dropped frames (v0.3 rework: ~30 fully-rendered frames/sec, no more drift over time) — see [Performance](#performance) |
-| Battery gauge | ✅ Working | INA226 power monitor on the BSP I2C bus (0x41), 2S pack voltage → percentage; shown as the coloured indicator light in the control area (blinks below 10% and while charging) |
+| Battery gauge | ✅ Working | INA226 power monitor on the BSP I2C bus (0x41), 2S pack voltage → percentage; shown as the coloured indicator light in the control area (blinks below 10%, breathes while charging) |
+| USB-C charging | ✅ Working | The board's charge-enable (`CHG_EN`) is left **low** by the vendor BSP's IO-expander init (its own comment claims otherwise), so the IP2326 charge IC stays disabled and the pack never charges. The firmware now asserts it explicitly after init, mirroring M5's own demo. Measured on hardware: **-0.75 ~ -0.87 A** into the pack, pack voltage climbing (7627 → 7745 mV) |
 | Other cores (NES/SNES/MD/PCE/...) | ❌ Not ported | The retro-go tree carries them; only the launcher + GBA are wired for this target |
 
 **Logical speed is full speed**: GBA titles run at 59-60 fps of emulated time with audio in sync.
@@ -117,7 +118,7 @@ below the game (the game viewport is 720x480 anchored to the top of the portrait
 - **X / Y** — the core's Turbo A / Turbo B (hold to auto-fire)
 - **START / SELECT** — bottom centre
 - **MENU** — open the in-game menu (savestates, options, reset)
-- **Battery light** — centre of the control area: green ≥60% / amber 20-60% / red 10-20% / blinking below 10% and while charging
+- **Battery light** — centre of the control area: green ≥60% / amber 20-60% / red 10-20% / blinks below 10%, breathes while charging
 - **Language** — Options → Language switches the UI to Chinese (English by default; the choice persists in NVS)
 
 Layout reference: [docs/touch-layout-p2.png](docs/touch-layout-p2.png) (landscape era) ·
