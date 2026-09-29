@@ -344,6 +344,94 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
     return true;
 }
 
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+/* ────────────────────────────────────────────────────────────── 方向键：矢量扇区判定
+ * 2026-09-29（用户拍板，方案见 tools/preview-touch-overlay.py --dpad → docs/dpad-zones.png）：
+ * **十字外观一个字不改**，只把"命中"从 4 个矩形换成矢量扇区。现状的两个先天毛病：
+ *   ① 四个矩形做不出斜向（一指只能压一个矩形）；② 中心有 86px 空洞 —— 手指从上滑到左
+ *   要穿过它，于是"断键"，得抬手重按（这是它不如摇杆顺的主因）。
+ * 规则（与 PC 参考实现同参数，改参数两处一起改）：
+ *   · r < 30px   → 死区，无方向            · r > 135px → 出界，无方向（臂外沿 127 + 8）
+ *   · 夹角落在 30°~60° **且** r ≥ 70px → 斜向（同时按两个方向键）
+ *   · 其余       → 单轴（|dx| 与 |dy| 谁大听谁的）
+ *   · 滞回：已斜向时角度带放宽 5°、半径门槛降到 60px → 手指压在边界不来回跳键
+ * 注：GB/GBC/GBA 硬件本身是数字十字键，核心只吃位掩码 —— 所以这里做的是"数字 8 向"
+ * （斜向 + 不断键 + 判定宽容），不是模拟量。斜向当前**没有开关**（先上真机试手感；
+ * 若某个平台游戏嫌误触，再加一个 Menu 开关，一处宏就能锁死）。
+ * 实现细节：判据全用整数（tan 值放大 1000 倍 + 平方距离），不引 libm、不上浮点；
+ * 几何从 keymap_touch 里算（中心 = 上键与左键的交点），键位表挪了判定跟着走；
+ * 那四个矩形条目**保留**（可视层仍用它们画十字与按下高亮）。 */
+#define RG_DPAD_PAD_R        135    /* 可触半径（臂外沿 127 + 8 余量） */
+#define RG_DPAD_DEAD_R       30     /* 中心死区半径 */
+#define RG_DPAD_DIAG_R       70     /* 斜向还要求推到这么远（贴中心蹭到角不算） */
+#define RG_DPAD_DIAG_R_LEAVE 60     /* 滞回：已斜向时退到这里才掉回单轴 */
+#define RG_DPAD_TAN30_X1000  577    /* tan(30°) */
+#define RG_DPAD_TAN60_X1000  1732   /* tan(60°) */
+#define RG_DPAD_TAN25_X1000  466    /* tan(25°)：滞回后斜区的下边界 */
+#define RG_DPAD_TAN65_X1000  2145   /* tan(65°)：滞回后斜区的上边界 */
+
+static struct { int cx, cy; bool ready; } dpad_geom;
+static bool dpad_was_diag;          /* 上一轮是否斜向（滞回状态） */
+
+static void rg_dpad_geom_update(void)
+{
+    const rg_keymap_touch_t *up = NULL, *down = NULL, *left = NULL, *right = NULL;
+    for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
+    {
+        rg_key_t k = keymap_touch[i].key;
+        if (k == RG_KEY_UP)         up = &keymap_touch[i];
+        else if (k == RG_KEY_DOWN)  down = &keymap_touch[i];
+        else if (k == RG_KEY_LEFT)  left = &keymap_touch[i];
+        else if (k == RG_KEY_RIGHT) right = &keymap_touch[i];
+    }
+    if (!up || !down || !left || !right)
+    {
+        dpad_geom.ready = false;
+        RG_LOGW("dpad: 键位表里没找齐 上/下/左/右，矢量判定关闭（仍按矩形命中）\n");
+        return;
+    }
+    dpad_geom.cx = up->x;           /* 中心 = 上键的 x 与左键的 y 的交点 */
+    dpad_geom.cy = left->y;
+    dpad_geom.ready = true;
+    RG_LOGI("dpad: 矢量扇区判定 ready（中心 %d,%d / 臂距 %d / 可触 %d / 死区 %d / 斜向门槛 %d）\n",
+            dpad_geom.cx, dpad_geom.cy, left->x - up->x,
+            RG_DPAD_PAD_R, RG_DPAD_DEAD_R, RG_DPAD_DIAG_R);
+}
+
+static void rg_dpad_reset(void)
+{
+    dpad_was_diag = false;          /* 手指离开方向键区 → 下次按下按"进入"门槛判 */
+}
+
+/* 返回该点应产生的方向键；0 = 这个点不在方向键的可触圆内（交给矩形命中逻辑） */
+static uint32_t rg_dpad_keys_at(int lx, int ly)
+{
+    if (!dpad_geom.ready)
+        return 0;
+    const int dx = lx - dpad_geom.cx, dy = ly - dpad_geom.cy;
+    const int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    const int r2 = ax * ax + ay * ay;
+    if (r2 < RG_DPAD_DEAD_R * RG_DPAD_DEAD_R)
+        return 0;                                   /* 死区（比原来的 86px 空洞小得多） */
+    if (r2 > RG_DPAD_PAD_R * RG_DPAD_PAD_R)
+        return 0;                                   /* 出界 */
+
+    const int lo = dpad_was_diag ? RG_DPAD_TAN25_X1000 : RG_DPAD_TAN30_X1000;
+    const int hi = dpad_was_diag ? RG_DPAD_TAN65_X1000 : RG_DPAD_TAN60_X1000;
+    const int gate = dpad_was_diag ? RG_DPAD_DIAG_R_LEAVE : RG_DPAD_DIAG_R;
+    const bool in_band = (ay * 1000 > ax * lo) && (ay * 1000 < ax * hi);
+
+    uint32_t keys;
+    if (in_band && r2 >= gate * gate)
+        keys = (dy < 0 ? RG_KEY_UP : RG_KEY_DOWN) | (dx < 0 ? RG_KEY_LEFT : RG_KEY_RIGHT);
+    else
+        keys = (ax >= ay) ? (dx < 0 ? RG_KEY_LEFT : RG_KEY_RIGHT)
+                          : (dy < 0 ? RG_KEY_UP : RG_KEY_DOWN);
+    dpad_was_diag = (keys & (keys - 1)) != 0;       /* 同时有两位 = 斜向 */
+    return keys;
+}
+#endif
+
 bool rg_input_read_gamepad_raw(uint32_t *out)
 {
     uint32_t state = 0;
@@ -435,10 +523,22 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #else
             const bool pad_visible = true;
 #endif
+            bool dpad_touched = false;
             for (int t = 0; t < count && pad_visible; ++t)
             {
                 int lx = 0, ly = 0;
                 RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                /* 方向键先走**矢量扇区判定**（2026-09-29）：落在可触圆内就直接出结果
+                 * （十字外观没变，换的是判定）；圆外才继续按矩形命中。
+                 * 圆内不会误伤别的键：可触圆半径 135 只覆盖十字本身（最近的 L 键边沿
+                 * 在 y=587，圆心 y=780 - 135 = 645，够不着）。 */
+                const uint32_t dpad = rg_dpad_keys_at(lx, ly);
+                if (dpad)
+                {
+                    state |= dpad;
+                    dpad_touched = true;
+                    continue;
+                }
                 for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
                 {
                     const rg_keymap_touch_t *mapping = &keymap_touch[i];
@@ -451,6 +551,10 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                         state |= mapping->key;
                 }
             }
+
+            /* 手指离开方向键区（或整体抬指）→ 清掉滞回状态，下次按下按"进入"门槛判 */
+            if (!dpad_touched)
+                rg_dpad_reset();
 
             /* ── 恢复入口：点左上角那个可见开关 ────────────────────────────────
              * 按键隐藏时可视层会在左上角画一个十字键图标的开关（rg_touch_overlay.c），
@@ -700,6 +804,10 @@ void rg_input_init(void)
      * 此刻 TP_RST 还没释放（扩展器在显示初始化里才初始化），现在创建必然失败。 */
     RG_LOGI("Virtual touch gamepad registered (ST7123 @0x55, lazy init).\n");
     UPDATE_GLOBAL_MAP(keymap_touch);
+#endif
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+    /* 方向键几何（中心/臂距）从键位表算一次，矢量扇区判定要用 */
+    rg_dpad_geom_update();
 #endif
 
     rg_input_read_gamepad_raw(NULL);
