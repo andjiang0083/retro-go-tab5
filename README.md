@@ -72,7 +72,9 @@ python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher
 
 ## 许可与致谢 / License & credits
 
-- 本项目基于 [ducalex/retro-go](https://github.com/ducalex/retro-go)（GPLv2）移植，
-  GBA 核心为 libretro 的 VBA-M 衍生实现 —— 因此整体以 **GPLv2** 发布，见各目录下的 `COPYING`
+- 本项目基于 [ducalex/retro-go](https://github.com/ducalex/retro-go)（GPLv2）移植；
+  GBA 核心为 **[gpSP](https://github.com/libretro/gpsp)**（GPLv2），
+  本移植的 RISC-V 动态重编译（dynarec）派生自 **[HowBoyAdvance](https://github.com/Irak4t0n/HowBoyAdvance)**（GPLv2）
+  —— 因此整体以 **GPLv2** 发布，见各目录下的 `COPYING`
 - 板级支持来自 M5Stack 的 Tab5 BSP（`vendor/m5stack_tab5`）
 - Tab5 竖屏移植、触摸手柄、性能与安装兼容性工作：andjiang
