@@ -124,6 +124,17 @@ static bool dirty_swap_btn = false;     /* 那颗切换按钮（不在 btns[] �
 static uint32_t dirty_last_visual = 0;  /* 上次看到的"高亮位"（含 linger 保持） */
 static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画（外观可能全变） */
 static bool swap_btn_ready = false;
+/* "这个**位置**现在代表哪个键" —— 调换开着时 X↔R、Y↔L，关着时原样。
+ *
+ * **输入层与可视层都必须走这里**（只此一处）：曾经两边各写一份，可视层按状态门控、
+ * 输入层却无条件应用自反对换（换两次回原样的性质让它"看起来也对"）→ 真机表现为
+ * 默认 X/Y 模式下按 X 亮起的是 R、按 Y 亮起的是 L（而且游戏收到的是 R/L）。
+ * 规则本身在 rg_touch_swap_key()（自反），**状态的消费点**就是本函数。 */
+rg_key_t rg_overlay_map_key(rg_key_t position_key)
+{
+    return swap_yx ? rg_touch_swap_key(position_key) : position_key;
+}
+
 static uint32_t swap_flash_ms = 0;
 static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它发现"该重画了" */
 #define RG_OVERLAY_SWAP_PAD 10      /* 命中矩形比视觉矩形外扩（和左上角开关同一思路） */
@@ -554,8 +565,10 @@ void rg_overlay_init(void)
     {
         /* 位置固定、**功能键可调换**：btn.key 存的是"这个位置现在代表哪个键"
          * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 btn.key
-         * → 视觉与手感永远一致；也正因为存的是功能键，高亮匹配不用额外改。 */
-        btns[i].key = swap_yx ? rg_touch_swap_key(map[i].key) : map[i].key;
+         * → 视觉与手感永远一致；也正因为存的是功能键，高亮匹配不用额外改。
+         * ⚠ 这里必须走 rg_overlay_map_key()：输入层调的是同一个函数，
+         * 两边不可能再出现"一边门控、一边没门控"的不一致（真机曾按 X 亮 R）。 */
+        btns[i].key = rg_overlay_map_key(map[i].key);
         btns[i].w = map[i].w;
         btns[i].h = map[i].h;
         btns[i].x = map[i].x - map[i].w / 2;

@@ -562,9 +562,13 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                     if (lx >= mapping->x - mapping->w / 2 && lx < mapping->x + mapping->w / 2 &&
                         ly >= mapping->y - mapping->h / 2 && ly < mapping->y + mapping->h / 2)
                         /* 调换开着时这个**位置**代表的是别的键（X↔R、Y↔L）——
-                         * 规则只有一处（rg_touch_overlay.h 的 rg_touch_swap_key），
-                         * 可视层的标签/配色读同一份，所以按下高亮与手感永远一致。 */
-                        state |= rg_touch_swap_key(mapping->key);
+                         * **必须调取叠加层的同一个函数**（rg_overlay_map_key，它内部按状态门控）：
+                         * 规则（rg_touch_swap_key，自反）与状态（swap_yx）都只此一处，
+                         * 可视层的键位表/标签/配色读的是同一个答案，所以按下高亮与手感永远一致。
+                         * ⚠ 别在这里自己写 `swap ? swap_key(k) : k`：swap_key 是自反对换不是恒等，
+                         * 漏掉状态门控就会永远停在"已调换"那一侧 ——
+                         * 真机 2026-09-29：默认 X/Y 模式下按 X 亮的是 R、按 Y 亮的是 L。 */
+                        state |= rg_overlay_map_key(mapping->key);
                 }
             }
 

@@ -115,9 +115,14 @@ static inline rg_key_t rg_touch_swap_key(rg_key_t k)
         case RG_KEY_R: return RG_KEY_X;
         case RG_KEY_Y: return RG_KEY_L;
         case RG_KEY_L: return RG_KEY_Y;
-        default:       return k;
+        default: return k;
     }
 }
+
+/* "这个**位置**现在代表哪个键"：调换开着 → X↔R、Y↔L，关着 → 原样。
+ * **输入层与可视层都必须调它**，别自己写 `swap ? swap_key(k) : k` ——
+ * 曾经输入层漏了状态门控（自反对换被无条件应用）→ 真机"按 X 亮 R、按 Y 亮 L"。 */
+rg_key_t rg_overlay_map_key(rg_key_t position_key);
 
 /* 屏幕上的"显示帧率"数字：画在**控制区顶部正中**（逻辑 360,500 —— L/R 肩键之间的空白带；
  * 竖屏下 y<480 是游戏画面，不能占用）。坐标与线性映射都在 rg_touch_overlay.c 里
