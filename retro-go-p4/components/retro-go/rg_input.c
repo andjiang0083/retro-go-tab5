@@ -257,6 +257,14 @@ static bool rg_ina226_read_reg16(uint8_t reg, uint16_t *out)
     *out = (uint16_t)((buf[0] << 8) | buf[1]);
     return true;
 }
+/* 分流电流（mA） = 寄存器原始值 * 0.5：
+ * 分流电压 LSB = 2.5µV、分流电阻 5mΩ → I = raw * 2.5µV / 5mΩ = raw * 0.5 mA。
+ * （5mΩ 与官方 M5Unified 对 Tab5 的 cfg.shunt_res 一致，见 Power_Class.inl。） */
+static int rg_ina226_shunt_ma(int16_t raw)
+{
+    return (int)(raw * 0.5f);
+}
+
 #else /* 宿主（SDL 预览）没有 BSP：不参与电量读取 */
 static int ina226_dbg_count = 0;
 static bool rg_ina226_read_reg16(uint8_t reg, uint16_t *out) { return false; }
@@ -284,15 +292,33 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
         return false;
     raw_value = data[4];
     charging = data[4] == 255;
-#elif RG_BATTERY_DRIVER == 3 /* INA226 @0x41, reg 0x02 = Bus Voltage (1.25mV/LSB) */
+#elif RG_BATTERY_DRIVER == 3 /* INA226 @0x41: reg 0x02 总线电压(1.25mV/LSB) + reg 0x01 分流电压(2.5µV/LSB) */
     /* Tab5 的电池电压由 INA226 给出，读法见本文件上方的 rg_ina226_*（走 BSP 主 I2C）。
      * 它报的是 2S 电包电压 → 百分比换算在 targets/tab5/config.h 里折半。 */
-    uint16_t word = 0;
+    uint16_t word = 0, shunt = 0;
     bool ok = rg_ina226_read_reg16(0x02, &word);
+    /* 充电判定走**分流电流方向**（分流电阻 5mΩ，官方口径：充电时该值为负）。
+     * 只读寄存器、不写配置：INA226 出厂 CONFIG 已是连续转换（shunt+bus），
+     * 而电流方向不需要 CALIBRATION（那是给 CURRENT 寄存器用的），读 0x01 就够。 */
+    bool ok_shunt = rg_ina226_read_reg16(0x01, &shunt);
+    const int cur_ma = ok_shunt ? rg_ina226_shunt_ma((int16_t)shunt) : 0;
+    charging = ok_shunt && (cur_ma < -RG_TAB5_CHARGE_CURRENT_MA);
     if (ina226_dbg_count < 6)
     {
-        RG_LOGI("INA226-DBG: rc=%d raw=0x%04X (%d mV)\n", (int)ok, (unsigned)word, ok ? (int)(word * 1.25f) : -1);
+        RG_LOGI("INA226-DBG: rc=%d raw=0x%04X (%d mV) shunt=%d (%d mA) chg=%d\n",
+                (int)ok, (unsigned)word, ok ? (int)(word * 1.25f) : -1,
+                (int)(int16_t)shunt, cur_ma, (int)charging);
         ina226_dbg_count++;
+    }
+    /* 充电状态一变就打一行 —— 真机插/拔充电器各一次，用这行确认符号约定 */
+    {
+        static int last_chg = -1;
+        int chg = (int)charging;
+        if (chg != last_chg)
+        {
+            RG_LOGI("INA226-CHG: shunt=%d (%d mA) -> charging=%d\n", (int)(int16_t)shunt, cur_ma, chg);
+            last_chg = chg;
+        }
     }
     if (!ok || word == 0 || word == 0xFFFF)
         return false;

@@ -86,4 +86,17 @@ void rg_overlay_get_toggle_rect(int *x, int *y, int *w, int *h);
 
 void rg_overlay_set_fps(int value);
 
+/* ---------------------------------------------------------------- 电量圆灯
+ * 用户规格：START 正上方居中、**实心小圆**（不要光晕/渐变 —— 光晕在大屏上易显塑料感）。
+ * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪；**充电中 → 绿闪**（优先级最高）。
+ * 数据来源：rg_input_read_battery()（输入任务每 2s 更新一次的缓存值，含 charging）。
+ *
+ * ⚠ 它落在**控制区**（逻辑 y≈1090），而显示驱动只把游戏区（y<480）的条带推给面板，
+ *   普通叠加层路径永远覆盖不到这里 —— 所以仿照帧率数字的做法：由驱动调
+ *   rg_batt_led_refresh_needed() / _get_band() / _draw() 直接写面板帧缓冲并做局部
+ *   cache 写回（见 mipi_dsi_tab5_p.h 里 tab5_batt_led_refresh 的注释与实测教训）。 */
+bool rg_batt_led_refresh_needed(void);                          /* 样子变了才 true（含闪烁相位） */
+void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1);   /* 逻辑坐标整行带，行号已按 4 取整 */
+void rg_batt_led_draw(uint16_t *buf, int stride);                /* 线性映射（物理=逻辑）直绘 */
+
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */

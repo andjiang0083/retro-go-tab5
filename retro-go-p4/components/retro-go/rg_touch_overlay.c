@@ -849,6 +849,117 @@ static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
     draw_fps_text(buf, stride, rx, ry, rw, rh, phys_w, lx, ly, c565(255, 255, 255));        /* 正文 */
 }
 
+/* ---------------------------------------------------------------- 电量圆灯
+ *
+ * 位置：START（键位表里中心 (360,1180)、半高 38）正上方居中 —— 取逻辑 (360,1090)，
+ *       圆半径 12（直径 24px，实心，无光晕）。
+ * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪；充电中 → 绿闪（优先级最高）。
+ * 闪烁：500ms 亮 / 500ms 灭（相位由 rg_system_timer 决定，无状态、免定时器）。
+ * 背景：控制区在这块位置没有任何内容（按键最近的是 START 顶边 1142），
+ *       所以"灭"就写成黑 —— 与帧率数字那次"先擦后画"同理（不擦会新旧叠加）。
+ * 边缘：2x2 子采样求覆盖率，按覆盖率向黑（=背景）压暗，避免 12px 圆的锯齿。
+ *
+ * ⚠ 行号必须是 4 的倍数：帧缓冲一行 = 720px×2B = 1440B，1440 % 128 = 32，
+ *   只有每 4 行才落到 128B 边界上 —— cache 写回（esp_cache_msync）要求 128B 对齐。
+ *   圆占 y 1078..1102，取 [1076,1104) 正好满足。 */
+#define RG_BATT_LED_CX       360
+#define RG_BATT_LED_CY       1090
+#define RG_BATT_LED_R        12
+#define RG_BATT_LED_BAND_Y0  1076
+#define RG_BATT_LED_BAND_Y1  1104
+#ifndef RG_SCREEN_WIDTH
+#define RG_SCREEN_WIDTH 720
+#endif
+
+/* 0 = 灭（黑）1 = 绿 2 = 橙 3 = 红 */
+static uint16_t batt_led_color(int idx)
+{
+    switch (idx)
+    {
+        case 1:  return c565(0, 230, 60);
+        case 2:  return c565(255, 150, 0);
+        case 3:  return c565(255, 40, 40);
+        default: return 0x0000;
+    }
+}
+
+static int batt_led_state(void)
+{
+    const rg_battery_t b = rg_input_read_battery();
+
+    if (!b.present)
+        return 0;                              /* 没装电池 / 读不到 → 不显示（不是红色告警） */
+
+    int idx;
+    bool blink = false;
+
+    if (b.charging)
+    {
+        idx = 1; blink = true;                 /* 充电中：绿闪（压过一切电量颜色） */
+    }
+    else if (b.level < 10.f) { idx = 3; blink = true; }   /* <10%：红闪 */
+    else if (b.level < 20.f) { idx = 3; }
+    else if (b.level < 60.f) { idx = 2; }
+    else                     { idx = 1; }
+
+    if (blink && ((rg_system_timer() / 500000) & 1))
+        idx = 0;                               /* 500ms 灭 */
+    return idx;
+}
+
+bool rg_batt_led_refresh_needed(void)
+{
+    static int last = -1;
+    const int now = batt_led_state();
+    if (now == last)
+        return false;
+    last = now;
+    return true;
+}
+
+void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1)
+{
+    if (x0) *x0 = 0;
+    if (y0) *y0 = RG_BATT_LED_BAND_Y0;
+    if (x1) *x1 = RG_SCREEN_WIDTH;
+    if (y1) *y1 = RG_BATT_LED_BAND_Y1;
+}
+
+void rg_batt_led_draw(uint16_t *buf, int stride)
+{
+    if (!buf || stride <= 0)
+        return;
+    const uint16_t color = batt_led_color(batt_led_state());
+    const int R = RG_BATT_LED_R;
+
+    for (int dy = -R; dy <= R; ++dy)
+    {
+        const int ly = RG_BATT_LED_CY + dy;
+        if (ly < RG_BATT_LED_BAND_Y0 || ly >= RG_BATT_LED_BAND_Y1)
+            continue;
+        uint16_t *row = buf + (size_t)ly * stride;
+        for (int dx = -R; dx <= R; ++dx)
+        {
+            const int lx = RG_BATT_LED_CX + dx;
+            if (lx < 0 || lx >= RG_SCREEN_WIDTH)
+                continue;
+            int cov = 0;
+            for (int sy = 0; sy < 2; ++sy)
+                for (int sx = 0; sx < 2; ++sx)
+                {
+                    const float px = dx + (sx ? 0.25f : -0.25f);
+                    const float py = dy + (sy ? 0.25f : -0.25f);
+                    if (px * px + py * py <= (float)(R * R))
+                        cov++;
+                }
+            if (cov == 4)
+                row[lx] = color;
+            else if (cov)
+                row[lx] = c565_scale(color, cov, 4);   /* 背景是黑 → 按覆盖率压暗即向背景混合 */
+        }
+    }
+}
+
 /* tab5 专用：面板是原生竖屏，逻辑画面按 90°CW 写进物理帧缓冲。
  * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)，与显示驱动的映射必须完全一致。
  * 这里不做第二份旋转位图，只在索引上换算 —— 一份数据、两种朝向。 */

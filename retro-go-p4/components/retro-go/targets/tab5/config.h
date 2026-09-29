@@ -154,4 +154,7 @@
 #define RG_BATTERY_CALC_PERCENT(raw) ((((raw) / 2.f) - 3300.f) / 850.f * 100.f)
 /* 显示用电包电压（7.4V 那种，与 M5Unified getBatteryVoltage 一致），不折半 */
 #define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)
+/* 充电判定阈值（mA，取分流电流绝对值）：小于这个充电电流不算"在充电"，
+ * 免得不插充电器时被噪声抖成闪烁。官方口径：分流电流**为负**表示在充电。 */
+#define RG_TAB5_CHARGE_CURRENT_MA   40
 #endif

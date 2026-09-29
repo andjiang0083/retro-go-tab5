@@ -488,8 +488,50 @@ static void tab5_ppa_frame_probe(void)
     heap_caps_free(dst);
 }
 
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+/* 电量圆灯：直接写面板帧缓冲 + 局部 cache 写回。
+ * 为什么不能走普通叠加层：驱动只把**游戏区**（逻辑 y<480）的条带推给面板，
+ * 而灯在控制区 y≈1090 —— 那条路径永远覆盖不到（与帧率数字同一个坑，见下方注释）。
+ * 条带起始行取 4 的倍数：帧缓冲一行 1440B，1440%128=32，只有每 4 行才落在 128B 边界，
+ * msync 要求偏移与长度都是 128 的整数倍（否则静默失败/写回范围不对）。 */
+static void tab5_batt_led_refresh(void)
+{
+    if (!tab5_fb)
+        return;
+    static uint16_t *last_fb = NULL;
+    static int64_t last_write = 0;
+    const int64_t now = esp_timer_get_time();
+    /* 换了帧缓冲（进出游戏会重挂显示）或超过 5s 也强制重画一次：
+     * 否则"静止的灯"（比如纯绿）在应用切换后可能一直不重画。 */
+    const bool forced = (tab5_fb != last_fb) || (now - last_write > 5000000);
+    if (!rg_batt_led_refresh_needed() && !forced)
+        return;
+    last_fb = tab5_fb;
+    last_write = now;
+
+    int x0, y0, x1, y1;
+    rg_batt_led_get_band(&x0, &y0, &x1, &y1);
+    /* 先擦成背景（这块控制区没有任何别的内容，纯黑）：不擦的话"灭"的相位擦不掉旧像素 */
+    for (int y = y0; y < y1; ++y)
+    {
+        uint16_t *row = tab5_fb + (size_t)y * TAB5_PHYS_W;
+        for (int x = x0; x < x1; ++x)
+            row[x] = 0x0000;
+    }
+    rg_batt_led_draw(tab5_fb, TAB5_PHYS_W);
+
+    const size_t off = ((size_t)y0 * TAB5_PHYS_W + x0) * 2;
+    const size_t len = (size_t)(y1 - y0) * TAB5_PHYS_W * 2;
+    esp_cache_msync((void *)((uintptr_t)tab5_fb + off), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+}
+#endif
+
 static void tab5_perf_report(void)
 {
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 电量圆灯跟着每一次推送刷新判断（状态没变就是几次比较，可忽略） */
+    tab5_batt_led_refresh();
+#endif
     /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。
      * 2026-09-25 结论：三种 scale 变体全部 err=0x102（ESP_ERR_INVALID_ARG），
      * 即使源与目的都已 128 对齐 —— 说明还有别的原因，且**那个 9.4ms 不能采信**。
