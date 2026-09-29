@@ -8,6 +8,12 @@
  * 的包含顺序（那个头文件对 config.h 的可见性有要求）。 */
 extern void rg_display_invalidate_lines(int top, int count);
 
+/* ── 性能测量钩子开关（默认 0 = 发行行为，零影响）──────────────────────────
+ * 置 1 → 把 frameskip 钉死在 0（模拟器每帧都渲染 = 60fps），自动跳帧策略整段让位。
+ * 用途：测"关掉跳帧"时的真实开销。默认关，是因为它会让慢游戏失去自动降帧保护。
+ * 判读方法见 Auto frameskip 那段注释。 */
+#define RG_PERF_PIN_FRAMESKIP 0
+
 #include <sys/time.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -22,6 +28,8 @@ extern void rg_display_invalidate_lines(int top, int count);
 #include <freertos/semphr.h>
 #include <esp_heap_caps.h>
 #include <esp_partition.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 #include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -151,6 +159,70 @@ IRAM_ATTR void esp_panic_putchar_hook(char c)
     logbuf_putc(&panicTrace, c);
 }
 
+#if defined(ESP_PLATFORM)
+/* ── 单 app 形态的"待续标志"（编译期 RG_SINGLE_APP）────────────────────────────
+ * 双 app 形态用 esp_ota_set_boot_partition 记住"下次开机进哪个分区"；单 app 形态里菜单
+ * 与核心编在同一个 app（见 launcher/components/gbsp-core），没有第二个分区可切，于是改用
+ * 这一位 NVS 标志：置位 = 下次开机进核心，清位 = 进菜单。
+ * 之所以用原生 nvs API 而不是 rg_settings：分发器在 rg_system_init() **之前**就要做决定，
+ * 那时 retro-go 的设置层还没起来。
+ * 谁写：update_boot_config() —— 切核心时置位；回菜单时清位（回菜单 = 名字为空，
+ *       rg_system_exit() 走的就是 switch_app(RG_APP_LAUNCHER, 0, 0, 0)）。 */
+#define RG_SINGLE_APP_NVS_NS  "rgapp"
+#define RG_SINGLE_APP_NVS_KEY "core"
+
+/* 编进来的那个核心的分区名（决定"哪个核心算已安装"，见 rg_system_have_app）。
+ * 刻意用"不带引号的标识符 + 字符串化"，而不是 -DRG_SINGLE_APP_CORE="gbsp" —— 后者在 CMake
+ * 里要过两层转义，实测会被二次转义成 \\"gbsp\\"（见经验沉淀 §126）。 */
+#if !defined(RG_SINGLE_APP_CORE)
+#define RG_SINGLE_APP_CORE gbsp
+#endif
+#define RG_STR_IMPL(x) #x
+#define RG_STR(x)      RG_STR_IMPL(x)
+#define RG_SINGLE_APP_CORE_STR RG_STR(RG_SINGLE_APP_CORE)
+
+static void single_app_set_core_pending(bool on)
+{
+    nvs_handle_t h;
+    if (nvs_open(RG_SINGLE_APP_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
+        return;
+    if (on)
+        nvs_set_u8(h, RG_SINGLE_APP_NVS_KEY, 1);
+    else
+        nvs_erase_key(h, RG_SINGLE_APP_NVS_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+}
+#endif
+
+bool rg_system_single_app_take_core_pending(void)
+{
+#if defined(ESP_PLATFORM) && defined(RG_SINGLE_APP)
+    /* 本函数在 rg_system_init() 之前被调用，那时 NVS 可能还没初始化 —— 先确保它可用。
+     * nvs_flash_init() 幂等，后面 rg_system_init() 再调一次没有副作用。 */
+    nvs_flash_init();
+
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(RG_SINGLE_APP_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
+        return false;
+    if (nvs_get_u8(h, RG_SINGLE_APP_NVS_KEY, &v) == ESP_OK && v)
+    {
+        /* 取走即清：标志只对"这一次"生效。核心自己从 NS_BOOT 取 romPath/configNs（不依赖
+         * 本标志），所以提前清掉不影响它；而万一核心启动就崩溃，重启后会回落菜单而不是
+         * 反复重启进核心。 */
+        nvs_erase_key(h, RG_SINGLE_APP_NVS_KEY);
+        nvs_commit(h);
+        nvs_close(h);
+        return true;
+    }
+    nvs_close(h);
+    return false;
+#else
+    return false;   /* 双 app 形态：进哪个 app 由 otadata 决定，这里永远为假 */
+#endif
+}
+
 static bool update_boot_config(const char *partition, const char *name, const char *args, uint32_t flags)
 {
     if (app.initialized)
@@ -164,7 +236,14 @@ static bool update_boot_config(const char *partition, const char *name, const ch
     {
         rg_storage_delete(RG_BASE_PATH_CONFIG "/boot.json");
     }
-#if defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM) && defined(RG_SINGLE_APP)
+    /* 单 app 形态：没有第二个 app 分区可切（otadata 永远指向本 app），改用"置待续标志 +
+     * 重启自己"。partition 参数只用于日志；name/args 上一步已经写进 NS_BOOT，核心照旧从
+     * 那里取 configNs 与 romPath。名字为空 = 回菜单（rg_system_exit 正是 name=0），
+     * 这时必须清标志，否则会自己反复重启进核心出不来。 */
+    (void)partition;
+    single_app_set_core_pending(app.initialized && name != NULL && name[0] != 0);
+#elif defined(ESP_PLATFORM)
     // Check if the OTA settings are already correct, and if so do not call esp_ota_set_boot_partition
     // This is simply to avoid an unecessary flash write...
     const esp_partition_t *current = esp_ota_get_boot_partition();
@@ -235,20 +314,35 @@ static void update_statistics(void)
         // Hard to fix this sync issue without a lock, which I don't want to use...
         ticks = RG_MAX(ticks, frames);
 
-        statistics.busyPercent = busyTime / totalTime * 100.f;
-        statistics.totalFPS = ticks / totalTimeSecs;
-        statistics.skippedFPS = (ticks - frames) / totalTimeSecs;
-        statistics.fullFPS = fullFrames / totalTimeSecs;
-        statistics.partialFPS = partFrames / totalTimeSecs;
+        /* 换应用时 rg_display 的计数会从 0 重新开始，而上一拍的基准还属于旧应用 ⇒ 差值全为负，
+         * 硬算出来的 FPS 是天文数字（真机日志见过 `FPS:198891 (198887+0+0)`，屏幕上也会闪一下）；
+         * 两拍几乎同时到期（totalTimeSecs 极小）同样会把比值放大到无意义。
+         * 这两种情况**这一拍不更新派生统计** —— counters 每次都会被下面覆盖成当前值，
+         * 所以它自然成为新基准，下一拍就恢复正常，只丢这一拍。
+         * 屏幕上的帧率数字与日志读的是同一份 statistics，跳过等于两边都不被污染。 */
+        if (ticks >= 0 && frames >= 0 && fullFrames >= 0 && partFrames >= 0 && totalTimeSecs >= 0.05f)
+        {
+            statistics.busyPercent = busyTime / totalTime * 100.f;
+            statistics.totalFPS = ticks / totalTimeSecs;
+            statistics.skippedFPS = (ticks - frames) / totalTimeSecs;
+            statistics.fullFPS = fullFrames / totalTimeSecs;
+            statistics.partialFPS = partFrames / totalTimeSecs;
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-        /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
-         * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
-        rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
-        /* 数字变了，把它所在的逻辑行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
-         * 真机表现为"屏幕上的帧率不刷新，点开 menu 才更新"。
-         * 44 / 32 对应 rg_touch_overlay.c 里数字的纵向范围（中心 y=60、高 8x4=32px）。 */
-        rg_display_invalidate_lines(44, 32);
+            /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
+             * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
+            rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
+            /* 数字变了，把它所在的逻辑行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
+             * 真机表现为"屏幕上的帧率不刷新，点开 menu 才更新"。
+             * 44 / 32 对应 rg_touch_overlay.c 里数字的纵向范围（中心 y=60、高 8x4=32px）。 */
+            rg_display_invalidate_lines(44, 32);
 #endif
+        }
+        else
+        {
+            /* 只用整数格式化：ESP-IDF 日志不支持 %f/%lld（会错位） */
+            RG_LOGD("stats: counters reset (frames=%d part=%d full=%d ticks=%d dt=%dus) -> skip sample\n",
+                    (int)frames, (int)partFrames, (int)fullFrames, (int)ticks, (int)(totalTimeSecs * 1000000.f));
+        }
     }
     statistics.uptime = rg_system_timer() / 1000000;
 
@@ -316,19 +410,54 @@ static void system_monitor_task(void *arg)
         // Auto frameskip
         if (statistics.ticks > app.tickRate * 2)
         {
-            float speed = ((float)statistics.totalFPS / app.tickRate) * 100.f / app.speed;
-            // We don't fully go back to 0 frameskip because if we dip below 95% once, we're clearly
-            // borderline in power and going back to 0 is just asking for stuttering...
-            if (speed > 99.f && statistics.busyPercent < 85.f && app.frameskip > 1)
+#if RG_PERF_PIN_FRAMESKIP
+            /* ── 性能测量钩子（只有测"关掉跳帧"的真实开销时置 1）────────────────
+             * 钉死 frameskip=0 = 模拟器**每帧都渲染**（60fps）。只做这一件事，
+             * 自动策略整段让位 —— 变量越少，数字越好判读。
+             * 背景（2026-09-29）：本项目的 frameskip 两处下限都是 1：
+             *   ① `app` 默认 1；② 自动策略只在 `frameskip > 1` 时下降（上游注释：
+             *      "低于 95% 一次就说明余量不足，降回 0 纯属自找卡顿"）。
+             * 所以"跳帧关闭(0)"在设计上不可能出现 —— 要看 60fps 渲染撑不撑得住，
+             * 必须显式钉住。实测结论与优化见 ~/esp32/ESP32-经验沉淀 §125。 */
+            if (app.frameskip != 0)
             {
-                app.frameskip--;
-                RG_LOGI("Reduced frameskip to %d", app.frameskip);
+                app.frameskip = 0;
+                RG_LOGI("PERF-PIN: frameskip pinned to 0 (every frame rendered)");
             }
-            else if (speed < 96.f && statistics.busyPercent > 85.f && app.frameskip < 5)
+#else
+            float speed = ((float)statistics.totalFPS / app.tickRate) * 100.f / app.speed;
+            /* ── 跳帧策略：现在**允许降到 0**（= 每帧都渲染，60fps 满帧）───────────
+             * 为什么敢改（2026-09-29 真机实测，把 frameskip 钉死 0 跑一局）：
+             *   skippedFPS=0、partial=61、速度 100%、**BUSY 只有 62~69%**；
+             *   显示路径仅 216ms/s（xpose 180 + ovl 12 + draw 22，318 块/秒），
+             *   0 次 drop / 0 次 failed ⇒ 整机还有 ~30% 空闲，60fps 满帧扛得住。
+             * 上游原不肯降到 0（原注释：低于 95% 一次就说明余量不足，降回 0 纯属自找卡顿），
+             * 那是怕在临界点上反复上下跳。所以这里按**滞回**做，两个方向门槛不同：
+             *   降档：speed>99 且 busy<85（沿用原门槛）
+             *   但**降到 0 额外要求 busy<75%** —— 因为降下去之后的开销比现在高，
+             *        富余不够就停在 1，形成 75~85% 的死区；
+             *   升档后 20 秒内不再尝试降回 0（防"重游戏里 0/1 来回抖"）；
+             *   升档：speed<96 且 busy>85（门槛不动）。
+             * ⚠ 旧的 `app.frameskip > 1` 下限正是"跳帧关不掉"的唯一原因，已去掉。 */
+            const float busy = statistics.busyPercent;
+            static int64_t last_raise_us = 0;
+            const int64_t now_us = rg_system_timer();
+            if (speed > 99.f && busy < 85.f && app.frameskip > 0)
+            {
+                const bool allow_zero = (busy < 75.f) && (now_us - last_raise_us > 20000000);
+                if (app.frameskip > 1 || allow_zero)
+                {
+                    app.frameskip--;
+                    RG_LOGI("Reduced frameskip to %d", app.frameskip);
+                }
+            }
+            else if (speed < 96.f && busy > 85.f && app.frameskip < 5)
             {
                 app.frameskip++;
+                last_raise_us = now_us;
                 RG_LOGI("Raised frameskip to %d", app.frameskip);
             }
+#endif
         }
 
         if (statistics.lastTick < rg_system_timer() - app.tickTimeout)
@@ -899,7 +1028,14 @@ static void shutdown_cleanup(void)
     rg_audio_deinit();                        // Disable sound ASAP to avoid audio garbage
     // rg_system_save_time();                    // RTC might save to storage, do it before
     rg_storage_deinit();                      // Unmount storage
-    rg_input_wait_for_key(RG_KEY_ALL, 0, -1); // Wait for all keys to be released (boot is sensitive to GPIO0,32,33)
+    /* ⚠ 为什么要有上限（2026-09-29 走查 P1-4）：本机唯一输入是触摸屏，而 ST7123 的多点
+     * 上报**可能残留上一次的坐标**（触摸层为此特意遍历所有触点而不是只看第 0 点）。
+     * 老代码超时是 -1（无限等待"所有键松开"），一个幽灵触点就能让关机永远卡在
+     * rg_display_clear 之后 —— 表现是"点了关机、黑屏停住，不重启也不掉电"。
+     * 物理按键平台没这个问题（松开是硬件保证的），触摸平台必须有上限。
+     * 3 秒足够真人松手；超时就继续关机并在日志里留痕，便于事后判断是不是残留触点。 */
+    if (!rg_input_wait_for_key(RG_KEY_ALL, 0, 3000))
+        RG_LOGW("Shutdown: keys still held after 3s, continuing anyway (touch residue?)\n");
     rg_input_deinit();                        // Now we can shutdown input
     rg_i2c_deinit();                          // Must be after input, sound, and rtc
     rg_display_deinit();                      // Do this very last to reduce flicker time
@@ -960,7 +1096,15 @@ void rg_system_switch_app(const char *partition, const char *name, const char *a
 bool rg_system_have_app(const char *app)
 {
 #if defined(ESP_PLATFORM)
+#if defined(RG_SINGLE_APP)
+    /* 单 app 形态：核心被编进同一个镜像，没有独立分区可查 —— 唯一的"已安装应用"就是编进来的
+     * 那个核心（RG_SINGLE_APP_CORE，默认为 gbsp，见本文件上方；launcher 是菜单自己，不算）。
+     * ⚠ 这条判断决定菜单会不会列出该核心的游戏（applications.c 的 application() 早退）——
+     *   漏了就是"菜单里一个游戏都没有"。 */
+    return app && !strcmp(app, RG_SINGLE_APP_CORE_STR);
+#else
     return esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, app) != NULL;
+#endif
 #elif defined(RG_TARGET_SDL2)
     char exe[strlen(app) + 5];
     sprintf(exe, "%s.exe", app);

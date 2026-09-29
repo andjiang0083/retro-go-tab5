@@ -44,6 +44,7 @@
 /* NVS 键（NS_GLOBAL）——菜单和本模块共用一份，别各写各的字面量 */
 #define RG_TOUCH_SETTING_VISIBLE "TouchButtons"
 #define RG_TOUCH_SETTING_ALPHA   "TouchOpacity"
+#define RG_TOUCH_SETTING_SWAP    "TouchSwapYX"    /* X/Y ↔ L/R 调换开关（持久化） */
 
 extern const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT];
 
@@ -76,7 +77,56 @@ void rg_overlay_debug_set_pressed(uint32_t mask);
  * 开关只在按键隐藏时显示，但矩形始终可查（单一数据源，别在别处再写一遍坐标）。 */
 void rg_overlay_get_toggle_rect(int *x, int *y, int *w, int *h);
 
-/* 屏幕上的"显示帧率"数字：画在 L 与 R 肩键之间的顶部中央（逻辑坐标 640,60）。
+/* ---------------------------------------------------------------- X/Y ↔ L/R 调换
+ * L/R 之间那颗切换按钮（几何在 targets/tab5/touch_layout.h 的 RG_TAB5_SWAP_*）：
+ *   默认菱形位是 X/Y；点一下 → X↔R、Y↔L 对调（菱形位变 R/L，肩键位变 X/Y），
+ *   标签显示"菱形上现在是哪一对"（X/Y ↔ L/R）。不是游戏按键，不注入任何 RG_KEY_*。
+ * 状态存 NVS（RG_TOUCH_SETTING_SWAP），断电不丢；切完立刻重建那四个键的掩码。
+ * 输入层（rg_input.c）负责命中这颗按钮并调用 set_swap()。 */
+void rg_overlay_get_swap_rect(int *x, int *y, int *w, int *h);
+bool rg_overlay_get_swap(void);
+void rg_overlay_set_swap(bool on);
+
+/* 每次调换 +1。给"菜单/启动器"这类**事件驱动重绘**的界面用：
+ * 它们只在收到按键时才重画，而调换不产生任何按键 —— 拿这个号比一下就知道
+ * 覆盖层的内容变了、该重画一帧（不然标签要等到下一次界面切换才更新）。
+ * 游戏里每帧都在写画面，用不到这个。 */
+uint32_t rg_overlay_get_generation(void);
+
+/* 取走"需要整块重画"的单元矩形（取走即清）：往 out_xywh 里填 x,y,w,h 四元组，返回个数。
+ *
+ * 为什么需要这个：显示层的推帧循环**只覆盖视口**（游戏里 720x480），而控制条带在视口
+ * 之外的黑边上 —— 条带上的叠加层（按压反馈、那颗 X/Y↔L/R 调换按钮）靠推帧永远刷不到。
+ * 于是显示层每帧来问一次，拿到矩形后自己把条带的**背景**（边框图或纯黑）重建一遍，
+ * 再走正常的发送路径（驱动会在发送时把叠加层合成上去）。
+ * 实测证据：真机"点了不变，只有进出游戏才变"—— 因为进出游戏会触发整屏重画。
+ * 上限：13 个按键单元 + 1 个切换按钮，取 RG_OVERLAY_DIRTY_MAX 够用（多出来的丢弃，不影响正确性）。 */
+#define RG_OVERLAY_DIRTY_MAX 16
+int rg_overlay_take_dirty_rects(int *out_xywh, int max);
+
+/* X/Y ↔ L/R 的调换规则 —— **只此一处**（输入命中、可视层标签、可视层配色共用）：
+ *   X↔R、Y↔L；A/B、十字键、系统键都不动。
+ * 它是自反的（应用两次回原样），所以"调换/换回"是同一个调用。 */
+static inline rg_key_t rg_touch_swap_key(rg_key_t k)
+{
+    switch (k)
+    {
+        case RG_KEY_X: return RG_KEY_R;
+        case RG_KEY_R: return RG_KEY_X;
+        case RG_KEY_Y: return RG_KEY_L;
+        case RG_KEY_L: return RG_KEY_Y;
+        default: return k;
+    }
+}
+
+/* "这个**位置**现在代表哪个键"：调换开着 → X↔R、Y↔L，关着 → 原样。
+ * **输入层与可视层都必须调它**，别自己写 `swap ? swap_key(k) : k` ——
+ * 曾经输入层漏了状态门控（自反对换被无条件应用）→ 真机"按 X 亮 R、按 Y 亮 L"。 */
+rg_key_t rg_overlay_map_key(rg_key_t position_key);
+
+/* 屏幕上的"显示帧率"数字：画在**控制区顶部正中**（逻辑 360,500 —— L/R 肩键之间的空白带；
+ * 竖屏下 y<480 是游戏画面，不能占用）。坐标与线性映射都在 rg_touch_overlay.c 里
+ * （2026-09-29 走查 P2-11：原来写的是横屏口径的 640,60 + cw90 换算式，已改）。
  * 由 rg_system.c 的 update_statistics() 每秒推一次值 —— 用的是 statistics 里
  * partialFPS + fullFPS（"真正显示出去的帧率"），与日志 FPS:(跳过+部分+完整) 的后两项同口径。
  * 传负值 = 不显示。直绘，不走按键掩码。 */
@@ -88,7 +138,10 @@ void rg_overlay_set_fps(int value);
 
 /* ---------------------------------------------------------------- 电量圆灯
  * 用户规格：START 正上方居中、**实心小圆**（不要光晕/渐变 —— 光晕在大屏上易显塑料感）。
- * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪；**充电中 → 绿闪**（优先级最高）。
+ * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪（**硬闪**，告警要抓眼）；
+ * **充电中 → 绿呼吸**（优先级最高；4 档渐变 ≈1.4s 一圈）。
+ *   v0.4.1 起把"充电中"从硬闪改成呼吸：INA226 分流采样会抖，叠加硬闪会显得不自然；
+ *   充电状态本身另有一次软件表决去抖（见 rg_input.c）。
  * 数据来源：rg_input_read_battery()（输入任务每 2s 更新一次的缓存值，含 charging）。
  *
  * ⚠ 它落在**控制区**（逻辑 y≈1090），而显示驱动只把游戏区（y<480）的条带推给面板，

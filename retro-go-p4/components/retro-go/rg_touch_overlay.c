@@ -38,17 +38,27 @@
 /* NVS 键（与 rg_gui.c 菜单共用同一份定义，见 rg_touch_overlay.h） */
 #define SETTING_VISIBLE RG_TOUCH_SETTING_VISIBLE
 #define SETTING_ALPHA   RG_TOUCH_SETTING_ALPHA
+#define SETTING_SWAP    RG_TOUCH_SETTING_SWAP
 
 const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT] = {100, 80, 60, 40, 20};
 
 typedef struct
 {
     rg_key_t key;
-    bool is_toggle;      /* true = 左上角那个"把按键放回来"的开关（不是按键，没有 key） */
     int x, y, w, h;      /* 逻辑坐标：左上角 + 尺寸 */
     uint8_t *mask;       /* w*h： (覆盖率<<3) | 角色 */
     uint16_t pal[4];     /* 正常态：角色 -> 颜色 */
     uint16_t pal_p[4];   /* 按下态 */
+    /* ── 调换用的"另一套"（只有 X/Y/L/R 四个键 + 那颗切换按钮有）───────────
+     * 两套都在开机时预渲染好，点击只做对换（key/mask/调色板一起换）：
+     *   ① 点击路径上没有分配/释放 —— 输入任务里直接改也安全（不会 free 掉
+     *      显示线程正在解引用的掩码，那是原设计的隐患）；
+     *   ② 不依赖"下一帧"，渲染线程下次画时读到的就是新的那一套。
+     * 代价：5 个单元多一份掩码（≈2KB PSRAM）+ 开机多约 90ms 预渲染。 */
+    uint8_t *mask_alt;
+    uint16_t pal_alt[4];
+    uint16_t pal_p_alt[4];
+    rg_key_t key_alt;
 } rg_overlay_btn_t;
 
 typedef struct
@@ -86,7 +96,11 @@ static size_t btn_count;
 static bool ready;
 static bool visible = true;
 static int alpha_pct = 100;
-static int alpha_level = 255;             /* 0..255，= alpha_pct * 255 / 100 */
+static int alpha_level = 255;             /* 0..255，= alpha_pct * 255 / 100
+                                           * ⚠ 跨任务读写：设置菜单（GUI 任务）写、显示与输入路径读，
+                                           * 故意**不加锁** —— 32 位对齐 int 的读写在本平台是一条指令，
+                                           * 加锁只会在显示热路径上引入优先级反转（走查 P2-16）。
+                                           * 真要动这里，先想清楚"读到上一档"的后果可接受。 */
 static bool pending_commit = false;       /* 设置改了但还没落盘（见 commit_if_pending） */
 static uint8_t acov[4][17];               /* 正常态混合权重 [角色][覆盖率] */
 static uint8_t acov_p[4][17];             /* 按下态 */
@@ -94,6 +108,37 @@ static uint8_t acov_p[4][17];             /* 按下态 */
  * RG_KEY_* 是位掩码（RG_KEY_R = 1<<13 = 8192），拿它当下标越界 32KB —— 实机第一帧合成就
  * LoadProhibited 崩溃；宿主 .bss 邻页可读，所以 SDL2 预览完全看不出来（教训见经验沉淀 §92）。 */
 static uint32_t last_press_ms[RG_OVERLAY_MAX_BUTTONS];
+
+/* ---- X/Y ↔ L/R 调换（L/R 之间那颗切换按钮）----------------------------------
+ * swap_yx      当前是否已调换（NVS: RG_TOUCH_SETTING_SWAP）
+ * swap_btn     那颗按钮自己的掩码（不在 btns[] 里：它不是游戏键）
+ * swap_flash_ms 上次点击时刻（点一下亮一次）
+ * 颜色用 MENU 那颗琥珀 —— 调色板里琥珀专属于"系统/UI 控件"，一看就不是游戏键。 */
+static bool swap_yx = false;
+static rg_overlay_btn_t swap_btn;
+/* ── "控制条带上哪些单元需要整块重画"（取走即清，见 rg_overlay_take_dirty_rects）──
+ * 游戏里显示层只推视口（720x480），控制条带在黑边上推不到 —— 按压反馈和那颗调换按钮
+ * 都靠这套标记让显示层把条带重建一遍。 */
+static uint32_t dirty_units = 0;        /* bit i = btns[i] 的外观变了 */
+static bool dirty_swap_btn = false;     /* 那颗切换按钮（不在 btns[] 里） */
+static uint32_t dirty_last_visual = 0;  /* 上次看到的"高亮位"（含 linger 保持） */
+static uint32_t dirty_last_visual_before = 0; /* 再上一拍的高亮位：给抖动观测用（只统计） */
+static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画（外观可能全变） */
+static bool swap_btn_ready = false;
+/* "这个**位置**现在代表哪个键" —— 调换开着时 X↔R、Y↔L，关着时原样。
+ *
+ * **输入层与可视层都必须走这里**（只此一处）：曾经两边各写一份，可视层按状态门控、
+ * 输入层却无条件应用自反对换（换两次回原样的性质让它"看起来也对"）→ 真机表现为
+ * 默认 X/Y 模式下按 X 亮起的是 R、按 Y 亮起的是 L（而且游戏收到的是 R/L）。
+ * 规则本身在 rg_touch_swap_key()（自反），**状态的消费点**就是本函数。 */
+rg_key_t rg_overlay_map_key(rg_key_t position_key)
+{
+    return swap_yx ? rg_touch_swap_key(position_key) : position_key;
+}
+
+static uint32_t swap_flash_ms = 0;
+static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它发现"该重画了" */
+#define RG_OVERLAY_SWAP_PAD 10      /* 命中矩形比视觉矩形外扩（和左上角开关同一思路） */
 static uint32_t visual_mask;              /* 含"高亮保持"的显示用按下掩码 */
 static uint32_t debug_mask;               /* 预览用强制按下 */
 static uint8_t glyphs[128][8];            /* ASCII 8x8 点阵，MSB = 最左列 */
@@ -159,21 +204,67 @@ static void load_glyphs(void)
         const rg_font_glyph_t *g = (const rg_font_glyph_t *)p;
         if (!g->code)
             break;
-        size_t nbytes = g->width ? ((((size_t)g->width * g->height) - 1) / 8) + 1 : 0;
+        /* 推进长度 = **height**（每行一个字节），不是按位紧凑打包！
+         * 这是字库的真实排法，也是 PC 预览工具 parse_font() 的口径 —— 两边必须一致，
+         * 否则会出现"图上文字镜像/乱码"那类故障（2026-09-29 已踩过一次）。
+         * ⚠ 历史：这里曾写成 (((w*h)-1)/8)+1（按位紧凑）。当前字库 191 个字形全是
+         * 8x8，两种算法恰好等价才没出事；一旦混入 width<8 的字形，后续字形会整体错位。
+         * 走查 P1-2，见 docs/CODE-REVIEW-v0.4.1.md。 */
+        const size_t nbytes = g->height;
         if (g->code < 128 && g->width == 8 && g->height == 8)
             for (int y = 0; y < 8; ++y)
                 glyphs[g->code][y] = (uint8_t)(g->data[y] >> g->xOffset);  /* xOffset: 右移列 */
+        else if (g->width != 8 || g->height != 8)
+        {
+            /* 非 8x8 的字形本实现不会渲染（掩码固定按 8x8 用）。推进长度虽然按
+             * height 算对了，但"跳过不画"这件事必须说出来 —— 否则屏幕上少个字
+             * 会像渲染坏了，而不是"字库里有不支持的尺寸"。 */
+            static bool warned = false;
+            if (!warned)
+            {
+                warned = true;
+                RG_LOGW("glyphs: %dx%d glyph U+%04X unsupported (only 8x8 is rendered)\n",
+                        g->width, g->height, (unsigned)g->code);
+            }
+        }
         p += sizeof(rg_font_glyph_t) + nbytes;
     }
 }
 
 /* ---------------------------------------------------------------- 标签几何 */
 
-static void label_geom(int w, int h, rg_key_t key, bool is_toggle, rg_overlay_label_t *L)
+/* 文字标签（从 label_geom 里拆出来的独立入口）：那颗调换按钮没有 rg_key_t，
+ * 标签是运行时的字符串（"X/Y" / "L/R"），需要和按键走同一套排版与掩码。 */
+static void label_geom_text(int w, int h, const char *text, rg_overlay_label_t *L)
+{
+    memset(L, 0, sizeof(*L));
+    if (!text || !*text)
+        return;
+
+    int n = (int)strlen(text);
+    int sx = (w * 80 / 100) / (n * 8);   /* 横向：留 20% 边距能放下的最大整数倍 */
+    int sy = (h * 45 / 100) / 8;         /* 纵向：留 45% 高度 */
+    int s = sx < sy ? sx : sy;
+    if (s < 1) s = 1;
+    L->kind = 2;
+    L->text = text;
+    L->text_len = n;
+    L->scale = s;
+    L->inv_scale = 1.0f / (float)s;
+    L->tx = (w - n * 8 * s) * 0.5f;
+    L->ty = h * 0.5f - 3.5f * s;         /* 字形墨迹占 7 行，按墨迹居中（不是按 8 行格） */
+    L->bx0 = L->tx - 1.0f;
+    L->by0 = L->ty - 1.0f;
+    L->bx1 = L->tx + (float)(n * 8 * s) + 1.0f;
+    L->by1 = L->ty + (float)(8 * s) + 1.0f;
+}
+
+static void label_geom(int w, int h, rg_key_t key, rg_overlay_label_t *L)
 {
     memset(L, 0, sizeof(*L));
 
-    (void)is_toggle;   /* 开关已改为程序化绘制（见 blit_toggle），这里不再需要 */
+    /* 开关（左上角那个"把按键放回来"的图标）不是按键：它由 blit_toggle 程序化绘制，
+     * 不进键位表，所以这里没有 toggle 分支（曾经的 is_toggle 字段已删除，走查 P2-4）。 */
 
     const char *text = NULL;
     int dir = -1;
@@ -212,25 +303,8 @@ static void label_geom(int w, int h, rg_key_t key, bool is_toggle, rg_overlay_la
         return;
     }
 
-    if (!text)
-        return;
-
-    int n = (int)strlen(text);
-    int sx = (w * 80 / 100) / (n * 8);   /* 横向：留 20% 边距能放下的最大整数倍 */
-    int sy = (h * 45 / 100) / 8;         /* 纵向：留 45% 高度 */
-    int s = sx < sy ? sx : sy;
-    if (s < 1) s = 1;
-    L->kind = 2;
-    L->text = text;
-    L->text_len = n;
-    L->scale = s;
-    L->inv_scale = 1.0f / (float)s;
-    L->tx = (w - n * 8 * s) * 0.5f;
-    L->ty = h * 0.5f - 3.5f * s;         /* 字形墨迹占 7 行，按墨迹居中（不是按 8 行格） */
-    L->bx0 = L->tx - 1.0f;
-    L->by0 = L->ty - 1.0f;
-    L->bx1 = L->tx + (float)(n * 8 * s) + 1.0f;
-    L->by1 = L->ty + (float)(8 * s) + 1.0f;
+    if (text)
+        label_geom_text(w, h, text, L);
 }
 
 /* ⚠ 这个函数在预渲染热路径里被调用百万次，必须保持 float（P4 的 FPU 只有单精度，
@@ -295,11 +369,15 @@ static bool in_rrect(float x, float y, float w, float h, float r)
 
 /* ---------------------------------------------------------------- 建层 */
 
-static void build_button(rg_overlay_btn_t *b, uint16_t color)
+/* text_override != NULL 时用它当标签（那颗调换按钮不是游戏键，没有 rg_key_t 可查）。 */
+static void build_button(rg_overlay_btn_t *b, uint16_t color, const char *text_override)
 {
     const int w = b->w, h = b->h;
     rg_overlay_label_t L;
-    label_geom(w, h, b->key, b->is_toggle, &L);
+    if (text_override)
+        label_geom_text(w, h, text_override, &L);
+    else
+        label_geom(w, h, b->key, &L);
 
     float r = (float)((w < h ? w : h) * 18 / 100);
     if (r < 2) r = 2;
@@ -314,8 +392,9 @@ static void build_button(rg_overlay_btn_t *b, uint16_t color)
     }
 
     b->pal[ROLE_BORDER] = color;
-    /* 开关（白色系）的填充要比按键更暗：否则"白边框+白十字"压在 55% 白填充上对比不足 */
-    b->pal[ROLE_FILL] = c565_scale(color, b->is_toggle ? 30 : 55, 100);
+    /* 填充比边框暗一些（55%）：否则"亮边框+亮标签"压在纯亮填充上对比不足。
+     * （左上角那颗开关图标的 30% 更暗填充在 blit_toggle 里单独处理，不走这条路径。） */
+    b->pal[ROLE_FILL] = c565_scale(color, 55, 100);
     b->pal[ROLE_LABEL] = c565_tint(color, 70, 100);
     b->pal_p[ROLE_BORDER] = 0xFFFF;
     b->pal_p[ROLE_FILL] = c565_scale(color, 95, 100);
@@ -438,6 +517,16 @@ static void update_acov(void)
     }
 }
 
+/* 调换按钮的标签 = "菱形位上现在是谁"（默认 X/Y；调换后变成 L/R）——
+ * 用户原话："点击后，这个切换按钮应该变为 l/r"，也就是当状态指示用。 */
+static const char *swap_label(void)
+{
+    return swap_yx ? "L/R" : "X/Y";
+}
+
+/* 备用（调换后）那套掩码还没建？见 rg_overlay_init 末尾的说明与 rg_overlay_ensure_variants()。 */
+static bool variants_pending = false;
+
 void rg_overlay_init(void)
 {
     if (ready)
@@ -452,6 +541,8 @@ void rg_overlay_init(void)
      * 反馈"点不动"，先放一边）——等于把设备锁死。等蓝牙手柄能用了再放开。 */
     visible = true;
     rg_overlay_set_alpha((int)rg_settings_get_number(NS_GLOBAL, SETTING_ALPHA, 100));
+    /* X/Y ↔ L/R 调换（持久化）：必须在建掩码之前读进来，标签/配色才能一次到位 */
+    swap_yx = rg_settings_get_boolean(NS_GLOBAL, SETTING_SWAP, false);
 
     size_t n = 0;
     const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&n);
@@ -476,19 +567,78 @@ void rg_overlay_init(void)
 
     for (size_t i = 0; i < n; ++i)
     {
-        btns[i].key = map[i].key;
+        /* 位置固定、**功能键可调换**：btn.key 存的是"这个位置现在代表哪个键"
+         * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 btn.key
+         * → 视觉与手感永远一致；也正因为存的是功能键，高亮匹配不用额外改。
+         * ⚠ 这里必须走 rg_overlay_map_key()：输入层调的是同一个函数，
+         * 两边不可能再出现"一边门控、一边没门控"的不一致（真机曾按 X 亮 R）。 */
+        btns[i].key = rg_overlay_map_key(map[i].key);
         btns[i].w = map[i].w;
         btns[i].h = map[i].h;
         btns[i].x = map[i].x - map[i].w / 2;
         btns[i].y = map[i].y - map[i].h / 2;
-        build_button(&btns[i], overlay_key_color(map[i].key));
+        build_button(&btns[i], overlay_key_color(btns[i].key), NULL);
+    }
+
+    /* L/R 之间那颗「X/Y ↔ L/R 调换」按钮：几何来自键位表（RG_TAB5_SWAP_*），
+     * key=0（不是游戏键，不注入输入），颜色借用 MENU 的琥珀 = "系统/UI 控件"。 */
+    swap_btn.key = RG_KEY_NONE;
+    swap_btn.w = RG_TAB5_SWAP_W;
+    swap_btn.h = RG_TAB5_SWAP_H;
+    swap_btn.x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2;
+    swap_btn.y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2;
+    build_button(&swap_btn, c565(0xE8, 0xA2, 0x2C), swap_label());
+    swap_btn_ready = (swap_btn.mask != NULL);
+
+    /* ── 调换用的"另一套"掩码（预渲染，点击只对换）─────────────────────────
+     * 只给 X/Y/L/R 四个键和这颗切换按钮建；集合在调换下闭合，所以"另一套"就是
+     * 同一个位置的另一个键（含它的标签与配色）。
+     * 2026-09-29：**改为延迟构建**。它占建层耗时约 1/3（真机 314ms 里约 99ms），
+     * 而用户不点调换键就永远用不到 —— 开机先只建基础那套，备用那套交给
+     * rg_overlay_ensure_variants() 在第一次真正需要时构建（= 玩家第一次点调换键）。
+     * 不起线程、不加锁：只有一个调用点（点调换键那条路），靠这个标记做到幂等。 */
+    variants_pending = true;
+
+    /* ── 键位表自检（移植到新机型时最省事的一道保险）───────────────────────────
+     * 两条规矩都是真机踩出来的：
+     *   ① 命中区之间不能重叠 —— 否则手指压在两键交界处会串键，症状是"按上键却出下键"
+     *      （gywan94/tab5-vgbanext 的 odroid_vpad.c 是**故意**让十字区重叠的，
+     *       照抄它就会照旧串键，见 touch_layout.h 的注释）；
+     *   ② 不能压进游戏画面 —— 竖屏视口在顶部（Tab5 是 y=0..480），压上去会盖住画面。
+     * 只在这两条上打 WARNING，正常布局一个字都不打。移植时改完 touch_layout.h
+     * 开机看一眼日志就知道有没有踩坑，不用等真机上摸出来。
+     * 检查的是 build_button() 算出的**真实矩形**（中心展开 -w/2/-h/2 之后），与判定一致。 */
+    {
+        int bad = 0;
+        for (size_t i = 0; i < btn_count; ++i)
+        {
+            if (btns[i].y < 480)
+            {
+                RG_LOGW("touch layout: button #%u top y=%d 压进游戏画面（竖屏视口 0..480）\n",
+                        (unsigned)i, btns[i].y);
+                bad++;
+            }
+            for (size_t j = i + 1; j < btn_count; ++j)
+            {
+                const bool ox = btns[i].x < btns[j].x + btns[j].w && btns[j].x < btns[i].x + btns[i].w;
+                const bool oy = btns[i].y < btns[j].y + btns[j].h && btns[j].y < btns[i].y + btns[i].h;
+                if (ox && oy)
+                {
+                    RG_LOGW("touch layout: 命中区重叠 #%u/#%u —— 交界处会串键\n",
+                            (unsigned)i, (unsigned)j);
+                    bad++;
+                }
+            }
+        }
+        if (bad)
+            RG_LOGW("touch layout: 共 %d 处违规，规矩见 docs/PORTRAIT-TOUCH-LAYOUT-TEMPLATE.md\n", bad);
     }
 
     ready = true;
     /* 这一行会出现在串口上：app 切换（进出游戏）时 lcd_init 里会重跑建层，
      * 耗时直接决定黑屏等待时长 —— 所以别把 double/除法/strlen 放回热路径。 */
-    RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, built in %d ms\n",
-            (unsigned)btn_count, visible, alpha_pct,
+    RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, X/Y<->L/R swapped=%d, built in %d ms\n",
+            (unsigned)btn_count, visible, alpha_pct, swap_yx,
             (int)((rg_system_timer() - t_start) / 1000));
 }
 
@@ -511,6 +661,7 @@ void rg_overlay_set_visible(bool value)
     visible = value;
     rg_settings_set_boolean(NS_GLOBAL, SETTING_VISIBLE, value);
     pending_commit = true;   /* 立刻生效、延后落盘（落盘点见 commit_if_pending） */
+    dirty_all_units = true;  /* 显隐切换：条带整块重画（游戏里推帧到不了条带） */
     RG_LOGI("touch overlay %s\n", value ? "shown" : "hidden");
 }
 
@@ -556,17 +707,147 @@ void rg_overlay_cycle_alpha(int direction)
     rg_overlay_set_alpha(rg_overlay_alpha_levels[idx]);
 }
 
+/* ---------------------------------------------------------------- X/Y ↔ L/R 调换 */
+
+void rg_overlay_get_swap_rect(int *x, int *y, int *w, int *h)
+{
+    if (x) *x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2 - RG_OVERLAY_SWAP_PAD;
+    if (y) *y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2 - RG_OVERLAY_SWAP_PAD;
+    if (w) *w = RG_TAB5_SWAP_W + 2 * RG_OVERLAY_SWAP_PAD;
+    if (h) *h = RG_TAB5_SWAP_H + 2 * RG_OVERLAY_SWAP_PAD;
+}
+
+bool rg_overlay_get_swap(void)
+{
+    return swap_yx;
+}
+
+/* ── 备用（调换后）那套掩码：延迟构建（见 rg_overlay_init 末尾的说明）─────────
+ * 内容与"基础那套"一一对应，只是每个受影响的单元换成同一个位置的另一个键
+ * （含它的标签与配色）。构建代价约占整个建层的 1/3（真机 314ms 里约 99ms），
+ * 所以推到第一次真正需要时再做。只建 X/Y/L/R 四个键 + 那颗切换按钮：
+ * 调换集合在这几个位置上闭合，"另一套"必然还是这套键。 */
+static void rg_overlay_build_variants(void)
+{
+    for (size_t i = 0; i < btn_count; ++i)
+    {
+        const rg_key_t k = btns[i].key;
+        if (k != RG_KEY_X && k != RG_KEY_Y && k != RG_KEY_L && k != RG_KEY_R)
+            continue;
+        const rg_key_t alt = rg_touch_swap_key(k);
+        rg_overlay_btn_t tmp = btns[i];
+        tmp.key = alt;
+        tmp.mask = NULL;
+        build_button(&tmp, overlay_key_color(alt), NULL);
+        btns[i].key_alt = alt;
+        btns[i].mask_alt = tmp.mask;
+        memcpy(btns[i].pal_alt, tmp.pal, sizeof(tmp.pal));
+        memcpy(btns[i].pal_p_alt, tmp.pal_p, sizeof(tmp.pal_p));
+    }
+    {
+        /* 这颗按钮的颜色/调色板两套相同（恒为琥珀），变的只有标签 → 只留备用掩码 */
+        rg_overlay_btn_t tmp = swap_btn;
+        tmp.mask = NULL;
+        build_button(&tmp, c565(0xE8, 0xA2, 0x2C), swap_yx ? "X/Y" : "L/R");
+        swap_btn.mask_alt = tmp.mask;
+    }
+    {
+        /* 备用的那一套必须真的建出来了 —— 少了它"点一下"只会改配色、标签不动。
+         * 一行日志是这条链路上最便宜的体检（点一下之前就能在串口上看到）。 */
+        int alt_count = 0;
+        for (size_t i = 0; i < btn_count; ++i)
+            if (btns[i].mask_alt)
+                alt_count++;
+        RG_LOGI("touch overlay: swap variants built: %d/4 key alts, switch btn alt=%d\n",
+                alt_count, swap_btn.mask_alt != NULL);
+    }
+}
+
+/* 第一次真正需要"另一套"时构建它（幂等，只建一次）。
+ * 唯一调用点：rg_overlay_set_swap（输入线程）—— 全局只有它消费备用那套掩码
+ * （rg_input.c 点那颗按钮 → set_swap）。**故意不挂到合成路径上**：挂在"第一帧合成"
+ * 上只是把这 99ms 从建层挪到首帧，用户看到的开机时间一点没少；现在是首帧先出去、
+ * 备用那套等玩家第一次点调换键时再建（那一下就慢约 99ms，一次性，之后都是对换指针）。
+ * 也因此不需要锁：只有一个调用点。 */
+static void rg_overlay_ensure_variants(void)
+{
+    if (!variants_pending)
+        return;
+    variants_pending = false;
+    rg_overlay_build_variants();
+}
+
+/* 把当前生效的一套与备用的一套对换（X/Y/L/R 四个键 + 那颗切换按钮）。
+ * 只做 key/掩码/调色板的对换 —— **不分配、不释放**：
+ *   - 输入任务里直接调用也安全（显示线程不会读到正被释放的掩码），
+ *     代价只是"正在画的那一帧可能拿到旧一套"，下一帧就对；
+ *   - 不需要等下一帧重建，所以点一下画面立刻变（真机反馈"要切界面才生效"的另一半原因）。
+ * 切换窗口内的调色板对换是逐项赋值，理论上存在"一帧颜色串色"的窗口 ——
+ * 与模块既有的 update_acov() 同类（那也是在跑动中改共享状态），可接受。 */
+static void apply_swap_variants(void)
+{
+    if (!ready || !btns)
+        return;
+    for (size_t i = 0; i < btn_count; ++i)
+    {
+        rg_overlay_btn_t *b = &btns[i];
+        if (!b->mask_alt)               /* 不受调换影响 */
+            continue;
+        uint8_t *m = b->mask;       b->mask = b->mask_alt;      b->mask_alt = m;
+        rg_key_t k = b->key;        b->key = b->key_alt;        b->key_alt = k;
+        for (int r = 0; r < 4; ++r)
+        {
+            uint16_t c = b->pal[r];     b->pal[r] = b->pal_alt[r];     b->pal_alt[r] = c;
+            uint16_t p = b->pal_p[r];   b->pal_p[r] = b->pal_p_alt[r]; b->pal_p_alt[r] = p;
+        }
+        dirty_units |= (1u << i);   /* 只有这几个单元的外观变了 —— 只重画它们 */
+    }
+    if (swap_btn.mask_alt)
+    {
+        uint8_t *m = swap_btn.mask;
+        swap_btn.mask = swap_btn.mask_alt;
+        swap_btn.mask_alt = m;
+        dirty_swap_btn = true;
+    }
+    swap_generation++;
+}
+
+void rg_overlay_set_swap(bool on)
+{
+    if (swap_yx == on)
+        return;
+    swap_yx = on;
+    swap_flash_ms = (uint32_t)(rg_system_timer() / 1000);   /* 点一下亮一次 */
+    rg_overlay_ensure_variants();   /* 延迟构建：万一开机后第一次合成还没跑到就先点了它 */
+    apply_swap_variants();     /* 立刻生效（只对换，无分配）；它自己标记"哪几个单元要重画" */
+    rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
+    pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
+    /* 让画面立刻跟上：标记"哪几个单元的外观变了"，由显示线程在推帧时消费
+     * （见 rg_overlay_take_dirty_rects 的说明）。⚠ 绝不要在这里直接调
+     * rg_display_force_redraw() —— 它会 dispatch RG_EVENT_REDRAW，启动器的
+     * event_handler 收到就 gui_redraw()，于是在**输入任务的上下文里重画整个界面**，
+     * 和启动器自己的循环抢同一块 surface（真机 2026-09-29：列表里点击会短暂花屏）。 */
+    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u)\n",
+            on, (unsigned)swap_generation);
+}
+
+uint32_t rg_overlay_get_generation(void)
+{
+    return swap_generation;
+}
+
 void rg_overlay_debug_set_pressed(uint32_t mask)
 {
     debug_mask = mask;
 }
 
-/* 按下状态：真实按下 + 短暂保持（快速点按也能看到一次反馈） */
+/* ── "控制条带上哪些单元需要整块重画"：见文件上方 dirty_* 的声明 ── */
 static void poll_pressed(void)
 {
     uint32_t now = (uint32_t)(rg_system_timer() / 1000);
     uint32_t mask = rg_input_get_pressed_mask() | debug_mask;
 
+    /* 按下状态 = 真实按下 + 短暂保持（快速点按也能看到一次反馈） */
     visual_mask = mask;
     for (size_t i = 0; i < btn_count; ++i)
     {
@@ -581,6 +862,74 @@ static void poll_pressed(void)
         if ((uint32_t)(now - last_press_ms[i]) < RG_OVERLAY_PRESS_LINGER_MS)
             visual_mask |= k;
     }
+
+    /* 高亮位变了（按下/松手/linger 结束）→ 记下"哪些单元需要整块重画"。
+     * 谁用：显示层推帧循环到不了控制条带的场合（游戏里），见 rg_overlay_take_dirty_rects。 */
+    if (visual_mask != dirty_last_visual)
+    {
+        const uint32_t changed = visual_mask ^ dirty_last_visual;
+        for (size_t i = 0; i < btn_count; ++i)
+            if (changed & btns[i].key)
+                dirty_units |= (1u << i);
+        dirty_last_visual = visual_mask;
+    }
+
+    /* ── 触摸抖动观测（只统计，不改行为；先量再决定要不要加滤波）───────────────
+     * 判据：手指稳定按住时高亮位只应有"按下 / 松手"两次跳变；若在 30ms 内反复跳，
+     * 就是命中抖动（手指压在两个键的边界上，判定来回切）。正常点按因为 linger
+     * 机制至少隔 RG_OVERLAY_PRESS_LINGER_MS，不会误报。
+     * 只在"连续多次快跳"时打一行 DEBUG，避免刷屏；burst 每到 5 就清一次，
+     * 所以持续抖动会每 5 次跳变留一行，正好能数出抖动频率。 */
+    if (visual_mask != dirty_last_visual_before)
+    {
+        static uint32_t jitter_last_ms = 0;
+        static int jitter_burst = 0;
+        const uint32_t gap = now - jitter_last_ms;
+        if (jitter_last_ms != 0 && gap < 30)
+        {
+            if (++jitter_burst >= 5)
+            {
+                RG_LOGD("touch: jitter burst (%d transitions, last gap %u ms)\n",
+                        jitter_burst, (unsigned)gap);
+                jitter_burst = 0;
+            }
+        }
+        else if (jitter_burst)
+            jitter_burst = 0;
+        jitter_last_ms = now ? now : 1;
+    }
+    dirty_last_visual_before = visual_mask;
+}
+
+int rg_overlay_take_dirty_rects(int *out_xywh, int max)
+{
+    if (!out_xywh || max <= 0)
+        return 0;
+
+    int n = 0;
+    for (size_t i = 0; i < btn_count && n < max; ++i)
+    {
+        if (!(dirty_units & (1u << i)) && !dirty_all_units)
+            continue;
+        out_xywh[n * 4 + 0] = btns[i].x;
+        out_xywh[n * 4 + 1] = btns[i].y;
+        out_xywh[n * 4 + 2] = btns[i].w;
+        out_xywh[n * 4 + 3] = btns[i].h;
+        n++;
+    }
+    if (swap_btn_ready && n < max && (dirty_swap_btn || dirty_all_units))
+    {
+        out_xywh[n * 4 + 0] = swap_btn.x;
+        out_xywh[n * 4 + 1] = swap_btn.y;
+        out_xywh[n * 4 + 2] = swap_btn.w;
+        out_xywh[n * 4 + 3] = swap_btn.h;
+        n++;
+    }
+
+    dirty_units = 0;
+    dirty_swap_btn = false;
+    dirty_all_units = false;
+    return n;
 }
 
 /* ---------------------------------------------------------------- 合成 */
@@ -613,7 +962,7 @@ static inline void blend_px(uint16_t *dst, uint16_t src, int a)
 /* 单个按键的合成（两种朝向共用一份）。cw90=1 时按 tab5 物理朝向换算索引：
  * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)。早退条件由调用方保证。 */
 static void blit_one(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
-                     const rg_overlay_btn_t *b, bool cw90)
+                     const rg_overlay_btn_t *b, bool cw90, bool force_press)
 {
     if (!b->mask)
         return;   /* init 时分配失败的按键：跳过，别解引用空指针 */
@@ -633,7 +982,9 @@ static void blit_one(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
     if (ix0 >= ix1 || iy0 >= iy1)
         return;
 
-    const bool pr = b->key && (visual_mask & b->key) != 0;
+    /* force_press：给"没有游戏键位"的自绘按钮用（L/R 之间那颗调换按钮 key=0，
+     * 靠 visual_mask 永远匹配不上，按下反馈由调用方传进来）。 */
+    const bool pr = force_press || (b->key && (visual_mask & b->key) != 0);
     const uint8_t (*ac)[17] = pr ? acov_p : acov;
     const uint16_t *pal = pr ? b->pal_p : b->pal;
 
@@ -742,6 +1093,28 @@ static void blit_toggle(uint16_t *buf, int stride, int rx, int ry, int rw, int r
     }
 }
 
+/* L/R 之间那颗「X/Y ↔ L/R 调换」按钮的合成。
+ * 它不是游戏键（key=0），按下反馈不来自 visual_mask 而是来自"刚点过"的时间戳
+ * （点一下亮一次 = 告诉用户"点到了，换过来了"）。隐藏态不画：整排按键都没了，
+ * 单独留一颗 UI 按钮反而奇怪（恢复入口是左上角那颗开关）。 */
+static void blit_swap_btn(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
+                          bool cw90)
+{
+    if (!swap_btn_ready)
+        return;
+    const uint32_t now = (uint32_t)(rg_system_timer() / 1000);
+    const bool flash = (uint32_t)(now - swap_flash_ms) < RG_OVERLAY_PRESS_LINGER_MS;
+    /* 闪一下是这颗按钮自己的外观变化（它不是游戏键，不会进 visual_mask）：
+     * 记下闪的起止，让显示层把条带上的它重画一遍（游戏里推帧到不了条带）。 */
+    static bool flash_last = false;
+    if (flash != flash_last)
+    {
+        dirty_swap_btn = true;
+        flash_last = flash;
+    }
+    blit_one(buf, stride, rx, ry, rw, rh, phys_w, &swap_btn, cw90, flash);
+}
+
 void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
 {
     if (!buf || rw <= 0 || rh <= 0)
@@ -759,7 +1132,9 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
     }
 
     for (size_t i = 0; i < btn_count; ++i)
-        blit_one(buf, stride, rx, ry, rw, rh, 0, &btns[i], false);
+        blit_one(buf, stride, rx, ry, rw, rh, 0, &btns[i], false, false);
+
+    blit_swap_btn(buf, stride, rx, ry, rw, rh, 0, false);
 }
 
 /* ---------------------------------------------------------------- 屏幕上的显示帧率数字
@@ -771,8 +1146,8 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
  * 实现：复用本模块已加载的 8x8 点阵**逐像素直绘**，不走按键掩码 —— 数字每秒都在变，
  *       为它反复重建掩码没意义；面积仅 3 位 × scale4 = 96×32 = 3072 px，代价可忽略。
  * 颜色：纯白 + 黑色投影（先投影、后正文），任何游戏画面上都看得清。 */
-#define RG_FPS_TEXT_CX 640      /* 逻辑坐标：L 与 R 正中 */
-#define RG_FPS_TEXT_CY 60
+#define RG_FPS_TEXT_CX 360      /* 逻辑坐标：控制区顶部正中（L(50~230) 与 R(490~670) 肩键之间的空白带）*/
+#define RG_FPS_TEXT_CY 500      /* ⚠ 竖屏口径：y<480 是游戏画面，数字只能落在控制区（走查 P2-11） */
 #define RG_FPS_SCALE   4
 
 static int fps_value = -1;
@@ -805,10 +1180,14 @@ static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int
                           int lx0, int ly0, const uint16_t color)
 {
     const int n = (int)strlen(fps_text);
-    const int px0 = phys_w - ly0 - 8 * RG_FPS_SCALE;   /* 逻辑 y 反向对应物理 x */
-    const int px1 = phys_w - ly0;
-    const int py0 = lx0;                               /* 逻辑 x 正向对应物理 y */
-    const int py1 = lx0 + n * 8 * RG_FPS_SCALE;
+    (void)phys_w;   /* 竖屏线性映射下不再需要物理宽度换算（见下） */
+    /* ⚠ 竖屏线性映射：逻辑 (lx,ly) == 物理 (px,py)。
+     * 老代码这里是 cw90 的反向换算（px = phys_w - ly0 - ...）—— 那是横屏时代的写法，
+     * 竖屏下启用帧率数字会把它画到完全错误的位置（走查 P2-11，已按线性改写）。 */
+    const int px0 = lx0;
+    const int px1 = lx0 + n * 8 * RG_FPS_SCALE;
+    const int py0 = ly0;
+    const int py1 = ly0 + 8 * RG_FPS_SCALE;
 
     const int cx0 = imax(px0, rx), cx1 = imin(px1, rx + rw);
     const int cy0 = imax(py0, ry), cy1 = imin(py1, ry + rh);
@@ -817,16 +1196,16 @@ static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
     for (int py = cy0; py < cy1; ++py)
     {
-        const int gx = (py - py0) / RG_FPS_SCALE;      /* 逻辑 x -> 字形列 */
-        const int ch = gx >> 3, col = gx & 7;
-        if (ch >= n)
+        const int gy = (py - py0) / RG_FPS_SCALE;      /* 逻辑 y -> 字形行 */
+        if (gy < 0 || gy > 7)
             continue;
-        const uint8_t *gl = glyphs[(uint8_t)fps_text[ch]];
         for (int px = cx0; px < cx1; ++px)
         {
-            const int gy = (phys_w - 1 - px - ly0) / RG_FPS_SCALE;   /* 逻辑 y -> 字形行 */
-            if (gy < 0 || gy > 7)
+            const int gx = (px - px0) / RG_FPS_SCALE;  /* 逻辑 x -> 字形列 */
+            const int ch = gx >> 3, col = gx & 7;
+            if (ch >= n)
                 continue;
+            const uint8_t *gl = glyphs[(uint8_t)fps_text[ch]];
             if (gl[gy] & (0x80 >> col))                /* 字模 MSB = 最左列 */
                 buf[(size_t)(py - ry) * stride + (px - rx)] = color;
         }
@@ -859,8 +1238,12 @@ static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
  *       颜色不新造，直接复用调色板里已有的三个色（见 batt_led_color 注释）。
  * 闪烁：只灭内芯、外圈压暗保留（26%）—— 像一盏没点亮的指示灯，不会整块凭空消失又冒出来。
  * 亮度：跟随叠加层透明度档位（α 调到 20% 时灯一起暗下去，整屏一致）。
- * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪；充电中 → 绿闪（优先级最高）。
- * 相位：500ms 亮 / 500ms 暗（由 rg_system_timer 决定，无状态、免定时器）。
+ * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪（**硬闪**，告警要抓眼）。
+ * 充电中 → 绿**呼吸**（优先级最高；4 档亮度 255/196/148/196、每档 340ms，整周期 ≈1.4s）。
+ *   v0.4.1 起改的：原来充电也是硬闪，但 INA226 分流采样会抖，叠加硬闪显得不自然。
+ * 相位：由 rg_system_timer 决定，无状态、免定时器。
+ *   · 低电告警：500ms 亮 / 500ms 暗（硬闪）
+ *   · 充电呼吸：走 bright 亮度系数（见 batt_led_state 的说明）
  * 背景：控制区这块没有任何内容 → 直写时先擦黑再画（不擦会新旧叠加，同帧率数字的教训）。
  * 边缘：2x2 子采样求覆盖率（外圈/内芯各一次），背景是黑 → 按覆盖率压暗即向背景混合。
  *
@@ -890,13 +1273,16 @@ static uint16_t batt_led_color(int idx)
     }
 }
 
-/* 返回要保留的色相（1 绿 / 2 橙 / 3 红；0 = 无电池，不画），*lit = 这一相位亮不亮。
- * 闪烁相位只降"亮度"不动色相，所以 "灭" 时外圈仍是同一个色。 */
-static int batt_led_state(bool *lit)
+/* 返回要保留的色相（1 绿 / 2 橙 / 3 红；0 = 无电池，不画）。
+ * *lit = 这一相位亮不亮（硬闪，仅用于低电告警）；*bright = 0~255 亮度系数
+ * （充电态用它做**柔和呼吸**：4 档/340ms → 整周期 ≈1.4s，最暗只降到 148/255。
+ *  用户 2026-09-29 反馈 1Hz 硬闪"闪了但不是很自然"，故充电改为呼吸、告警保留硬闪）。 */
+static int batt_led_state(bool *lit, int *bright)
 {
     const rg_battery_t b = rg_input_read_battery();
 
     *lit = true;
+    *bright = 255;
     if (!b.present)
         return 0;                              /* 没装电池 / 读不到 → 不显示（不是红色告警） */
 
@@ -905,9 +1291,11 @@ static int batt_led_state(bool *lit)
 
     if (b.charging)
     {
-        idx = 1; blink = true;                 /* 充电中：绿闪（压过一切电量颜色） */
+        static const int breath[4] = {255, 196, 148, 196};   /* 亮→暗→亮，来回是正弦的味道 */
+        *bright = breath[(int)((rg_system_timer() / 340000) & 3)];
+        return 1;                              /* 充电中：绿 + 呼吸（压过一切电量颜色） */
     }
-    else if (b.level < 10.f) { idx = 3; blink = true; }   /* <10%：红闪 */
+    else if (b.level < 10.f) { idx = 3; blink = true; }   /* <10%：红闪（故意保持硬闪，告警要抓眼） */
     else if (b.level < 20.f) { idx = 3; }
     else if (b.level < 60.f) { idx = 2; }
     else                     { idx = 1; }
@@ -921,7 +1309,9 @@ bool rg_batt_led_refresh_needed(void)
 {
     static int last = -1;
     bool lit = true;
-    const int code = batt_led_state(&lit) * 2 + (lit ? 1 : 0);   /* 色相+亮灭一起编码 */
+    int bright = 255;
+    /* 色相 + 亮灭 + 呼吸档位一起编码（档位取 >>5 得 8 级，够区分我们的 4 档） */
+    const int code = batt_led_state(&lit, &bright) * 8192 + (lit ? 4096 : 0) + (bright >> 5);
     if (code == last)
         return false;
     last = code;
@@ -940,9 +1330,15 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
 {
     if (!buf || stride <= 0)
         return;
+    /* 契约（走查 P2-15）：buf 是**整屏**帧缓冲（竖屏线性映射下逻辑与物理同向），
+     * stride = 一行像素数。本函数只写 [RG_BATT_LED_BAND_Y0, RG_BATT_LED_BAND_Y1) 条带内的
+     * 像素，且是**直接覆盖**（那一条带背景纯黑，不需要混合）。
+     * 调用方（显示驱动 tab5_batt_led_refresh）负责：① 先把条带擦成背景
+     * ② 画完后对条带做 C2M cache 写回（CPU 写、DMA 读，方向不能反）。 */
 
     bool lit = true;
-    const int idx = batt_led_state(&lit);
+    int bright = 255;
+    const int idx = batt_led_state(&lit, &bright);
     if (!idx)
         return;                                /* 无电池：条带已被驱动擦成背景，这里什么都不画 */
 
@@ -980,15 +1376,18 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
                 }
             if (!cov_out)
                 continue;
-            /* 圈与芯同源（芯 = 键色*0.55）→ 合成一次缩放：分子 = Σ α*覆盖率*色深% */
-            const int num = a_ring * (cov_out - cov_in) * ring_pct + a_fill * cov_in * fill_pct;
+            /* 圈与芯同源（芯 = 键色*0.55）→ 合成一次缩放：分子 = Σ α*覆盖率*色深%
+             * 再乘充电呼吸的亮度系数 bright/255（硬闪时 bright=255，行为与以前一致）。 */
+            const int num = (a_ring * (cov_out - cov_in) * ring_pct + a_fill * cov_in * fill_pct) * bright / 255;
             row[lx] = c565_scale(base, num, 4 * 255 * 100);
         }
     }
 }
 
-/* tab5 专用：面板是原生竖屏，逻辑画面按 90°CW 写进物理帧缓冲。
- * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)，与显示驱动的映射必须完全一致。
+/* tab5 专用（**横屏版驱动专用**；竖屏线性分支不再调用它 —— 那份走下面的
+ * rg_overlay_blit_linear()）：
+ * 逻辑画面按 90°CW 写进物理帧缓冲，逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)。
+ * 与横屏驱动 mipi_dsi_tab5.h 的映射必须完全一致。
  * 这里不做第二份旋转位图，只在索引上换算 —— 一份数据、两种朝向。 */
 void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
 {
@@ -1008,8 +1407,9 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
     }
 
     for (size_t i = 0; i < btn_count; ++i)
-        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], true);
+        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], true, false);
 
+    blit_swap_btn(buf, stride, rx, ry, rw, rh, phys_w, true);
     blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }
 
@@ -1033,8 +1433,9 @@ void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, i
     }
 
     for (size_t i = 0; i < btn_count; ++i)
-        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], false);
+        blit_one(buf, stride, rx, ry, rw, rh, phys_w, &btns[i], false, false);
 
+    blit_swap_btn(buf, stride, rx, ry, rw, rh, phys_w, false);
     blit_fps(buf, stride, rx, ry, rw, rh, phys_w);
 }
 

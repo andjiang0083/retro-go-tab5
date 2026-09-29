@@ -1,5 +1,8 @@
 #include "rg_system.h"
 #include "rg_display.h"
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+#include "rg_touch_overlay.h"   /* 叠加层改内容后请求"整屏重推"（见 write_update） */
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -128,6 +131,67 @@ static inline void write_update(const rg_surface_t *update)
         draw_height += draw_top * 2;
         draw_top = 0;
     }
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 触摸覆盖层（虚拟按键）里"外观变了的单元" → 交给**该画它的那条路**。
+     *
+     * 两种情形分开处理，判据是"本帧推送覆盖得到它吗"：
+     *   · 覆盖得到（菜单：视口==整屏）→ 清零这些行的校验和，让本帧推送把它带上去
+     *     （行校验和过滤会跳过源缓冲没变的行，而叠加层不在源缓冲里，不置脏就推不动）；
+     *   · 覆盖不到（游戏：视口只有 720x480，控制条带在 y>=480 的黑边上，推帧循环根本
+     *     遍历不到那些行）→ 在这里**重建那块条带的背景**（边框图或纯黑）再走一次正常
+     *     发送路径 —— 驱动发送前会把叠加层合成上去，所以按压高亮/新标签一起出来。
+     *
+     * 这就是真机"点了不变、只有进出游戏才变"的根因和解法（进出游戏会触发整屏重画）。
+     * 一句话：推帧循环到不了的地方，得有人负责画它。
+     * ⚠ 全都在显示线程里做（本函数）。绝不要挪到输入任务去调 rg_display_force_redraw()：
+     *   它会派发 RG_EVENT_REDRAW，启动器的 event_handler 收到就 gui_redraw() ——
+     *   等于在输入任务里重画界面，两个线程抢同一块 surface（真机花屏，2026-09-29）。 */
+    {
+        int rects[RG_OVERLAY_DIRTY_MAX * 4];
+        const int dirty_count = rg_overlay_take_dirty_rects(rects, RG_OVERLAY_DIRTY_MAX);
+        bool any_outside = false;
+        if (dirty_count)
+            RG_LOGD("overlay dirty: %d rects, viewport %d,%d %dx%d\n",
+                    dirty_count, draw_left, draw_top, draw_width, draw_height);
+        for (int i = 0; i < dirty_count; ++i)
+        {
+            const int rx = rects[i * 4 + 0], ry = rects[i * 4 + 1];
+            const int rw = rects[i * 4 + 2], rh = rects[i * 4 + 3];
+            if (rx >= draw_left && ry >= draw_top &&
+                rx + rw <= draw_left + draw_width && ry + rh <= draw_top + draw_height)
+                continue;   /* 本帧推送会覆盖它 */
+            any_outside = true;
+            if (border)
+            {
+                /* 背景是边框图：把该矩形从边框图里搬过来（沿用 load_border_file 的画法） */
+                const uint8_t *src = (const uint8_t *)border->data +
+                                     (size_t)ry * border->stride + (size_t)rx * 2;
+                rg_display_write_rect(rx, ry, rw, rh, border->stride, (const uint16_t *)src,
+                                      RG_DISPLAY_WRITE_NOSYNC);
+            }
+            else
+            {
+                /* 背景是纯黑（视口外的填充色，见 rg_display_clear_except） */
+                rg_display_clear_rect(rx, ry, rw, rh, C_BLACK);
+            }
+        }
+        /* 全都在推送范围内 → 本帧的推送就会把它们画对（但要绕过行校验和过滤）。
+         * 只置脏**这几块矩形覆盖的行**，不用整屏 —— 条带之外的行没变，重推是白推
+         * （整屏重推在菜单里约 53ms，只置脏这几块降到 ~1/3）。 */
+        if (dirty_count && !any_outside)
+        {
+            for (int i = 0; i < dirty_count; ++i)
+            {
+                const int ry = rects[i * 4 + 1], rh = rects[i * 4 + 3];
+                const int top = RG_MAX(0, RG_MIN(ry, RG_SCREEN_HEIGHT - 1));
+                const int lines = RG_MAX(0, RG_MIN(rh, RG_SCREEN_HEIGHT - top));
+                if (lines)
+                    memset(&screen_line_checksum[top], 0, (size_t)lines * sizeof(uint32_t));
+            }
+        }
+    }
+#endif
 
     const int format = update->format;
     const int stride = update->stride;

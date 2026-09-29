@@ -101,21 +101,12 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
         # Use "vfs" label, same as MicroPython, in case the storage is to be shared with a MicroPython install
         table_csv.append("vfs, data, fat, %d, %s" % (len(image_data), fatsize))
 
-    # 内置 CJK 点阵字库：单独一个只读分区，各 app 用 esp_partition_mmap 直接读。
-    # 为什么不放 SD 卡 / 不塞进每个 app：
-    #   * 不塞 app —— 13 个模拟器各带一份就是 1.3MB 浪费，而且 app 分区只有 960KB/1MB，塞不下；
-    #   * 不放 SD 卡 —— 用户要手动拷文件，换卡/拔卡还会丢（用户原话："便捷至上"）；
-    #   * 单独分区 + mmap —— 一份共享、零加载时间（不走 PSRAM 拷贝）、不占 app 空间。
-    font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cjk12.bin")
-    if os.path.exists(font_path):
-        with open(font_path, "rb") as f:
-            font_data = f.read()
-        font_size = math.ceil(len(font_data) / 0x10000) * 0x10000
-        table_csv.append("cjkfont, data, 0x40, %d, %d" % (len(image_data), font_size))
-        image_data += font_data + b"\xFF" * (font_size - len(font_data))
-        print("Embedded CJK font: %d bytes at 0x%x (partition %d bytes)" % (len(font_data), len(image_data) - font_size, font_size))
-    else:
-        print("WARNING: %s not found, building WITHOUT CJK font" % font_path)
+    # 内置 CJK 点阵字库现在**编进每个 app 镜像**（components/retro-go/CMakeLists.txt 的
+    # target_add_binary_data → rg_cjk.c 里的 _binary_cjk12_bin_start/_end），不再单独建
+    # cjkfont 分区。原因见 rg_cjk.c 顶部注释：M5Launcher 这类启动器只装一个 app、并且会
+    # 重建数据分区，按名字找 flash 分区在那条路径上必然拿不到字体。
+    # 代价是 launcher 与 gbsp 各带一份 103KB —— 分区容量不用手改：下面已经按
+    # max(PROJECT_APPS[app][2], ceil(len(data)/0x10000)*0x10000) 自动扩容。
 
     print("Generating partition table...")
     with open("partitions.csv", "w") as f:
@@ -161,7 +152,7 @@ def clean_app(app):
     print("Done.\n")
 
 
-def build_app(app, device_type, with_profiling=False, no_networking=False, is_release=False):
+def build_app(app, device_type, with_profiling=False, no_networking=False, is_release=False, single_app=False):
     # To do: clean up if any of the flags changed since last build
     print("Building app '%s'" % app)
     args = [IDF_PY, "app"]
@@ -171,6 +162,9 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     args.append(f"-DRG_BUILD_RELEASE={1 if is_release else 0}")
     args.append(f"-DRG_ENABLE_PROFILING={1 if with_profiling else 0}")
     args.append(f"-DRG_ENABLE_NETWORKING={0 if no_networking else 1}")
+    # ⚠ 必须每次都显式传 0/1：CMake 缓存变量是"粘"的，上一次留在 build 目录里的 1 会影响后续
+    # 所有构建（症状：双 app 构建里混进单 app 的产物、体积对不上）。
+    args.append(f"-DRG_SINGLE_APP={1 if single_app else 0}")
     with open("partitions.csv", "w") as f:
         f.write("# This table isn't used, it's just needed to avoid esp-idf build failures.\n")
         f.write("dummy, app, ota_0, 65536, 3145728\n")
@@ -223,6 +217,10 @@ parser.add_argument(
     "--no-networking", action="store_const", const=True, help="Build without networking support"
 )
 parser.add_argument(
+    "--single-app", action="store_const", const=True,
+    help="把菜单与核心编成单个 app 镜像（供 M5Launcher 这类只装一个 app 的启动器使用）"
+)
+parser.add_argument(
     "--port", default=DEFAULT_PORT, help="Serial port to use for flash and monitor"
 )
 parser.add_argument(
@@ -252,6 +250,11 @@ else:
     apps = [app for app in PROJECT_APPS.keys() if app in args.apps]
 
 try:
+    if args.single_app and ("all" in args.apps or len(apps) > 1):
+        # 单 app 形态下核心被编进 launcher 本身，再多编一个独立 app 没有意义（也没有分区放）
+        print("\nWARNING: --single-app 只产出 launcher 这一个 app，其余已忽略！\n")
+        apps = ["launcher"]
+
     if command in ["build-fw", "build-img", "release", "install"] and "launcher" not in apps:
         print("\nWARNING: The launcher is mandatory for those apps and will be included!\n")
         apps.insert(0, "launcher")
@@ -264,7 +267,7 @@ try:
     if command in ["build", "build-fw", "build-img", "release", "run", "profile", "install"]:
         print("=== Step: Building ===\n")
         for app in apps:
-            build_app(app, args.target, command == "profile", args.no_networking, command == "release")
+            build_app(app, args.target, command == "profile", args.no_networking, command == "release", args.single_app)
 
     if command in ["build-fw", "release"]:
         print("=== Step: Packing ===\n")
@@ -276,13 +279,15 @@ try:
 
     if command in ["build-img", "release", "install"]:
         print("=== Step: Packing ===\n")
-        img_file = ("%s_%s_%s.img" % (PROJECT_NAME, PROJECT_VER, args.target)).lower()
+        img_file = ("%s_%s_%s%s.img" % (PROJECT_NAME, PROJECT_VER, args.target,
+                    "-single" if args.single_app else "")).lower()
         build_image(img_file, apps, IDF_TARGET, args.fatsize)
 
     if command in ["install"]:
         print("=== Step: Flashing entire image to device ===\n")
         # Should probably show a warning here and ask for confirmation...
-        img_file = ("%s_%s_%s.img" % (PROJECT_NAME, PROJECT_VER, args.target)).lower()
+        img_file = ("%s_%s_%s%s.img" % (PROJECT_NAME, PROJECT_VER, args.target,
+                    "-single" if args.single_app else "")).lower()
         flash_image(img_file, args.port, args.baud)
 
     if command in ["flash", "run", "profile"]:

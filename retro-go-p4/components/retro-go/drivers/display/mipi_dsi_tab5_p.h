@@ -3,12 +3,18 @@
  * ----------------------------------------------------------------------------
  * 面板原生 = 720x1280 竖屏（真机实测：把 DPI 流切成 1280x720 + MADCTL MV(0x23)
  * 会黑屏 —— 背光亮但面板锁不住信号；M5 两家官方代码也都用竖屏时序 + 上层旋转）。
- * 【竖屏版 tab5p】逻辑画面 = 720x1280 竖屏，与面板原生同向，**无旋转**，顺序读写：
- *     逻辑 (lx, ly)  ->  物理 (px, py) = (719 - ly, lx)
- * 映射方向已用四角锚点图案在真机目视确认（git tag v0.2）。
+ * 【竖屏版 tab5p】逻辑画面 = 720x1280 竖屏，与面板原生同向，**线性 1:1、无旋转**：
+ *     逻辑 (lx, ly)  ->  物理 (px, py) = (lx, ly)
+ * 历史：2026-09-27 之前用的是 (719-ly, lx) 的 90° 映射；改线性后读写全部顺序化
+ * （横屏版逐行转置每 1440B 只碰 64B，实测仅 28MB/s，顺序可达 89MB/s）。
+ * ⚠ 本文件里若还有"90° / 90CW / 转置"字样，都是那次改造的遗留描述，以本行为准。
+ * 四角锚点图案曾在真机目视确认映射方向（git tag v0.2）。
  *
- * 为什么显示驱动自己不做后续放大：P3 的 240x160 -> 3x 放大与旋转，改用 P4 的
- * PPA 硬件 SRM（旋转+缩放一次完成，零 CPU），届时替换这里的推送实现即可。
+ * 为什么显示驱动自己不做放大：游戏画面 240x160 → 3x 由逻辑层/框架的缩放完成，
+ * 驱动只负责把 720x480 的逻辑条带搬进面板帧缓冲。
+ * ⚠ PPA 硬件 SRM（旋转+缩放一次完成）曾是很看好的替代方案，但实测"按块调用"形态下
+ * 比 CPU 交换慢约 25 倍（面板扫描与 PPA 抢同一片 PSRAM），现已无条件禁用；
+ * 判据与结论见 lcd_init 中 ppa_allowed 处的长注释。
  *
  * 关键坑（技能条目）：
  *  - 不要在 lcd_init 里手写 esp_lcd_new_panel_dpi + DBI init 命令：
@@ -35,6 +41,7 @@
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
 #include "rg_touch_overlay.h"    /* 虚拟按键可视层（标签/透明度/按下反馈） */
+#include "tab5_power.h"          /* BSP I2C + IO 扩展器 + 充电使能（两份驱动共用一份）*/
 /* 注意：不要 #include "bsp/m5stack_tab5.h" —— 它的 umbrella 头会拉 lvgl.h
  * （retro-go 不编 LVGL）。需要什么就手写 extern，见下。 */
 
@@ -234,28 +241,13 @@ static void lcd_init(void)
     bsp_display_brightness_init();
     bsp_display_brightness_set(0);
 
-    /* ⚠⚠ 关键一步：Tab5 的 LCD_RST(P4) / TP_RST(P5) 由挂在 I2C 上的 IO 扩展器
-     * PI4IOE5V6416 驱动，而这个初始化 BSP 自己不调用（必须由 app 调，M5 的例程在 app_main 里调）。
-     * 不调它 → 扩展器上电默认输出寄存器全 0 → LCD_RST=0 / TP_RST=0：
-     *   - 触摸 IC(0x55) 在 I2C 上不应答 → bsp_detect_display_type() 探不到屏型
-     *     （日志表现：No known touch controller detected, defaulting to ILI9881C）
-     *   - 面板被按在复位里 → 面板初始化不完成、屏幕全黑（背光也没用）
-     * 扩展器是独立芯片，寄存器状态跨 ESP 复位保留，所以"真断电"后必须由固件重新初始化它。
-     * 必须放在 _to_st7123 之前，否则探测拿不到 ST7123 会走错分支。 */
-    {
-        extern esp_err_t bsp_i2c_init(void);
-        extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
-        extern void bsp_io_expander_pi4ioe_init(i2c_master_bus_handle_t bus_handle);
-        if (bsp_i2c_init() == ESP_OK) {
-            bsp_io_expander_pi4ioe_init(bsp_i2c_get_handle());
-            RG_LOGI("PI4IOE expander init: LCD_RST/TP_RST released\n");
-            /* 复位释放后给触摸 IC 一点时间再探测：否则紧随其后的屏型探测会探不到 ST7123
-             * （BSP 探测只是决定 ST7121/ST7123，探不到会退回 ILI9881C 分支）。 */
-            vTaskDelay(pdMS_TO_TICKS(150));
-        } else {
-            RG_LOGE("bsp_i2c_init failed, expander NOT initialized (panel/touch stay in reset)\n");
-        }
-    }
+    /* ⚠⚠ 关键一步：电源/复位外围（BSP I2C → IO 扩展器 → 充电使能）现在统一收在
+     * tab5_power.h 的 tab5_power_init() 里，**横屏/竖屏两份显示驱动共用同一个实现**
+     * （原先只写在竖屏版里 → 充电使能的修复漏了横屏一份，谁切横屏构建就复发，
+     *  见 docs/CODE-REVIEW-v0.4.1.md P1-1）。
+     * 为什么必须调、为什么顺序不能动：见 tab5_power.h 文件头的完整说明。
+     * 必须放在 _to_st7123 之前，否则屏型探测拿不到 ST7123 会走错分支。 */
+    tab5_power_init();
 
     /* ⚠ 绝对不要用 bsp_display_get_panel_ic() 先做"屏型识别"再选初始化路径！
      * 它内部会 i2c_master_probe 触摸 IC(0x55) 来推断屏型，实测在显示/I2C 尚未就绪时
@@ -307,6 +299,10 @@ static void lcd_init(void)
          * 我们是「一块一次 PPA」—— 每条 25.6 行的带子都单独发一次**阻塞** op，
          * 每秒几十次，每次都有固定开销 + 目的地是"720 行各写 51 字节"的跨行零碎写。
          * 结论：PPA 要用就**整帧一次**用，绝不能按块用。先关掉，别再挡路。 */
+        /* ⚠⚠ 打开这里之前必须先重写下面的 PPA 分支：它仍按**老 90° 映射**写的
+         * （ANGLE_270 + out.block_offset=(x0,y0) + byte_swap），与本文件现在的
+         * **线性 1:1** 映射不兼容 —— 直接置 true 会得到旋转错位的画面（走查 P1-3）。
+         * 另外"按块调用 PPA 比 CPU 交换慢约 25 倍"的实测结论依然成立（见下方长注释）。 */
         bool ppa_allowed = false;
         /* 无论 PPA 开不开都要缓存帧缓冲指针：每秒一次的叠加层刷新（屏幕帧率数字）要直接写它。
          * 原先只在 PPA 分支里赋值，导致 PPA 关着时 tab5_fb 是 NULL，叠加层无处可写。 */
@@ -350,7 +346,7 @@ static void lcd_init(void)
 #endif
 
     lcd_set_backlight(80);
-    RG_LOGI("Tab5 DSI ready (ST7123 path): logical %dx%d -> physical %dx%d (90CW map)\n",
+    RG_LOGI("Tab5 DSI ready (ST7123 path): logical %dx%d -> physical %dx%d (linear 1:1 map)\n",
             RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, TAB5_PHYS_W, TAB5_PHYS_H);
 }
 
@@ -366,12 +362,19 @@ static void lcd_deinit(void)
         bsp_display_brightness_set(0);
         esp_lcd_panel_del(tab5_panel);
         tab5_panel = NULL;
+        /* ⚠ 必须跟着清掉：帧缓冲属于面板，del 之后它已失效，而
+         * tab5_batt_led_refresh() / tab5_perf_report() 只判 tab5_fb != NULL 就往里写
+         * → 应用切换窗口期存在悬空写（走查 P2-5）。 */
+        tab5_fb = NULL;
     }
 }
 
 /* DSI 没有地址窗口寄存器：只记下来，推送时用（坐标是逻辑横向空间的） */
 static void lcd_set_window(int left, int top, int width, int height)
 {
+    /* ⚠ 命中窗口的有效性由调用方保证（框架只会给出屏幕内的窗口）。
+     * 越界这里只告警**不夹取**：夹取会把"框架算错窗口"这种真 bug 掩盖成画歪，
+     * 而告警能在 crash.log/串口里直接看到是谁给的错窗口。 */
     if (left < 0 || top < 0 || width <= 0 || height <= 0 ||
         left + width > RG_SCREEN_WIDTH || top + height > RG_SCREEN_HEIGHT) {
         RG_LOGW("Bad lcd window (x0=%d, y0=%d, w=%d, h=%d)\n", left, top, width, height);
@@ -526,6 +529,115 @@ static void tab5_batt_led_refresh(void)
 }
 #endif
 
+/* ── 竖屏"每帧交给 PPA"生产形态测量（2026-09-29）────────────────────────────
+ * 动机（本机实测）：显示路径的三段开销里，**xpose 占 79%**（launcher 空闲态
+ *   PERF: display=67.06/1023ms [xpose=53.08 ovl=7.56 draw=6.04] rows=30.9）
+ *   → xpose 折算 0.48ms/44KB 块 = **~92MB/s**，正好等于 CPU 顺序读 PSRAM 的实测带宽。
+ *   即瓶颈是"把源像素从 PSRAM 读出来"这件事本身，换字节序的算术几乎不花时间。
+ *   一帧 720x480 = 691KB ⇒ 光读就要 ~7.5ms/帧，16.7ms 预算里占掉一半 ——
+ *   这就是 frameskip 关不掉的第一嫌疑。
+ *
+ * 与 2026-09-25 那次"PPA 比 CPU 慢 25 倍"的区别（那次判定的是别的形态）：
+ *   那次 = **按块 + BLOCKING + 写面板帧缓冲**，每块都在等硬件搬完，且与 DPI 抢带宽；
+ *   这次直接测**真实生产的两种形态**，落点就是面板帧缓冲顶部的游戏区：
+ *     A) 一帧一次：720x480 → fb@(0,0)，旋转 0 / 缩放 1 / 换字节序（"整帧交给 PPA"）
+ *     B) 按块 15 次：720x31 → fb@(0,i*31)（今天的推送粒度，看每次调用的固定开销）
+ *   两者都 BLOCKING —— 与今天的 CPU 路径同样"同步等完"，数字可直接对比。
+ * 判据：A ≤ 3ms/帧 → 架构可行（CPU 侧只剩按键合成）；A ≳ 7ms → 与 CPU 同档，不值得改。
+ * 副作用：测试内容会写进面板帧缓冲顶部（开机闪一下），随后 launcher 重画覆盖。
+ * 默认 0（发行不带这个探针）。 */
+#define TAB5_PPA_PROD_PROBE 0
+
+#if TAB5_PPA_PROD_PROBE
+static void tab5_ppa_prod_probe(void)
+{
+    if (!tab5_fb)
+        return;
+    const int SRC_W = 720, SRC_H = 480;
+    const size_t src_bytes = (size_t)SRC_W * SRC_H * 2;
+    uint16_t *src = heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    if (!src) { RG_LOGW("PPA-PROD: 源缓冲申请失败\n"); return; }
+    for (size_t i = 0; i < src_bytes / 2; ++i)
+        src[i] = (uint16_t)(0x1084 + (i & 0xFF));
+
+    ppa_client_handle_t cli = NULL;
+    ppa_client_config_t ccfg = {
+        .oper_type = PPA_OPERATION_SRM,
+        .max_pending_trans_num = 4,
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+    };
+    if (ppa_register_client(&ccfg, &cli) != ESP_OK || !cli)
+    {
+        RG_LOGW("PPA-PROD: client 注册失败\n");
+        heap_caps_free(src);
+        return;
+    }
+
+    /* A：一帧一次（整帧 720x480 → fb 顶部）*/
+    for (int run = 0; run < 5; ++run)
+    {
+        ppa_srm_oper_config_t op = {0};
+        op.in.buffer = src;
+        op.in.pic_w = SRC_W; op.in.pic_h = SRC_H;
+        op.in.block_w = SRC_W; op.in.block_h = SRC_H;
+        op.in.block_offset_x = 0; op.in.block_offset_y = 0;
+        op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.out.buffer = tab5_fb;
+        op.out.buffer_size = (uint32_t)(TAB5_PHYS_W * TAB5_PHYS_H * 2);
+        op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+        op.out.block_offset_x = 0; op.out.block_offset_y = 0;
+        op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+        op.scale_x = 1.0f; op.scale_y = 1.0f;
+        op.mirror_x = false; op.mirror_y = false;
+        op.rgb_swap = false;
+        op.byte_swap = true;
+        op.mode = PPA_TRANS_MODE_BLOCKING;
+        int64_t t0 = esp_timer_get_time();
+        esp_err_t err = ppa_do_scale_rotate_mirror(cli, &op);
+        int64_t dt = esp_timer_get_time() - t0;
+        const int tenths = dt > 0 ? (int)((src_bytes + src_bytes) * 10 / dt) : 0;
+        RG_LOGI("PPA-PROD A(整帧 %dx%d 阻塞): run#%d = %d us (%d.%d MB/s) err=0x%x\n",
+                SRC_W, SRC_H, run, (int)dt, tenths / 10, tenths % 10, (unsigned)err);
+    }
+
+    /* B：按块 15 次（720x31 → fb 对应行带），模拟今天的推送粒度 */
+    {
+        const int blk_h = 31, nblk = 15;
+        int64_t tot = 0;
+        esp_err_t last = ESP_OK;
+        for (int b = 0; b < nblk; ++b)
+        {
+            ppa_srm_oper_config_t op = {0};
+            op.in.buffer = src;
+            op.in.pic_w = SRC_W; op.in.pic_h = SRC_H;
+            op.in.block_w = SRC_W; op.in.block_h = blk_h;
+            op.in.block_offset_x = 0; op.in.block_offset_y = (uint32_t)(b * blk_h);
+            op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+            op.out.buffer = tab5_fb;
+            op.out.buffer_size = (uint32_t)(TAB5_PHYS_W * TAB5_PHYS_H * 2);
+            op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+            op.out.block_offset_x = 0; op.out.block_offset_y = (uint32_t)(b * blk_h);
+            op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+            op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+            op.scale_x = 1.0f; op.scale_y = 1.0f;
+            op.mirror_x = false; op.mirror_y = false;
+            op.rgb_swap = false;
+            op.byte_swap = true;
+            op.mode = PPA_TRANS_MODE_BLOCKING;
+            int64_t t0 = esp_timer_get_time();
+            last = ppa_do_scale_rotate_mirror(cli, &op);
+            tot += esp_timer_get_time() - t0;
+        }
+        RG_LOGI("PPA-PROD B(按块 %dx%d x%d): 合计 %d us (每块 %d us) err=0x%x\n",
+                SRC_W, blk_h, nblk, (int)tot, (int)(tot / nblk), (unsigned)last);
+    }
+
+    ppa_unregister_client(cli);
+    heap_caps_free(src);
+}
+#endif /* TAB5_PPA_PROD_PROBE */
+
 static void tab5_perf_report(void)
 {
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
@@ -537,12 +649,16 @@ static void tab5_perf_report(void)
      * 即使源与目的都已 128 对齐 —— 说明还有别的原因，且**那个 9.4ms 不能采信**。
      * 2026-09-28 重新启用：输出改自管缓冲 + 补 buffer_size，不再写帧缓冲（无面板冲突）。
      * 本次只判断 err 是否归零 —— 归零即证明 PPA 可用，下一步才谈性能。 */
-#if 1
-    static bool ppa_frame_probe_done = false;
-    if (!ppa_frame_probe_done && tab5_fb)
+    /* 2026-09-29（走查 P2-2）：探针任务已完成（结论 = PPA 可用，但"按块调用"这条路
+     * 已被实测判死），把它关掉 —— 它每次开机会申请约 768KB PSRAM、跑 5 次 PPA op、
+     * 打 6 行日志。要复测时改回 1。 */
+#if TAB5_PPA_PROD_PROBE
+    static bool ppa_prod_probe_done = false;
+    if (!ppa_prod_probe_done && tab5_fb)
     {
-        ppa_frame_probe_done = true;
-        tab5_ppa_frame_probe();
+        ppa_prod_probe_done = true;
+        tab5_ppa_prod_probe();
+        RG_LOGI("PPA-PROD: 探针完成（A=整帧一次 / B=按块 15 次，见上面两行读数）\n");
     }
 #endif
     int64_t now = esp_timer_get_time();
@@ -567,6 +683,11 @@ static void tab5_perf_report(void)
         (unsigned)(tab5_pf_ov_us / 1000), (unsigned)((tab5_pf_ov_us % 1000) / 10),
         (unsigned)(tab5_pf_dr_us / 1000), (unsigned)((tab5_pf_dr_us % 1000) / 10),
         rows_avg10 / 10, rows_avg10 % 10, (unsigned)tab5_pf_rows_max);
+#if RG_OVERLAY_SHOW_FPS
+    /* 2026-09-29（走查 P2-1）：整段只为"屏幕帧率数字"服务，而 RG_OVERLAY_SHOW_FPS=0 时
+     * 那个数字根本不画 —— 于是每秒白做一次「擦 40x112 物理区域 + 整屏叠加层重画 + 161KB
+     * cache 写回」，而且擦除区正好横切 R 肩键一角（随后被同一次重画覆盖，所以看不出瑕疵）。
+     * 包进同一个开关：要看帧率时把 rg_touch_overlay.h 里那个宏改成 1 即可。 */
     /* 每秒把叠加层（屏幕帧率数字）直接合成进面板帧缓冲。
      * 为什么非这样不可：数字只有在"被推送的块正好覆盖它"时才会被重画，而游戏中的脏区
      * 极少覆盖到顶部正中 —— 真机表现就是"数字不刷新，必须点开 menu 才更新"（menu 走整屏推送）。
@@ -591,6 +712,7 @@ static void tab5_perf_report(void)
         const size_t len = (size_t)TAB5_PHYS_W * 2 * 112;
         esp_cache_msync((void *)((uintptr_t)tab5_fb + off), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
+#endif /* RG_OVERLAY_SHOW_FPS */
 
     tab5_pf_tr_us = tab5_pf_sub_us = 0;
     tab5_pf_xp_us = tab5_pf_ov_us = tab5_pf_dr_us = 0;
@@ -615,8 +737,11 @@ static void tab5_perf_flush(const char *app)
         (unsigned long long)(tab5_pf_tot_tr_us / 1000),
         (unsigned long long)(tab5_pf_tot_sub_us / 1000), (unsigned)tab5_pf_tot_blocks);
     fclose(f);
-    RG_LOGI("PERF: session summary written to /sd/perf.log (%llums display / %lldms total)\n",
-        (unsigned long long)disp_ms, (long long)total_ms);
+    /* ⚠ ESP-IDF 的 esp_log **不支持 %llu/%lld**（长度修饰符会被吃掉 → 数字打成垃圾，
+     * 后面还有参数的话会全部错位）。这里是毫秒级整数，先强转 int 再用 %d。
+     * （上面那句 fprintf 是标准 stdio，所以那里用 %llu 是对的 —— 两者别混。） */
+    RG_LOGI("PERF: session summary written to /sd/perf.log (%dms display / %dms total)\n",
+        (int)disp_ms, (int)total_ms);
     tab5_pf_tot_tr_us = tab5_pf_tot_sub_us = 0;
     tab5_pf_tot_blocks = 0;
     tab5_pf_sess_start = 0;
@@ -709,13 +834,24 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
          * 在 98 个尺寸组合上验证为逐字节相同（含 1 行/1 列/非 32 倍数边界）。 */
         /* E3：整块顺序读进片内 SRAM（理由见 tab5_stage 声明处）。
          * 源数据本身连续，所以这是一次纯顺序读；转置随后从 SRAM 读，不再受 PSRAM 行缓冲惩罚。
-         * 块超过 48KB 缓冲则自动退回原分块路径，行为与之前完全一致。 */
+         * 块超过 48KB 缓冲则自动退回原分块路径，行为与之前完全一致。
+         *
+         * 2026-09-29：**竖屏线性化之后这一趟搬运已经没必要了** —— 它当年是为「转置访问」修的
+         * （那时目标下标步长 = rows，一条 cache line 只被用上 2 字节，PSRAM 行缓冲被反复惩罚），
+         * 而现在源块顺序 == 目标顺序，下面的字节序循环就是纯顺序读，直接读 PSRAM 没有行缓冲惩罚，
+         * 反而省掉「PSRAM→SRAM 一趟 + SRAM 再读一趟」的额外访问。
+         * 保留开关做 A/B：1 = 仍旧先搬进 SRAM（旧行为），0 = 直接读源（预期更快）。 */
+#define TAB5_STAGE_COPY 0
+#if TAB5_STAGE_COPY
         const size_t tab5_blk_bytes = (size_t)rows * w * 2;
         const uint16_t *xsrc = buffer;
         if (tab5_blk_bytes <= TAB5_STAGE_BYTES) {
             memcpy(tab5_stage, buffer, tab5_blk_bytes);
             xsrc = tab5_stage;
         }
+#else
+        const uint16_t *xsrc = buffer;
+#endif
         /* 线性版：源块顺序 = 目标顺序，只需字节序转换（源 565 大端 → 面板小端）。
          * 纯顺序读写，无转置、无分块、无步长跳跃。 */
         {
@@ -818,6 +954,8 @@ static void lcd_sync(void)
 
 static void lcd_set_rotation(int rotation)
 {
-    /* 旋转已固定在驱动的映射里（90° CW），此处不额外处理 */
+    /* 本 target 的映射是固定的：逻辑 = 物理（线性 1:1，不旋转、不镜像）。
+     * 旋转由框架在逻辑侧处理，驱动不再额外消耗 —— 真正"固定"的是面板原生方向
+     * （720x1280 竖屏）。要横屏得换另一份驱动（mipi_dsi_tab5.h）。 */
     (void)rotation;
 }

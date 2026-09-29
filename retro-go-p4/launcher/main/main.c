@@ -13,6 +13,7 @@
 #include "bookmarks.h"
 #include "browser.h"
 #include "gui.h"
+#include "rg_touch_overlay.h"   /* 触摸覆盖层内容代际号（调换按钮 → 立刻重画，见 retro_loop） */
 #include "webui.h"
 #include "updater.h"
 
@@ -199,6 +200,12 @@ static void retro_loop(void)
     int change_tab = 0;
     int browse_last = -1;
     bool redraw_pending = true;
+#if RG_TOUCH_OVERLAY
+    /* 触摸覆盖层的"内容代际号"：L/R 中间那颗 X/Y ↔ L/R 调换按钮改的是覆盖层内容，
+     * 不产生任何按键 —— 只靠下面的 joystick 判断，标签要等到下一次界面切换才更新
+     * （真机反馈：点切换后要进出游戏才生效）。这里比一下号，变了就重画一帧。 */
+    uint32_t overlay_gen_seen = rg_overlay_get_generation();
+#endif
 
     gui_init(app->isColdBoot);
     applications_init();
@@ -340,6 +347,18 @@ static void retro_loop(void)
             }
         }
 
+#if RG_TOUCH_OVERLAY
+        /* 覆盖层内容变了（比如刚点了调换按钮）→ 立刻重画。
+         * 只置脏行还不够：菜单重绘走的"行校验和"判定在内容没变时是 no-op，
+         * 得真的走一遍重绘，那几行才会被重推、覆盖层才会被重新合成。 */
+        if (rg_overlay_get_generation() != overlay_gen_seen)
+        {
+            overlay_gen_seen = rg_overlay_get_generation();
+            redraw_pending = true;
+            RG_LOGI("launcher: overlay gen %u -> redraw\n", (unsigned)overlay_gen_seen);
+        }
+#endif
+
         if (redraw_pending)
         {
             redraw_pending = false;
@@ -432,7 +451,9 @@ static void options_handler(rg_gui_option_t *dest)
 static void about_handler(rg_gui_option_t *dest)
 {
     *dest++ = (rg_gui_option_t){0, _("Build CRC cache"), NULL, RG_DIALOG_FLAG_NORMAL, &prebuild_cache_cb};
-    #if defined(RG_ENABLE_NETWORKING) && RG_UPDATER_ENABLE
+    #if defined(RG_ENABLE_NETWORKING) && RG_UPDATER_ENABLE && !defined(RG_SINGLE_APP)
+    // 单 app 形态没有第二个 app 分区给 updater 落新固件，所以这一项不显示（见 rg_system.c 的
+    // update_boot_config）。升级改用 M5Burner / esptool 整包刷。
     *dest++ = (rg_gui_option_t){0, _("Check for updates"), NULL, RG_DIALOG_FLAG_NORMAL, &updater_cb};
     #endif
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
@@ -440,6 +461,19 @@ static void about_handler(rg_gui_option_t *dest)
 
 void app_main(void)
 {
+#if defined(RG_SINGLE_APP)
+    /* ── 单 app 形态的分发 ───────────────────────────────────────────────────────
+     * 菜单与模拟器核心编在同一个 app 里，靠"重启自己 + NVS 待续标志"切换（写标志的是
+     * components/retro-go/rg_system.c 的 update_boot_config；核心入口被改名为 rg_core_main，
+     * 见 launcher/components/gbsp-core）。
+     * ⚠ 必须放在任何 rg_* 初始化之前：核心进去后会自己跑一遍完整的 rg_system_init()，
+     *   那时它会按 NS_BOOT 里的名字取到自己的 configNs 与 romPath（与双 app 形态一致）。
+     * ⚠ 核心永不返回（退出走 rg_system_exit → 清标志 → 重启回本函数），所以下面不会被执行。 */
+    extern void rg_core_main(void);
+    if (rg_system_single_app_take_core_pending())
+        rg_core_main();
+#endif
+
     const rg_handlers_t handlers = {
         .event = &event_handler,
         .options = &options_handler,

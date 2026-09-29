@@ -234,28 +234,13 @@ static void lcd_init(void)
     bsp_display_brightness_init();
     bsp_display_brightness_set(0);
 
-    /* ⚠⚠ 关键一步：Tab5 的 LCD_RST(P4) / TP_RST(P5) 由挂在 I2C 上的 IO 扩展器
-     * PI4IOE5V6416 驱动，而这个初始化 BSP 自己不调用（必须由 app 调，M5 的例程在 app_main 里调）。
-     * 不调它 → 扩展器上电默认输出寄存器全 0 → LCD_RST=0 / TP_RST=0：
-     *   - 触摸 IC(0x55) 在 I2C 上不应答 → bsp_detect_display_type() 探不到屏型
-     *     （日志表现：No known touch controller detected, defaulting to ILI9881C）
-     *   - 面板被按在复位里 → 面板初始化不完成、屏幕全黑（背光也没用）
-     * 扩展器是独立芯片，寄存器状态跨 ESP 复位保留，所以"真断电"后必须由固件重新初始化它。
-     * 必须放在 _to_st7123 之前，否则探测拿不到 ST7123 会走错分支。 */
-    {
-        extern esp_err_t bsp_i2c_init(void);
-        extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
-        extern void bsp_io_expander_pi4ioe_init(i2c_master_bus_handle_t bus_handle);
-        if (bsp_i2c_init() == ESP_OK) {
-            bsp_io_expander_pi4ioe_init(bsp_i2c_get_handle());
-            RG_LOGI("PI4IOE expander init: LCD_RST/TP_RST released\n");
-            /* 复位释放后给触摸 IC 一点时间再探测：否则紧随其后的屏型探测会探不到 ST7123
-             * （BSP 探测只是决定 ST7121/ST7123，探不到会退回 ILI9881C 分支）。 */
-            vTaskDelay(pdMS_TO_TICKS(150));
-        } else {
-            RG_LOGE("bsp_i2c_init failed, expander NOT initialized (panel/touch stay in reset)\n");
-        }
-    }
+    /* ⚠⚠ 关键一步：电源/复位外围（BSP I2C → IO 扩展器 → 充电使能）现在统一收在
+     * tab5_power.h 的 tab5_power_init() 里，**横屏/竖屏两份显示驱动共用同一个实现**
+     * （原先只写在竖屏版里 → 充电使能的修复漏了横屏一份，谁切横屏构建就复发，
+     *  见 docs/CODE-REVIEW-v0.4.1.md P1-1）。
+     * 为什么必须调、为什么顺序不能动：见 tab5_power.h 文件头的完整说明。
+     * 必须放在 _to_st7123 之前，否则屏型探测拿不到 ST7123 会走错分支。 */
+    tab5_power_init();
 
     /* ⚠ 绝对不要用 bsp_display_get_panel_ic() 先做"屏型识别"再选初始化路径！
      * 它内部会 i2c_master_probe 触摸 IC(0x55) 来推断屏型，实测在显示/I2C 尚未就绪时

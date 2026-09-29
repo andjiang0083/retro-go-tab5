@@ -162,6 +162,7 @@ static bool rg_touch_ensure(void) { return false; }
 #endif /* ESP_PLATFORM */
 #endif /* RG_GAMEPAD_TOUCH_MAP */
 static bool input_task_running = false;
+static bool input_task_exited = false;   /* 任务真正退出后置真：deinit 要先等它，见 rg_input_deinit */
 static uint32_t gamepad_state = -1; // _Atomic
 
 /* 当前按下的键（含触摸虚拟键）。可视层用它做"按下高亮"：
@@ -172,6 +173,7 @@ uint32_t rg_input_get_pressed_mask(void)
 }
 static uint32_t gamepad_mapped = 0;
 static rg_battery_t battery_state = {0};
+static int battery_state_prev_charging = -1;   /* 去抖用：上一次"已确认"的充电状态（-1 = 还没初始化） */
 
 #define UPDATE_GLOBAL_MAP(keymap)                 \
     for (size_t i = 0; i < RG_COUNT(keymap); ++i) \
@@ -310,13 +312,16 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
                 (int)(int16_t)shunt, cur_ma, (int)charging);
         ina226_dbg_count++;
     }
-    /* 充电状态一变就打一行 —— 真机插/拔充电器各一次，用这行确认符号约定 */
+    /* 原始采样的跳变各打一行 —— 这行是**未去抖的原始值**，只用于确认符号约定与抖动形态；
+     * 屏上圆灯看的是 input_task 里表决后的结果（那行日志才是"灯为什么这样"的答案）。
+     * ⚠ 别把这行当灯的状态读：实测它会 -871mA 与 +1mA 交替。 */
     {
         static int last_chg = -1;
         int chg = (int)charging;
         if (chg != last_chg)
         {
-            RG_LOGI("INA226-CHG: shunt=%d (%d mA) -> charging=%d\n", (int)(int16_t)shunt, cur_ma, chg);
+            RG_LOGI("INA226-CHG(raw): shunt=%d (%d mA) -> charging=%d (未去抖)\n",
+                    (int)(int16_t)shunt, cur_ma, chg);
             last_chg = chg;
         }
     }
@@ -338,6 +343,100 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
     };
     return true;
 }
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+/* ────────────────────────────────────────────────────────────── 方向键：矢量扇区判定
+ * 2026-09-29（用户拍板，方案见 tools/preview-touch-overlay.py --dpad → docs/dpad-zones.png）：
+ * **十字外观一个字不改**，只把"命中"从 4 个矩形换成矢量扇区。现状的两个先天毛病：
+ *   ① 四个矩形做不出斜向（一指只能压一个矩形）；② 中心有 86px 空洞 —— 手指从上滑到左
+ *   要穿过它，于是"断键"，得抬手重按（这是它不如摇杆顺的主因）。
+ * 规则（与 PC 参考实现同参数，改参数两处一起改）：
+ *   · r < 30px   → 死区，无方向            · r > 135px → 出界，无方向（臂外沿 127 + 8）
+ *   · 夹角落在 30°~60° **且** r ≥ 70px → 斜向（同时按两个方向键）
+ *   · 其余       → 单轴（|dx| 与 |dy| 谁大听谁的）
+ *   · 滞回：已斜向时角度带放宽 5°、半径门槛降到 60px → 手指压在边界不来回跳键
+ * 注：GB/GBC/GBA 硬件本身是数字十字键，核心只吃位掩码 —— 所以这里做的是"数字 8 向"
+ * （斜向 + 不断键 + 判定宽容），不是模拟量。斜向当前**没有开关**（先上真机试手感；
+ * 若某个平台游戏嫌误触，再加一个 Menu 开关，一处宏就能锁死）。
+ * 实现细节：判据全用整数（tan 值放大 1000 倍 + 平方距离），不引 libm、不上浮点；
+ * 几何从 keymap_touch 里算（中心 = 上键与左键的交点），键位表挪了判定跟着走；
+ * 那四个矩形条目**保留**（可视层仍用它们画十字与按下高亮）。 */
+#define RG_DPAD_PAD_R        135    /* 可触半径（臂外沿 127 + 8 余量） */
+#define RG_DPAD_DEAD_R       30     /* 中心死区半径 */
+#define RG_DPAD_DIAG_R       70     /* 斜向还要求推到这么远（贴中心蹭到角不算） */
+#define RG_DPAD_DIAG_R_LEAVE 60     /* 滞回：已斜向时退到这里才掉回单轴 */
+#define RG_DPAD_TAN30_X1000  577    /* tan(30°) */
+#define RG_DPAD_TAN60_X1000  1732   /* tan(60°) */
+#define RG_DPAD_TAN25_X1000  466    /* tan(25°)：滞回后斜区的下边界 */
+#define RG_DPAD_TAN65_X1000  2145   /* tan(65°)：滞回后斜区的上边界 */
+
+static struct { int cx, cy; bool ready; } dpad_geom;
+static bool dpad_was_diag;          /* 上一轮是否斜向（滞回状态） */
+
+static void rg_dpad_geom_update(void)
+{
+    const rg_keymap_touch_t *up = NULL, *down = NULL, *left = NULL, *right = NULL;
+    for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
+    {
+        rg_key_t k = keymap_touch[i].key;
+        if (k == RG_KEY_UP)         up = &keymap_touch[i];
+        else if (k == RG_KEY_DOWN)  down = &keymap_touch[i];
+        else if (k == RG_KEY_LEFT)  left = &keymap_touch[i];
+        else if (k == RG_KEY_RIGHT) right = &keymap_touch[i];
+    }
+    if (!up || !down || !left || !right)
+    {
+        dpad_geom.ready = false;
+        RG_LOGW("dpad: 键位表里没找齐 上/下/左/右，矢量判定关闭（仍按矩形命中）\n");
+        return;
+    }
+    dpad_geom.cx = up->x;           /* 中心 = 上键的 x 与左键的 y 的交点 */
+    dpad_geom.cy = left->y;
+    dpad_geom.ready = true;
+    RG_LOGI("dpad: 矢量扇区判定 ready（中心 %d,%d / 臂距 %d / 可触 %d / 死区 %d / 斜向门槛 %d）\n",
+            dpad_geom.cx, dpad_geom.cy, up->x - left->x,
+            RG_DPAD_PAD_R, RG_DPAD_DEAD_R, RG_DPAD_DIAG_R);
+}
+
+static void rg_dpad_reset(void)
+{
+    dpad_was_diag = false;          /* 手指离开方向键区 → 下次按下按"进入"门槛判 */
+}
+
+/* 返回该点应产生的方向键；0 = 这个点不在方向键的可触圆内（交给矩形命中逻辑） */
+static uint32_t rg_dpad_keys_at(int lx, int ly)
+{
+    if (!dpad_geom.ready)
+        return 0;
+    const int dx = lx - dpad_geom.cx, dy = ly - dpad_geom.cy;
+    const int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    const int r2 = ax * ax + ay * ay;
+    if (r2 < RG_DPAD_DEAD_R * RG_DPAD_DEAD_R)
+        return 0;                                   /* 死区（比原来的 86px 空洞小得多） */
+    if (r2 > RG_DPAD_PAD_R * RG_DPAD_PAD_R)
+        return 0;                                   /* 出界 */
+
+    const int lo = dpad_was_diag ? RG_DPAD_TAN25_X1000 : RG_DPAD_TAN30_X1000;
+    const int hi = dpad_was_diag ? RG_DPAD_TAN65_X1000 : RG_DPAD_TAN60_X1000;
+    const int gate = dpad_was_diag ? RG_DPAD_DIAG_R_LEAVE : RG_DPAD_DIAG_R;
+    const bool in_band = (ay * 1000 > ax * lo) && (ay * 1000 < ax * hi);
+
+    uint32_t keys;
+    if (in_band && r2 >= gate * gate)
+        keys = (dy < 0 ? RG_KEY_UP : RG_KEY_DOWN) | (dx < 0 ? RG_KEY_LEFT : RG_KEY_RIGHT);
+    else
+        keys = (ax >= ay) ? (dx < 0 ? RG_KEY_LEFT : RG_KEY_RIGHT)
+                          : (dy < 0 ? RG_KEY_UP : RG_KEY_DOWN);
+    dpad_was_diag = (keys & (keys - 1)) != 0;       /* 同时有两位 = 斜向 */
+    return keys;
+}
+#endif
+
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+/* 「X/Y ↔ L/R 调换」按钮（L/R 中间那颗）的按下状态：用于边沿检测 ——
+ * 手指按着不放时每一轮读点都会命中它，不做边沿就会疯狂来回切。 */
+static bool swap_btn_down = false;
+#endif
 
 bool rg_input_read_gamepad_raw(uint32_t *out)
 {
@@ -414,6 +513,12 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #endif
 
 #if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+    /* 本轮有没有读到真实触点。**必须在读函数外面判**（见函数末尾的复位块）：
+     * IDF 的 esp_lcd_touch_get_coordinates() 在无触点时返回 false
+     * （它直接把驱动 get_xy 的返回值当自己的返回值，ST7123 无触点就是 false），
+     * 于是"手指抬起"这一拍整个分支都被跳过 —— 任何写在分支里的"抬指复位"
+     * 都永远跑不到。2026-09-29 真机反馈"再按切换键换不回来"的根因就在这里。 */
+    bool any_touch = false;
     if (rg_touch_ensure() && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
     {
         uint16_t px[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
@@ -421,6 +526,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         uint8_t count = 0;
         if (esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS))
         {
+            any_touch = (count > 0);
 #if RG_TOUCH_OVERLAY
             /* "看得见"和"点得到"必须同源，两个条件都要满足：
              *   ① 用户没关掉按键（visible）—— 否则黑边上一按就触发，用户以为触摸坏了；
@@ -430,18 +536,78 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #else
             const bool pad_visible = true;
 #endif
+            bool dpad_touched = false;
             for (int t = 0; t < count && pad_visible; ++t)
             {
                 int lx = 0, ly = 0;
                 RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                /* 方向键先走**矢量扇区判定**（2026-09-29）：落在可触圆内就直接出结果
+                 * （十字外观没变，换的是判定）；圆外才继续按矩形命中。
+                 * 圆内不会误伤别的键：可触圆半径 135 只覆盖十字本身（最近的 L 键边沿
+                 * 在 y=587，圆心 y=780 - 135 = 645，够不着）。 */
+                const uint32_t dpad = rg_dpad_keys_at(lx, ly);
+                if (dpad)
+                {
+                    state |= dpad;
+                    dpad_touched = true;
+                    continue;
+                }
                 for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
                 {
                     const rg_keymap_touch_t *mapping = &keymap_touch[i];
-                    if (lx >= mapping->x - mapping->w / 2 && lx <= mapping->x + mapping->w / 2 &&
-                        ly >= mapping->y - mapping->h / 2 && ly <= mapping->y + mapping->h / 2)
-                        state |= mapping->key;
+                    /* 半开区间 [x-w/2, x+w/2)：右/下侧用 `<` 而不是 `<=`。
+                     * 闭区间下、相邻两个命中区共享边界像素时会同时触发两颗键；
+                     * 当前键位表处处留了 ≥1px 间隙（属理论风险），改成半开区间后
+                     * 就不再依赖"表里必须留缝"这个隐含前提（走查 P2-13）。 */
+                    if (lx >= mapping->x - mapping->w / 2 && lx < mapping->x + mapping->w / 2 &&
+                        ly >= mapping->y - mapping->h / 2 && ly < mapping->y + mapping->h / 2)
+                        /* 调换开着时这个**位置**代表的是别的键（X↔R、Y↔L）——
+                         * **必须调取叠加层的同一个函数**（rg_overlay_map_key，它内部按状态门控）：
+                         * 规则（rg_touch_swap_key，自反）与状态（swap_yx）都只此一处，
+                         * 可视层的键位表/标签/配色读的是同一个答案，所以按下高亮与手感永远一致。
+                         * ⚠ 别在这里自己写 `swap ? swap_key(k) : k`：swap_key 是自反对换不是恒等，
+                         * 漏掉状态门控就会永远停在"已调换"那一侧 ——
+                         * 真机 2026-09-29：默认 X/Y 模式下按 X 亮的是 R、按 Y 亮的是 L。 */
+                        state |= rg_overlay_map_key(mapping->key);
                 }
             }
+
+            /* 手指离开方向键区（或整体抬指）→ 清掉滞回状态，下次按下按"进入"门槛判 */
+            if (!dpad_touched)
+                rg_dpad_reset();
+
+#if RG_TOUCH_OVERLAY
+            /* ── X/Y ↔ L/R 调换按钮（L/R 中间那颗）─────────────────────────────
+             * 不是游戏按键：不注入任何 RG_KEY_*，只切映射。边沿检测见 swap_btn_down
+             * 的注释（按着不放不能反复切）。几何来自可视层（单一数据源）。 */
+            if (pad_visible)
+            {
+                int sx = 0, sy = 0, sw = 0, sh = 0;
+                rg_overlay_get_swap_rect(&sx, &sy, &sw, &sh);
+                bool hit = false;
+                for (int t = 0; t < count; ++t)
+                {
+                    int lx = 0, ly = 0;
+                    RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                    if (lx >= sx && lx < sx + sw && ly >= sy && ly < sy + sh)
+                    {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (hit && !swap_btn_down)
+                {
+                    const bool on = !rg_overlay_get_swap();
+                    rg_overlay_set_swap(on);
+                    RG_LOGI("touch swap: X/Y <-> L/R -> %s\n", on ? "L/R" : "X/Y");
+                }
+                swap_btn_down = hit;
+            }
+            else
+            {
+                swap_btn_down = false;
+            }
+#endif
 
             /* ── 恢复入口：点左上角那个可见开关 ────────────────────────────────
              * 按键隐藏时可视层会在左上角画一个十字键图标的开关（rg_touch_overlay.c），
@@ -467,6 +633,19 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                 }
             }
         }
+    }
+
+    /* 抬指 / 这一拍没有任何触点 → 清掉"按住"类状态。
+     * ⚠ 位置很关键：必须在上面两层 `if`（read_data / get_coordinates）**外面**。
+     * 无触点时 get_coordinates 返回 false、分支整块被跳过，写在里面的复位永远不执行 ——
+     * 边沿检测会一直以为手指还按着，于是"调换"只能切一次（真机："再按换不回来"）。
+     * 方向键的滞回状态同理（它写在分支里，注释说"或整体抬指"其实抬指那一拍看不到）。 */
+    if (!any_touch)
+    {
+        if (swap_btn_down)
+            RG_LOGI("touch swap: released\n");
+        swap_btn_down = false;
+        rg_dpad_reset();
     }
 #endif
 
@@ -515,6 +694,7 @@ static void input_task(void *arg)
     // Start the task with debounce history full to allow a button held during boot to be detected
     memset(debounce, 0xFF, sizeof(debounce));
     input_task_running = true;
+    input_task_exited = false;
 
     while (input_task_running)
     {
@@ -548,6 +728,42 @@ static void input_task(void *arg)
                     temp.volts = battery_state.volts;
             }
             battery_state = temp;
+            /* 【充电标志表决 · 2026-09-29 重做，走查 P2-14】
+             * 背景：INA226 的分流读值会抖（实测 -871mA 与 +1mA 交替采样），单次采样直接
+             * 翻转 charging 会让圆灯"亮一下灭一下"，很不自然（v0.4.1 已先加过一版去抖）。
+             *
+             * 现在改成"最近 5 次采样的窗口表决"，判据刻意**不对称**：
+             *   ≥3 次为充电 → 认定为充电     （充电=负电流是特异性信号，宁可早点亮）
+             *     0 次为充电 → 认定为未充电   （要求连续 5 次都没充上，抗抖动）
+             *   1~2 次        → 灰色地带，**保持现状不动**
+             * 为什么这样选：交替抖动下窗口里命中次数只会在 2~3 之间晃，既到不了 0（不会
+             * 误灭）也很快能凑到 3（会正确点亮）——原来那版"连续两次反向就翻转"在真实
+             * 噪声里只要出现连续两次同向就会翻一次，表现为偶发单闪。
+             * 延迟：插线 ≈3 个周期（6s）内点亮；拔线 ≈5 个周期（10s）内熄灭。周期是
+             * 下面 next_battery_update 的 2s。首次采样会把窗口**铺满**（否则开机会白等 10s）。 */
+            {
+                static uint8_t hist;        /* bit0 = 最新一次采样，1 = 充电 */
+                static int samples;
+                if (samples == 0)
+                    hist = battery_state.charging ? 0x1F : 0x00;   /* 首次：整窗铺满，立刻生效 */
+                hist = (uint8_t)(((hist << 1) | (battery_state.charging ? 1 : 0)) & 0x1F);
+                if (samples < 5)
+                    samples++;
+                const int ones = __builtin_popcount((unsigned)hist);
+                if (ones >= 3)
+                    battery_state.charging = true;
+                else if (ones == 0)
+                    battery_state.charging = false;
+                /* 1~2：灰色地带，保持上一次的表决结果 */
+                if (samples <= 2 || (battery_state.charging != battery_state_prev_charging))
+                {
+                    battery_state_prev_charging = battery_state.charging ? 1 : 0;
+                    /* 表决结果变化的这行日志才是"屏上圆灯为什么这样"的答案
+                     * （INA226-CHG(raw) 那行是未去抖的原始值，别拿来对照灯）。 */
+                    RG_LOGI("battery: charging=%d (窗口 5 取≥3 表决, raw=%d)\n",
+                            (int)battery_state.charging, (int)temp.charging);
+                }
+            }
             next_battery_update = rg_system_timer() + 2 * 1000000; // update every 2 seconds
         }
 
@@ -556,6 +772,7 @@ static void input_task(void *arg)
 
     input_task_running = false;
     gamepad_state = -1;
+    input_task_exited = true;
 }
 
 void rg_input_init(void)
@@ -654,6 +871,10 @@ void rg_input_init(void)
     RG_LOGI("Virtual touch gamepad registered (ST7123 @0x55, lazy init).\n");
     UPDATE_GLOBAL_MAP(keymap_touch);
 #endif
+#if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+    /* 方向键几何（中心/臂距）从键位表算一次，矢量扇区判定要用 */
+    rg_dpad_geom_update();
+#endif
 
     rg_input_read_gamepad_raw(NULL);
 
@@ -667,15 +888,29 @@ void rg_input_init(void)
 void rg_input_deinit(void)
 {
     input_task_running = false;
+    /* 先等输入任务真正退出（走查 P2-6）：老代码把这段等待注释掉了，于是下面几个释放动作
+     * 可能与"正在跑的那一轮"撞车 —— touch_handle 置 NULL 之后 rg_touch_ensure() 还会因为
+     * attempts<20 重新申请一个（在正要被拆除的 I2C 总线上），而且那个新句柄没人释放。
+     * 上限 300ms：正常一轮循环 ≤10ms，绝不为了等它把关机卡住。 */
+    for (int i = 0; i < 30 && !input_task_exited; ++i)
+        rg_task_delay(10);
 #if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+    /* 关掉懒加载重试通道：deinit 之后任何一次 rg_touch_ensure() 都必须直接失败 */
+    touch_init_attempts = RG_TOUCH_MAX_ATTEMPTS;
     if (touch_handle)
     {
         esp_lcd_touch_del(touch_handle);
         touch_handle = NULL;
     }
 #endif
-    // while (gamepad_state != -1)
-    //     rg_task_yield();
+#if defined(ESP_PLATFORM) && RG_BATTERY_DRIVER == 3
+    /* INA226 设备句柄归还总线（走查 P2-7）：不加这段，同一进程里反复进出游戏会一直累积 */
+    if (ina226_dev)
+    {
+        i2c_master_bus_rm_device(ina226_dev);
+        ina226_dev = NULL;
+    }
+#endif
     RG_LOGI("Input terminated.\n");
 }
 

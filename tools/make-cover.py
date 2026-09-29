@@ -24,21 +24,35 @@ pv = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pv)
 
 
+FONT_CANDIDATES = (
+    "/System/Library/Fonts/STHeiti Medium.ttc",      # 本机实测可用（PingFang 在 macOS 26 上已不存在！）
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/Helvetica.ttc",
+)
+
+
 def font(size, bold=False):
-    paths = (["/System/Library/Fonts/PingFang.ttc"] if not bold else
-             ["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Helvetica.ttc"])
-    for p in paths:
+    """挑一个**真能画中文**的字体。找不到就直接报错 ——
+    绝不能再静默退回 `ImageFont.load_default()`（它没有中文字形 → 图上全是方块/乱码，
+    2026-09-29 就是这么出的图）。"""
+    for p in FONT_CANDIDATES:
+        if not Path(p).exists():
+            continue
         try:
             f = ImageFont.truetype(p, size)
+        except Exception:
+            continue
+        if f.getbbox("电量")[2] > 4:          # 有中文墨迹才认
             if bold:
                 try:
                     f.set_variation_by_name("Bold")
                 except Exception:
                     pass
             return f
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    raise SystemExit("✗ 找不到能画中文的系统字体，别用默认位图字体出图（会乱码）")
 
 
 def portrait_screen():
@@ -58,6 +72,14 @@ def main():
     ver = sys.argv[1] if len(sys.argv) > 1 else "0.4"
     out_dir = ROOT / f"dist/m5burner-{ver}"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if "--hero" in sys.argv:
+        # 只有 hero：给 README 用的整屏界面图（720x1280，真渲染）
+        dst = Path(sys.argv[sys.argv.index("--hero") + 1])
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        portrait_screen().save(dst)
+        print("wrote", dst)
+        return
 
     cover = Image.new("RGBA", (COVER_W, COVER_H), (0, 0, 0, 255))
     # 背景：自上而下的暗蓝渐变（比纯黑有层次，缩略图里不糊）
