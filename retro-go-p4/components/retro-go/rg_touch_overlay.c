@@ -44,7 +44,6 @@ const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT] = {100, 80, 60, 
 typedef struct
 {
     rg_key_t key;
-    bool is_toggle;      /* true = 左上角那个"把按键放回来"的开关（不是按键，没有 key） */
     int x, y, w, h;      /* 逻辑坐标：左上角 + 尺寸 */
     uint8_t *mask;       /* w*h： (覆盖率<<3) | 角色 */
     uint16_t pal[4];     /* 正常态：角色 -> 颜色 */
@@ -86,7 +85,11 @@ static size_t btn_count;
 static bool ready;
 static bool visible = true;
 static int alpha_pct = 100;
-static int alpha_level = 255;             /* 0..255，= alpha_pct * 255 / 100 */
+static int alpha_level = 255;             /* 0..255，= alpha_pct * 255 / 100
+                                           * ⚠ 跨任务读写：设置菜单（GUI 任务）写、显示与输入路径读，
+                                           * 故意**不加锁** —— 32 位对齐 int 的读写在本平台是一条指令，
+                                           * 加锁只会在显示热路径上引入优先级反转（走查 P2-16）。
+                                           * 真要动这里，先想清楚"读到上一档"的后果可接受。 */
 static bool pending_commit = false;       /* 设置改了但还没落盘（见 commit_if_pending） */
 static uint8_t acov[4][17];               /* 正常态混合权重 [角色][覆盖率] */
 static uint8_t acov_p[4][17];             /* 按下态 */
@@ -159,21 +162,41 @@ static void load_glyphs(void)
         const rg_font_glyph_t *g = (const rg_font_glyph_t *)p;
         if (!g->code)
             break;
-        size_t nbytes = g->width ? ((((size_t)g->width * g->height) - 1) / 8) + 1 : 0;
+        /* 推进长度 = **height**（每行一个字节），不是按位紧凑打包！
+         * 这是字库的真实排法，也是 PC 预览工具 parse_font() 的口径 —— 两边必须一致，
+         * 否则会出现"图上文字镜像/乱码"那类故障（2026-09-29 已踩过一次）。
+         * ⚠ 历史：这里曾写成 (((w*h)-1)/8)+1（按位紧凑）。当前字库 191 个字形全是
+         * 8x8，两种算法恰好等价才没出事；一旦混入 width<8 的字形，后续字形会整体错位。
+         * 走查 P1-2，见 docs/CODE-REVIEW-v0.4.1.md。 */
+        const size_t nbytes = g->height;
         if (g->code < 128 && g->width == 8 && g->height == 8)
             for (int y = 0; y < 8; ++y)
                 glyphs[g->code][y] = (uint8_t)(g->data[y] >> g->xOffset);  /* xOffset: 右移列 */
+        else if (g->width != 8 || g->height != 8)
+        {
+            /* 非 8x8 的字形本实现不会渲染（掩码固定按 8x8 用）。推进长度虽然按
+             * height 算对了，但"跳过不画"这件事必须说出来 —— 否则屏幕上少个字
+             * 会像渲染坏了，而不是"字库里有不支持的尺寸"。 */
+            static bool warned = false;
+            if (!warned)
+            {
+                warned = true;
+                RG_LOGW("glyphs: %dx%d glyph U+%04X unsupported (only 8x8 is rendered)\n",
+                        g->width, g->height, (unsigned)g->code);
+            }
+        }
         p += sizeof(rg_font_glyph_t) + nbytes;
     }
 }
 
 /* ---------------------------------------------------------------- 标签几何 */
 
-static void label_geom(int w, int h, rg_key_t key, bool is_toggle, rg_overlay_label_t *L)
+static void label_geom(int w, int h, rg_key_t key, rg_overlay_label_t *L)
 {
     memset(L, 0, sizeof(*L));
 
-    (void)is_toggle;   /* 开关已改为程序化绘制（见 blit_toggle），这里不再需要 */
+    /* 开关（左上角那个"把按键放回来"的图标）不是按键：它由 blit_toggle 程序化绘制，
+     * 不进键位表，所以这里没有 toggle 分支（曾经的 is_toggle 字段已删除，走查 P2-4）。 */
 
     const char *text = NULL;
     int dir = -1;
@@ -299,7 +322,7 @@ static void build_button(rg_overlay_btn_t *b, uint16_t color)
 {
     const int w = b->w, h = b->h;
     rg_overlay_label_t L;
-    label_geom(w, h, b->key, b->is_toggle, &L);
+    label_geom(w, h, b->key, &L);
 
     float r = (float)((w < h ? w : h) * 18 / 100);
     if (r < 2) r = 2;
@@ -314,8 +337,9 @@ static void build_button(rg_overlay_btn_t *b, uint16_t color)
     }
 
     b->pal[ROLE_BORDER] = color;
-    /* 开关（白色系）的填充要比按键更暗：否则"白边框+白十字"压在 55% 白填充上对比不足 */
-    b->pal[ROLE_FILL] = c565_scale(color, b->is_toggle ? 30 : 55, 100);
+    /* 填充比边框暗一些（55%）：否则"亮边框+亮标签"压在纯亮填充上对比不足。
+     * （左上角那颗开关图标的 30% 更暗填充在 blit_toggle 里单独处理，不走这条路径。） */
+    b->pal[ROLE_FILL] = c565_scale(color, 55, 100);
     b->pal[ROLE_LABEL] = c565_tint(color, 70, 100);
     b->pal_p[ROLE_BORDER] = 0xFFFF;
     b->pal_p[ROLE_FILL] = c565_scale(color, 95, 100);
@@ -771,8 +795,8 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
  * 实现：复用本模块已加载的 8x8 点阵**逐像素直绘**，不走按键掩码 —— 数字每秒都在变，
  *       为它反复重建掩码没意义；面积仅 3 位 × scale4 = 96×32 = 3072 px，代价可忽略。
  * 颜色：纯白 + 黑色投影（先投影、后正文），任何游戏画面上都看得清。 */
-#define RG_FPS_TEXT_CX 640      /* 逻辑坐标：L 与 R 正中 */
-#define RG_FPS_TEXT_CY 60
+#define RG_FPS_TEXT_CX 360      /* 逻辑坐标：控制区顶部正中（L(50~230) 与 R(490~670) 肩键之间的空白带）*/
+#define RG_FPS_TEXT_CY 500      /* ⚠ 竖屏口径：y<480 是游戏画面，数字只能落在控制区（走查 P2-11） */
 #define RG_FPS_SCALE   4
 
 static int fps_value = -1;
@@ -805,10 +829,14 @@ static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int
                           int lx0, int ly0, const uint16_t color)
 {
     const int n = (int)strlen(fps_text);
-    const int px0 = phys_w - ly0 - 8 * RG_FPS_SCALE;   /* 逻辑 y 反向对应物理 x */
-    const int px1 = phys_w - ly0;
-    const int py0 = lx0;                               /* 逻辑 x 正向对应物理 y */
-    const int py1 = lx0 + n * 8 * RG_FPS_SCALE;
+    (void)phys_w;   /* 竖屏线性映射下不再需要物理宽度换算（见下） */
+    /* ⚠ 竖屏线性映射：逻辑 (lx,ly) == 物理 (px,py)。
+     * 老代码这里是 cw90 的反向换算（px = phys_w - ly0 - ...）—— 那是横屏时代的写法，
+     * 竖屏下启用帧率数字会把它画到完全错误的位置（走查 P2-11，已按线性改写）。 */
+    const int px0 = lx0;
+    const int px1 = lx0 + n * 8 * RG_FPS_SCALE;
+    const int py0 = ly0;
+    const int py1 = ly0 + 8 * RG_FPS_SCALE;
 
     const int cx0 = imax(px0, rx), cx1 = imin(px1, rx + rw);
     const int cy0 = imax(py0, ry), cy1 = imin(py1, ry + rh);
@@ -817,16 +845,16 @@ static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
     for (int py = cy0; py < cy1; ++py)
     {
-        const int gx = (py - py0) / RG_FPS_SCALE;      /* 逻辑 x -> 字形列 */
-        const int ch = gx >> 3, col = gx & 7;
-        if (ch >= n)
+        const int gy = (py - py0) / RG_FPS_SCALE;      /* 逻辑 y -> 字形行 */
+        if (gy < 0 || gy > 7)
             continue;
-        const uint8_t *gl = glyphs[(uint8_t)fps_text[ch]];
         for (int px = cx0; px < cx1; ++px)
         {
-            const int gy = (phys_w - 1 - px - ly0) / RG_FPS_SCALE;   /* 逻辑 y -> 字形行 */
-            if (gy < 0 || gy > 7)
+            const int gx = (px - px0) / RG_FPS_SCALE;  /* 逻辑 x -> 字形列 */
+            const int ch = gx >> 3, col = gx & 7;
+            if (ch >= n)
                 continue;
+            const uint8_t *gl = glyphs[(uint8_t)fps_text[ch]];
             if (gl[gy] & (0x80 >> col))                /* 字模 MSB = 最左列 */
                 buf[(size_t)(py - ry) * stride + (px - rx)] = color;
         }
@@ -859,8 +887,12 @@ static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
  *       颜色不新造，直接复用调色板里已有的三个色（见 batt_led_color 注释）。
  * 闪烁：只灭内芯、外圈压暗保留（26%）—— 像一盏没点亮的指示灯，不会整块凭空消失又冒出来。
  * 亮度：跟随叠加层透明度档位（α 调到 20% 时灯一起暗下去，整屏一致）。
- * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪；充电中 → 绿闪（优先级最高）。
- * 相位：500ms 亮 / 500ms 暗（由 rg_system_timer 决定，无状态、免定时器）。
+ * 颜色：绿 100~60% / 橙 60~20% / 红 20~10% / <10% 红闪（**硬闪**，告警要抓眼）。
+ * 充电中 → 绿**呼吸**（优先级最高；4 档亮度 255/196/148/196、每档 340ms，整周期 ≈1.4s）。
+ *   v0.4.1 起改的：原来充电也是硬闪，但 INA226 分流采样会抖，叠加硬闪显得不自然。
+ * 相位：由 rg_system_timer 决定，无状态、免定时器。
+ *   · 低电告警：500ms 亮 / 500ms 暗（硬闪）
+ *   · 充电呼吸：走 bright 亮度系数（见 batt_led_state 的说明）
  * 背景：控制区这块没有任何内容 → 直写时先擦黑再画（不擦会新旧叠加，同帧率数字的教训）。
  * 边缘：2x2 子采样求覆盖率（外圈/内芯各一次），背景是黑 → 按覆盖率压暗即向背景混合。
  *
@@ -947,6 +979,11 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
 {
     if (!buf || stride <= 0)
         return;
+    /* 契约（走查 P2-15）：buf 是**整屏**帧缓冲（竖屏线性映射下逻辑与物理同向），
+     * stride = 一行像素数。本函数只写 [RG_BATT_LED_BAND_Y0, RG_BATT_LED_BAND_Y1) 条带内的
+     * 像素，且是**直接覆盖**（那一条带背景纯黑，不需要混合）。
+     * 调用方（显示驱动 tab5_batt_led_refresh）负责：① 先把条带擦成背景
+     * ② 画完后对条带做 C2M cache 写回（CPU 写、DMA 读，方向不能反）。 */
 
     bool lit = true;
     int bright = 255;
@@ -996,8 +1033,10 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
     }
 }
 
-/* tab5 专用：面板是原生竖屏，逻辑画面按 90°CW 写进物理帧缓冲。
- * 逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)，与显示驱动的映射必须完全一致。
+/* tab5 专用（**横屏版驱动专用**；竖屏线性分支不再调用它 —— 那份走下面的
+ * rg_overlay_blit_linear()）：
+ * 逻辑画面按 90°CW 写进物理帧缓冲，逻辑 (lx,ly) -> 物理 (px,py) = (phys_w-1-ly, lx)。
+ * 与横屏驱动 mipi_dsi_tab5.h 的映射必须完全一致。
  * 这里不做第二份旋转位图，只在索引上换算 —— 一份数据、两种朝向。 */
 void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
 {

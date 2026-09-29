@@ -899,7 +899,14 @@ static void shutdown_cleanup(void)
     rg_audio_deinit();                        // Disable sound ASAP to avoid audio garbage
     // rg_system_save_time();                    // RTC might save to storage, do it before
     rg_storage_deinit();                      // Unmount storage
-    rg_input_wait_for_key(RG_KEY_ALL, 0, -1); // Wait for all keys to be released (boot is sensitive to GPIO0,32,33)
+    /* ⚠ 为什么要有上限（2026-09-29 走查 P1-4）：本机唯一输入是触摸屏，而 ST7123 的多点
+     * 上报**可能残留上一次的坐标**（触摸层为此特意遍历所有触点而不是只看第 0 点）。
+     * 老代码超时是 -1（无限等待"所有键松开"），一个幽灵触点就能让关机永远卡在
+     * rg_display_clear 之后 —— 表现是"点了关机、黑屏停住，不重启也不掉电"。
+     * 物理按键平台没这个问题（松开是硬件保证的），触摸平台必须有上限。
+     * 3 秒足够真人松手；超时就继续关机并在日志里留痕，便于事后判断是不是残留触点。 */
+    if (!rg_input_wait_for_key(RG_KEY_ALL, 0, 3000))
+        RG_LOGW("Shutdown: keys still held after 3s, continuing anyway (touch residue?)\n");
     rg_input_deinit();                        // Now we can shutdown input
     rg_i2c_deinit();                          // Must be after input, sound, and rtc
     rg_display_deinit();                      // Do this very last to reduce flicker time

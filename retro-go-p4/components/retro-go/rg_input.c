@@ -162,6 +162,7 @@ static bool rg_touch_ensure(void) { return false; }
 #endif /* ESP_PLATFORM */
 #endif /* RG_GAMEPAD_TOUCH_MAP */
 static bool input_task_running = false;
+static bool input_task_exited = false;   /* 任务真正退出后置真：deinit 要先等它，见 rg_input_deinit */
 static uint32_t gamepad_state = -1; // _Atomic
 
 /* 当前按下的键（含触摸虚拟键）。可视层用它做"按下高亮"：
@@ -311,13 +312,16 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
                 (int)(int16_t)shunt, cur_ma, (int)charging);
         ina226_dbg_count++;
     }
-    /* 充电状态一变就打一行 —— 真机插/拔充电器各一次，用这行确认符号约定 */
+    /* 原始采样的跳变各打一行 —— 这行是**未去抖的原始值**，只用于确认符号约定与抖动形态；
+     * 屏上圆灯看的是 input_task 里表决后的结果（那行日志才是"灯为什么这样"的答案）。
+     * ⚠ 别把这行当灯的状态读：实测它会 -871mA 与 +1mA 交替。 */
     {
         static int last_chg = -1;
         int chg = (int)charging;
         if (chg != last_chg)
         {
-            RG_LOGI("INA226-CHG: shunt=%d (%d mA) -> charging=%d\n", (int)(int16_t)shunt, cur_ma, chg);
+            RG_LOGI("INA226-CHG(raw): shunt=%d (%d mA) -> charging=%d (未去抖)\n",
+                    (int)(int16_t)shunt, cur_ma, chg);
             last_chg = chg;
         }
     }
@@ -438,8 +442,12 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                 for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
                 {
                     const rg_keymap_touch_t *mapping = &keymap_touch[i];
-                    if (lx >= mapping->x - mapping->w / 2 && lx <= mapping->x + mapping->w / 2 &&
-                        ly >= mapping->y - mapping->h / 2 && ly <= mapping->y + mapping->h / 2)
+                    /* 半开区间 [x-w/2, x+w/2)：右/下侧用 `<` 而不是 `<=`。
+                     * 闭区间下、相邻两个命中区共享边界像素时会同时触发两颗键；
+                     * 当前键位表处处留了 ≥1px 间隙（属理论风险），改成半开区间后
+                     * 就不再依赖"表里必须留缝"这个隐含前提（走查 P2-13）。 */
+                    if (lx >= mapping->x - mapping->w / 2 && lx < mapping->x + mapping->w / 2 &&
+                        ly >= mapping->y - mapping->h / 2 && ly < mapping->y + mapping->h / 2)
                         state |= mapping->key;
                 }
             }
@@ -516,6 +524,7 @@ static void input_task(void *arg)
     // Start the task with debounce history full to allow a button held during boot to be detected
     memset(debounce, 0xFF, sizeof(debounce));
     input_task_running = true;
+    input_task_exited = false;
 
     while (input_task_running)
     {
@@ -549,23 +558,41 @@ static void input_task(void *arg)
                     temp.volts = battery_state.volts;
             }
             battery_state = temp;
-            /* 【充电标志去抖】2026-09-29：INA226 的分流读值会抖（实测 -871mA 与 +1mA 交替采样），
-             * 单次采样直接翻转 charging 会让圆灯"闪一下停一下"，很不自然。
-             * 规则：连续两次同向才改变充电状态（插/拔线各只多等 2s，无感）。
-             * ⚠ 第一次采样的 battery_state.charging 是 0，所以开机即充电时要约 2 个周期才点亮。 */
+            /* 【充电标志表决 · 2026-09-29 重做，走查 P2-14】
+             * 背景：INA226 的分流读值会抖（实测 -871mA 与 +1mA 交替采样），单次采样直接
+             * 翻转 charging 会让圆灯"亮一下灭一下"，很不自然（v0.4.1 已先加过一版去抖）。
+             *
+             * 现在改成"最近 5 次采样的窗口表决"，判据刻意**不对称**：
+             *   ≥3 次为充电 → 认定为充电     （充电=负电流是特异性信号，宁可早点亮）
+             *     0 次为充电 → 认定为未充电   （要求连续 5 次都没充上，抗抖动）
+             *   1~2 次        → 灰色地带，**保持现状不动**
+             * 为什么这样选：交替抖动下窗口里命中次数只会在 2~3 之间晃，既到不了 0（不会
+             * 误灭）也很快能凑到 3（会正确点亮）——原来那版"连续两次反向就翻转"在真实
+             * 噪声里只要出现连续两次同向就会翻一次，表现为偶发单闪。
+             * 延迟：插线 ≈3 个周期（6s）内点亮；拔线 ≈5 个周期（10s）内熄灭。周期是
+             * 下面 next_battery_update 的 2s。首次采样会把窗口**铺满**（否则开机会白等 10s）。 */
             {
-                static int pending = 0;
-                if (battery_state_prev_charging == -1)
-                    battery_state_prev_charging = battery_state.charging ? 1 : 0;
-                if ((int)battery_state.charging == battery_state_prev_charging)
-                    pending = 0;                                  /* 与现值一致 → 无待决 */
-                else if (++pending >= 2)
+                static uint8_t hist;        /* bit0 = 最新一次采样，1 = 充电 */
+                static int samples;
+                if (samples == 0)
+                    hist = battery_state.charging ? 0x1F : 0x00;   /* 首次：整窗铺满，立刻生效 */
+                hist = (uint8_t)(((hist << 1) | (battery_state.charging ? 1 : 0)) & 0x1F);
+                if (samples < 5)
+                    samples++;
+                const int ones = __builtin_popcount((unsigned)hist);
+                if (ones >= 3)
+                    battery_state.charging = true;
+                else if (ones == 0)
+                    battery_state.charging = false;
+                /* 1~2：灰色地带，保持上一次的表决结果 */
+                if (samples <= 2 || (battery_state.charging != battery_state_prev_charging))
                 {
                     battery_state_prev_charging = battery_state.charging ? 1 : 0;
-                    pending = 0;                                  /* 连续两次同向 → 采纳 */
+                    /* 表决结果变化的这行日志才是"屏上圆灯为什么这样"的答案
+                     * （INA226-CHG(raw) 那行是未去抖的原始值，别拿来对照灯）。 */
+                    RG_LOGI("battery: charging=%d (窗口 5 取≥3 表决, raw=%d)\n",
+                            (int)battery_state.charging, (int)temp.charging);
                 }
-                else
-                    battery_state.charging = (battery_state_prev_charging != 0);   /* 只抖一次 → 维持现值 */
             }
             next_battery_update = rg_system_timer() + 2 * 1000000; // update every 2 seconds
         }
@@ -575,6 +602,7 @@ static void input_task(void *arg)
 
     input_task_running = false;
     gamepad_state = -1;
+    input_task_exited = true;
 }
 
 void rg_input_init(void)
@@ -686,15 +714,29 @@ void rg_input_init(void)
 void rg_input_deinit(void)
 {
     input_task_running = false;
+    /* 先等输入任务真正退出（走查 P2-6）：老代码把这段等待注释掉了，于是下面几个释放动作
+     * 可能与"正在跑的那一轮"撞车 —— touch_handle 置 NULL 之后 rg_touch_ensure() 还会因为
+     * attempts<20 重新申请一个（在正要被拆除的 I2C 总线上），而且那个新句柄没人释放。
+     * 上限 300ms：正常一轮循环 ≤10ms，绝不为了等它把关机卡住。 */
+    for (int i = 0; i < 30 && !input_task_exited; ++i)
+        rg_task_delay(10);
 #if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+    /* 关掉懒加载重试通道：deinit 之后任何一次 rg_touch_ensure() 都必须直接失败 */
+    touch_init_attempts = RG_TOUCH_MAX_ATTEMPTS;
     if (touch_handle)
     {
         esp_lcd_touch_del(touch_handle);
         touch_handle = NULL;
     }
 #endif
-    // while (gamepad_state != -1)
-    //     rg_task_yield();
+#if defined(ESP_PLATFORM) && RG_BATTERY_DRIVER == 3
+    /* INA226 设备句柄归还总线（走查 P2-7）：不加这段，同一进程里反复进出游戏会一直累积 */
+    if (ina226_dev)
+    {
+        i2c_master_bus_rm_device(ina226_dev);
+        ina226_dev = NULL;
+    }
+#endif
     RG_LOGI("Input terminated.\n");
 }
 
