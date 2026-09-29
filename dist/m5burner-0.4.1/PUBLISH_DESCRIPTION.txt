@@ -1,0 +1,31 @@
+retro-go Tab5 —— M5Stack Tab5 上的 GBA 模拟器（竖屏版）
+Game Boy Advance emulator for the M5Stack Tab5 (portrait layout)
+
+【v0.4.1 修复】插 USB-C 不充电 —— 板级充电使能从未被拉高，充电芯片一直禁用；现已照官方初始化序列使能，实测充电电流 -0.75~-0.87 A。电量圆灯"充电中"改为柔和呼吸。
+[FIXED in v0.4.1] USB-C charging now actually works — the board's charge-enable pin was never asserted, so the charge IC stayed disabled; now enabled (measured -0.75~-0.87 A into the pack). The charging indicator breathes softly instead of hard-blinking.
+
+【v0.4 新增】界面改为竖屏布局：游戏画面在上、触摸手柄在下（按键更大）；新增电量圆灯（绿/橙/红，低电闪、充电呼吸）；修好电量显示（之前恒为 0%）；launcher 标题不再被截断；修掉十字键串键；游戏内存档重启不再丢
+[NEW in v0.4] Reworked for portrait: game on top, touch gamepad below (bigger buttons); battery indicator light (green/amber/red, blinks when low, breathes while charging); battery percentage now works (was stuck at 0%); launcher header no longer clipped; d-pad ghost-input fixed; in-game SRAM saves now survive a reboot
+
+SD 卡目录结构 / SD card layout:
+<SD 卡根目录>/
+├── roms/gba/            ← GBA ROM 放这里（.gba 或 .zip，zip 内放一个 ROM）
+│   └── gba_bios.bin     ← 可选：GBA BIOS
+├── retro-go/            ← 模拟器工作目录（自动创建，一般不用手动碰）
+│   ├── saves/           ← 游戏存档
+│   ├── config/          ← 设置、最近游玩、收藏
+│   ├── cache/ themes/ borders/
+├── romart/              ← 游戏封面图（可选，按 ROM 文件名匹配：游戏.gba → 游戏.png）
+└── crash.log            ← 崩溃时自动生成；反馈问题请带上这个文件
+
+操作方式 / Controls:
+竖屏布局 —— 游戏画面在顶部，触摸手柄在下方控制区：
+方向键（左下）· A/B/X/Y 菱形（右下，X/Y = Turbo A/B 连发）· L/R 肩键（控制区顶部左右角）·
+SELECT/START（底部中间）· MENU（游戏内菜单，底部右侧）· 电量圆灯（控制区正中，不挡按键）
+界面默认英文，可在 Options → Language 切换中文（设置会保存）
+
+Portrait layout — game screen on top, touch gamepad in the lower control area:
+D-pad (bottom-left) · A/B/X/Y diamond (bottom-right; X/Y = Turbo A/B) · L/R shoulders (top corners of
+the control area) · SELECT/START (bottom-centre) · MENU (in-game menu, bottom-right) ·
+battery light (centre of the control area). UI language defaults to English; switch to Chinese in
+Options → Language.
