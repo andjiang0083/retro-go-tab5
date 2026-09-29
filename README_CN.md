@@ -13,11 +13,22 @@ retro-go 是一个轻量多机种模拟器前端，本仓库是它的移植：�
 
 ## 截图
 
+**竖屏布局（v0.4）** —— 这张图是按**固件自己那套渲染规则**（同一份键位表、同一组键色、同一个点阵字库）在 PC 上重渲染的，所以就是设备上真实画出来的样子：
+
+![retro-go Tab5 竖屏：游戏画面在上，触摸手柄在下方控制区](docs/screenshot-portrait.png)
+
+*游戏画面固定在原生竖屏 720x1280 面板顶部（720x480）；触摸手柄在下方的控制区，永不遮挡画面。
+控制区正中那个圆灯是电量指示（绿 ≥60% / 橙 20~60% / 红 10~20% / 低于 10% 与充电时闪烁）。*
+*The 720x480 game screen is anchored to the top of the native portrait 720x1280 panel; the touch gamepad
+lives in the control area underneath and never overlaps the game.*
+
+早期真机照片 —— v0.3 的横屏布局（竖屏重做之前）：
+
 ![真机 Tab5 上运行的 GBA，彩色触摸手柄位于留白区](docs/screenshot-fire-emblem.png)
 
-*《火焰之纹章：烈火之剑》在真机 Tab5 上运行 —— 彩色触摸手柄只画在留白区，不遮挡游戏画面。*
-*Fire Emblem: The Blazing Blade running on a real Tab5. The coloured touch gamepad is drawn only in the
-letterbox margins, so it never covers the game.*
+*《火焰之纹章：烈火之剑》真机照片（v0.3 横屏布局）：画面居中，手柄画在留白区。*
+*Fire Emblem: The Blazing Blade on a real Tab5 (v0.3): the game stays in the middle and the gamepad is
+drawn in the letterbox margins.*
 
 ---
 
@@ -29,10 +40,10 @@ letterbox margins, so it never covers the game.*
 | GBA 核心（gpSP） | ✅ 可用 | 解释器 + **RISC-V dynarec**（JIT），比解释器快约 2 倍 |
 | 音频 | ✅ 可用 | ES8388 + I2S，32kHz，不影响帧率 |
 | 存档（Savestate） | ✅ 可用 | 核心级状态（约 416KB）写入 SD 卡 |
-| 触摸虚拟手柄 | ✅ 可用 | ABXY 菱形排布、每键独立颜色，只画在画面留白区 |
+| 触摸虚拟手柄 | ✅ 可用 | 竖屏布局：720x480 游戏画面固定贴顶，手柄在下方控制区（方向键左下、ABXY 菱形右下每键独立颜色、L/R 在控制区顶部两角、SELECT/START/MENU 底部一排），永不遮挡画面 |
 | 中文支持 | ✅ 可用 | 内置 3773 字形 CJK 字库（GB2312 一级全覆盖，OFL-1.1），存**独立 flash 分区**：零加载、全 app 共享、不依赖 SD 卡；界面菜单 197 条全中文化 |
-| 显示通路 | ⚠️ CPU 转置 | 逻辑满速 60fps，但真正推送到屏上约 15 帧/秒；**长时间运行还会退化**（转置耗时 47ms→431ms 持续增长、DSI 报“上一次绘制未完成”）—— 见[性能](#性能) 与 [移植笔记第九节](docs/TAB5-PORT-STATUS.md) |
-| 电池电量 | ❌ 未实现 | 日志里是 `BATT:0`；Tab5 板载 INA226 |
+| 显示通路 | ✅ 可用 | 整块顺序读进片内 SRAM + 总线 QoS 提权、像素转置改 32×32 分块，忙时改有界重试不再静默丢帧（v0.3 重做：约 30 帧/秒真实推送，长时间运行不再退化）—— 见[性能](#性能) |
+| 电池电量 | ✅ 可用 | 板载 INA226 电源监测（BSP 主 I2C，地址 0x41），按 2S 电包换算百分比；并以控制区中间的圆灯显示（低于 10% 与充电时闪烁） |
 | 其它机种（NES/SNES/MD/PCE…） | ❌ 未移植 | retro-go 源码里有，但只为本目标接线了 launcher + GBA |
 
 **逻辑速度是满速**：GBA 游戏以 59~60fps 的模拟时间运行，音频同步、不变调。
@@ -79,18 +90,32 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \
 
 ## 操作方式
 
-Tab5 几乎没有物理按键，所以手柄画在触摸屏的画面留白区（游戏视口 720x480，两侧留出按键区）：
+Tab5 几乎没有物理按键，所以手柄画在触摸屏的**下方控制区**（游戏视口 720x480 固定贴顶）：
 
-- **方向键** —— 左侧留白区
-- **A / B / X / Y** —— 右侧留白区，菱形排布，每键独立颜色
-- **L / R** —— 顶部左右两侧（GBA 肩键）
+```
+┌──────────────────────────────┐
+│       游戏画面 720x480        │   ← 3x 整数缩放，永不遮挡
+├──────────────────────────────┤
+│ [L]                      [R] │
+│                              │
+│    ✛        ●          Ⓨ     │   ● = 电量圆灯
+│            (电量)       ⓍⒶⓑ    │
+│                              │
+│  [SELECT]  [START]  [MENU]   │
+└──────────────────────────────┘
+```
+
+- **方向键** —— 控制区左下
+- **A / B / X / Y** —— 控制区右下，菱形排布，每键独立颜色
+- **L / R** —— 控制区顶部左右两角（GBA 肩键）
 - **X / Y** —— 核心的 Turbo A / Turbo B（按住连发）
 - **START / SELECT** —— 底部中间
 - **MENU** —— 打开游戏内菜单（存档 / 选项 / 重置）
-- **OPTION** —— 选项菜单
+- **电量圆灯** —— 控制区正中：绿 ≥60% / 橙 20~60% / 红 10~20% / 低于 10% 与充电时闪烁
 - **语言** —— Options → Language 可切中文（默认英文；选择写入 NVS 持久保存）
 
-布局参考：[docs/touch-layout-p2.png](docs/touch-layout-p2.png)
+布局参考：[docs/touch-layout-p2.png](docs/touch-layout-p2.png)（横屏时期）·
+[docs/screenshot-portrait.png](docs/screenshot-portrait.png)（当前竖屏布局）
 
 ---
 

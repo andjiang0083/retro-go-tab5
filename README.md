@@ -13,11 +13,24 @@ Built and tested on real hardware. Contributions very welcome — see [Contribut
 
 ## Screenshots
 
+**Portrait layout (v0.4)** — this image is rendered from the firmware's own drawing rules (same touch
+layout table, same key colours, same bitmap font), so it is exactly what the device draws:
+
+![retro-go Tab5 in portrait: the game screen on top, the touch gamepad in the control area below it](docs/screenshot-portrait.png)
+
+*The 720x480 game screen is anchored to the top of the native portrait 720x1280 panel; the touch gamepad
+lives in the control area underneath and never overlaps the game. The round light in the middle of the
+control area is the battery indicator (green ≥60% / amber 20-60% / red 10-20% / blinks below 10% and while charging).*
+*游戏画面固定在原生竖屏 720x1280 面板的顶部（720x480），触摸手柄在下方的控制区，永不遮挡画面；
+控制区正中那个圆灯是电量指示（绿 ≥60% / 橙 20~60% / 红 10~20% / 低于 10% 与充电时闪烁）。*
+
+Earlier hardware photo — the v0.3 landscape layout, before the portrait rework:
+
 ![GBA running on a real Tab5, with the coloured touch gamepad in the letterbox margins](docs/screenshot-fire-emblem.png)
 
-*Fire Emblem: The Blazing Blade running on a real Tab5. The coloured touch gamepad is drawn only in the
-letterbox margins, so it never covers the game.*
-*《火焰之纹章：烈火之剑》在真机 Tab5 上运行 —— 彩色触摸手柄只画在留白区，不遮挡游戏画面。*
+*Fire Emblem: The Blazing Blade on a real Tab5 (v0.3): the game stays in the middle and the gamepad is
+drawn in the letterbox margins.*
+*《火焰之纹章：烈火之剑》真机照片（v0.3 横屏布局）：画面居中，手柄画在留白区。*
 
 ---
 
@@ -31,10 +44,10 @@ Honest status, measured on the device (not aspirational):
 | GBA core (gpSP) | ✅ Working | Interpreter + **RISC-V dynarec** (JIT), ~2x faster than the interpreter |
 | Audio | ✅ Working | ES8388 codec over I2S, 32 kHz, no frame-rate impact |
 | Savestates | ✅ Working | Core-level state (~416 KB) written to the SD card |
-| Touch virtual gamepad | ✅ Working | Diamond ABXY layout, per-key colors, drawn only in the screen margins |
+| Touch virtual gamepad | ✅ Working | Portrait layout: the 720x480 game screen is pinned to the top, the gamepad sits in the control area below it (D-pad bottom-left, diamond ABXY bottom-right with per-key colours, L/R in the top corners, SELECT/START/MENU along the bottom). Never overlaps the game |
 | Chinese (CJK) support | ✅ Working | Built-in 3773-glyph CJK font (full GB2312 level-1, OFL-1.1) in a **dedicated flash partition**: zero load time, shared by every app, no SD card needed; all 197 UI strings localized |
-| Display path | ⚠️ CPU-transpose | ~15 fully-rendered frames/sec at 60 fps logical, **and it degrades over time** (transpose cost grows 47ms→431ms, DSI reports “previous draw operation is not finished”) — see [Performance](#performance) and [porting notes, section 9](docs/TAB5-PORT-STATUS.md) |
-| Battery gauge | ❌ Not implemented | `BATT:0` in the status log; the Tab5 has an INA226 |
+| Display path | ✅ Working | Block transpose into on-chip SRAM + AXI-QoS priority, and a bounded retry instead of silently dropped frames (v0.3 rework: ~30 fully-rendered frames/sec, no more drift over time) — see [Performance](#performance) |
+| Battery gauge | ✅ Working | INA226 power monitor on the BSP I2C bus (0x41), 2S pack voltage → percentage; shown as the coloured indicator light in the control area (blinks below 10% and while charging) |
 | Other cores (NES/SNES/MD/PCE/...) | ❌ Not ported | The retro-go tree carries them; only the launcher + GBA are wired for this target |
 
 **Logical speed is full speed**: GBA titles run at 59-60 fps of emulated time with audio in sync.
@@ -81,19 +94,33 @@ Full details, the `--no-networking` trap, and serial-monitor caveats: **[BUILDIN
 
 ## Controls
 
-The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch screen inside the letterbox margins
-(the game viewport is 720x480, leaving room on both sides):
+The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch screen, in the control area
+below the game (the game viewport is 720x480 anchored to the top of the portrait panel):
 
-- **D-pad** — left margin
-- **A / B / X / Y** — right margin, diamond layout, each key its own color
-- **L / R** — top corners (GBA shoulder buttons)
+```
+┌──────────────────────────────┐
+│        game screen 720x480   │   ← 3x integer scale, never overlapped
+├──────────────────────────────┤
+│ [L]                      [R] │
+│                              │
+│    ✛        ●          Ⓨ     │   ● = battery light
+│            (battery)   ⓍⒶⓑ    │
+│                              │
+│  [SELECT]  [START]  [MENU]   │
+└──────────────────────────────┘
+```
+
+- **D-pad** — control area, bottom-left
+- **A / B / X / Y** — control area, bottom-right, diamond layout, each key its own colour
+- **L / R** — top corners of the control area (GBA shoulder buttons)
 - **X / Y** — the core's Turbo A / Turbo B (hold to auto-fire)
 - **START / SELECT** — bottom centre
 - **MENU** — open the in-game menu (savestates, options, reset)
-- **OPTION** — options menu
+- **Battery light** — centre of the control area: green ≥60% / amber 20-60% / red 10-20% / blinking below 10% and while charging
 - **Language** — Options → Language switches the UI to Chinese (English by default; the choice persists in NVS)
 
-Layout reference: [docs/touch-layout-p2.png](docs/touch-layout-p2.png)
+Layout reference: [docs/touch-layout-p2.png](docs/touch-layout-p2.png) (landscape era) ·
+[docs/screenshot-portrait.png](docs/screenshot-portrait.png) (current portrait layout)
 
 ---
 
