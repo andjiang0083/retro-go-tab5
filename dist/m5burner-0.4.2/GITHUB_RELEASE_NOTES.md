@@ -28,6 +28,16 @@ entered or left a game. The display layer's frame-push loop only covers the game
 (720×480), while the touch pad lives in the black margin outside it, so those rows were never
 redrawn. The display layer now repaints exactly the rectangles whose appearance changed.
 
+**修：调换键在默认 X/Y 模式下功能是反的** —— 按 X 发出的其实是 R、按 Y 发出的其实是 L
+（亮度也跟着错位：按 X 亮起的是肩键 R）。输入层漏了"按当前状态决定映射"这一步，
+自反对换被无条件应用，等于永远停在已调换那一侧。现在输入层与可视层共用同一个映射函数，
+结构上不可能再不一致。**这条会让"调换键点了没反应/功能不对"的观感彻底消失。**
+
+**Fixed: the swap key was functionally inverted in the default X/Y mode** — pressing X actually
+emitted R and pressing Y emitted L (the highlight lit the shoulder instead). The input layer
+skipped the state check, so the self-inverse swap was applied unconditionally, leaving the mapping
+permanently on the "swapped" side. Input and display now share one mapping function.
+
 同时修掉两处相关缺陷 / Two related fixes:
 
 - **列表里点触摸键偶尔短暂花屏** —— 之前在输入线程里直接要求"整屏重画"，等于两个线程抢同一块
@@ -76,7 +86,7 @@ diagonals are reliable and no longer bleed into the neighbouring direction.
 | 文件 | 说明 |
 |---|---|
 | `retro-go-tab5-0.4.2-merged.bin` | M5Burner / esptool 用的 merged 全镜像（2,490,368 字节，DIO） |
-| `retro-go-tab5-0.4.2-merged.bin.sha256` | 校验和（`f01d69b5…`） |
+| `retro-go-tab5-0.4.2-merged.bin.sha256` | 校验和（`89a9898c…`） |
 | `cover-320x200.png` | M5Burner 封面（真渲染的竖屏界面 + 设备外框，含新的调换键） |
 | `README_M5Burner.md` | 逐字段刷机说明 + 按键表 |
 | `screen-hero.png` | 可选附件：触摸手柄真渲染全图（720×1280，发布说明里可作配图） |
@@ -84,6 +94,6 @@ diagonals are reliable and no longer bleed into the neighbouring direction.
 
 布局校验 / layout check：`bootloader@0x2000`（`e903024f`，DIO + ESP32-P4）· `partitions@0x8000`（魔数 `aa50`）·
 `launcher@0x10000` · `gbsp@0x100000`。**前 64 KB 与 v0.4.1 完全一致**（bootloader 与分区表都没动，差异全在 app 段）。
-固件版本戳 `v0.0.1-65-g9d4cf`（ESP-IDF v5.5.2）。
+固件版本戳 `v0.0.1-69-g08046`（ESP-IDF v5.5.2）。
 
 包含 v0.4.1 全部内容（含"插 USB-C 不充电"修复与圆灯呼吸）。
