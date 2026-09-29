@@ -126,7 +126,6 @@ static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画
 static bool swap_btn_ready = false;
 static uint32_t swap_flash_ms = 0;
 static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它发现"该重画了" */
-static bool swap_repaint_requested = false; /* 请求显示线程把画面整片重推（见 consume 函数） */
 #define RG_OVERLAY_SWAP_PAD 10      /* 命中矩形比视觉矩形外扩（和左上角开关同一思路） */
 static uint32_t visual_mask;              /* 含"高亮保持"的显示用按下掩码 */
 static uint32_t debug_mask;               /* 预览用强制按下 */
@@ -721,12 +720,14 @@ static void apply_swap_variants(void)
             uint16_t c = b->pal[r];     b->pal[r] = b->pal_alt[r];     b->pal_alt[r] = c;
             uint16_t p = b->pal_p[r];   b->pal_p[r] = b->pal_p_alt[r]; b->pal_p_alt[r] = p;
         }
+        dirty_units |= (1u << i);   /* 只有这几个单元的外观变了 —— 只重画它们 */
     }
     if (swap_btn.mask_alt)
     {
         uint8_t *m = swap_btn.mask;
         swap_btn.mask = swap_btn.mask_alt;
         swap_btn.mask_alt = m;
+        dirty_swap_btn = true;
     }
     swap_generation++;
 }
@@ -737,25 +738,16 @@ void rg_overlay_set_swap(bool on)
         return;
     swap_yx = on;
     swap_flash_ms = (uint32_t)(rg_system_timer() / 1000);   /* 点一下亮一次 */
-    apply_swap_variants();                                  /* 立刻生效（只对换，无分配） */
-    dirty_all_units = true;   /* 13 个单元的外观都可能变（键位/标签/配色一起换） */
+    apply_swap_variants();     /* 立刻生效（只对换，无分配）；它自己标记"哪几个单元要重画" */
     rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
     pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
-    /* ⚠ 画面刷新交给**显示线程**去做（见 rg_overlay_consume_repaint_request 的注释）：
-     * 这里只置一个请求标志。绝不能在这里直接调 rg_display_force_redraw() ——
-     * 它会 dispatch RG_EVENT_REDRAW，而启动器的 event_handler 收到该事件就调 gui_redraw()，
-     * 于是**在输入任务的上下文里重画整个界面**，和启动器自己的循环抢同一块 surface
-     * （真机 2026-09-29：列表里点击会短暂花屏）。 */
-    swap_repaint_requested = true;
-    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u, repaint requested)\n",
+    /* 让画面立刻跟上：标记"哪几个单元的外观变了"，由显示线程在推帧时消费
+     * （见 rg_overlay_take_dirty_rects 的说明）。⚠ 绝不要在这里直接调
+     * rg_display_force_redraw() —— 它会 dispatch RG_EVENT_REDRAW，启动器的
+     * event_handler 收到就 gui_redraw()，于是在**输入任务的上下文里重画整个界面**，
+     * 和启动器自己的循环抢同一块 surface（真机 2026-09-29：列表里点击会短暂花屏）。 */
+    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u)\n",
             on, (unsigned)swap_generation);
-}
-
-bool rg_overlay_consume_repaint_request(void)
-{
-    const bool pending = swap_repaint_requested;
-    swap_repaint_requested = false;
-    return pending;
 }
 
 uint32_t rg_overlay_get_generation(void)

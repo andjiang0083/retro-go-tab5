@@ -104,15 +104,6 @@ uint32_t rg_overlay_get_generation(void);
 #define RG_OVERLAY_DIRTY_MAX 16
 int rg_overlay_take_dirty_rects(int *out_xywh, int max);
 
-/* 取走"请把画面整片重推一遍"的请求（取走即清）。
- * 谁消费：**显示线程**的推帧函数（rg_display.c 的 write_update，进函数就查一次）。
- * 为什么必须由显示线程做：
- *   ① 行校验和过滤会跳过"源缓冲没变"的行，而叠加层不在源缓冲里 → 靠置脏推不动；
- *   ② 游戏里覆盖层所在的黑边在视口外，推帧循环根本到不了 → 只有"整屏重来"能重画；
- *   ③ 这套动作要重画界面，跨线程做 = 两个线程抢同一块 surface（真机见过花屏）。
- * 调用方（输入侧）只置标志，不做任何绘制/事件派发。 */
-bool rg_overlay_consume_repaint_request(void);
-
 /* X/Y ↔ L/R 的调换规则 —— **只此一处**（输入命中、可视层标签、可视层配色共用）：
  *   X↔R、Y↔L；A/B、十字键、系统键都不动。
  * 它是自反的（应用两次回原样），所以"调换/换回"是同一个调用。 */
