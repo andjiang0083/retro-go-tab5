@@ -107,6 +107,11 @@ void rg_display_clear_except(int left, int top, int width, int height, uint16_t 
 void rg_display_clear(uint16_t color_le);
 bool rg_display_sync(bool block);
 void rg_display_force_redraw(void);
+
+/* 把某些逻辑行标记为"脏"（清零行校验和）→ 下一次画面推送会重推这些行。
+ * 用途：屏幕内容没变、但**叠加层**（虚拟按键等）变了的东西 —— 只置脏要改的那几行。
+ * 参考用法见 rg_touch_overlay.c 的 rg_overlay_set_swap()。 */
+void rg_display_invalidate_lines(int top, int count);
 void rg_display_submit(const rg_surface_t *update, uint32_t flags);
 
 rg_display_counters_t rg_display_get_counters(void);

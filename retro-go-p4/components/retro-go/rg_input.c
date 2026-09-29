@@ -513,6 +513,12 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
 #endif
 
 #if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)
+    /* 本轮有没有读到真实触点。**必须在读函数外面判**（见函数末尾的复位块）：
+     * IDF 的 esp_lcd_touch_get_coordinates() 在无触点时返回 false
+     * （它直接把驱动 get_xy 的返回值当自己的返回值，ST7123 无触点就是 false），
+     * 于是"手指抬起"这一拍整个分支都被跳过 —— 任何写在分支里的"抬指复位"
+     * 都永远跑不到。2026-09-29 真机反馈"再按切换键换不回来"的根因就在这里。 */
+    bool any_touch = false;
     if (rg_touch_ensure() && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
     {
         uint16_t px[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
@@ -520,6 +526,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         uint8_t count = 0;
         if (esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS))
         {
+            any_touch = (count > 0);
 #if RG_TOUCH_OVERLAY
             /* "看得见"和"点得到"必须同源，两个条件都要满足：
              *   ① 用户没关掉按键（visible）—— 否则黑边上一按就触发，用户以为触摸坏了；
@@ -622,6 +629,19 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                 }
             }
         }
+    }
+
+    /* 抬指 / 这一拍没有任何触点 → 清掉"按住"类状态。
+     * ⚠ 位置很关键：必须在上面两层 `if`（read_data / get_coordinates）**外面**。
+     * 无触点时 get_coordinates 返回 false、分支整块被跳过，写在里面的复位永远不执行 ——
+     * 边沿检测会一直以为手指还按着，于是"调换"只能切一次（真机："再按换不回来"）。
+     * 方向键的滞回状态同理（它写在分支里，注释说"或整体抬指"其实抬指那一拍看不到）。 */
+    if (!any_touch)
+    {
+        if (swap_btn_down)
+            RG_LOGI("touch swap: released\n");
+        swap_btn_down = false;
+        rg_dpad_reset();
     }
 #endif
 

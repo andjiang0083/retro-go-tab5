@@ -10,6 +10,7 @@
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
 
 #include "fonts/fonts.h"
+#include "rg_display.h"
 #include "rg_gui.h"
 #include "rg_settings.h"
 #include "rg_system.h"
@@ -49,6 +50,16 @@ typedef struct
     uint8_t *mask;       /* w*h： (覆盖率<<3) | 角色 */
     uint16_t pal[4];     /* 正常态：角色 -> 颜色 */
     uint16_t pal_p[4];   /* 按下态 */
+    /* ── 调换用的"另一套"（只有 X/Y/L/R 四个键 + 那颗切换按钮有）───────────
+     * 两套都在开机时预渲染好，点击只做对换（key/mask/调色板一起换）：
+     *   ① 点击路径上没有分配/释放 —— 输入任务里直接改也安全（不会 free 掉
+     *      显示线程正在解引用的掩码，那是原设计的隐患）；
+     *   ② 不依赖"下一帧"，渲染线程下次画时读到的就是新的那一套。
+     * 代价：5 个单元多一份掩码（≈2KB PSRAM）+ 开机多约 90ms 预渲染。 */
+    uint8_t *mask_alt;
+    uint16_t pal_alt[4];
+    uint16_t pal_p_alt[4];
+    rg_key_t key_alt;
 } rg_overlay_btn_t;
 
 typedef struct
@@ -108,7 +119,7 @@ static bool swap_yx = false;
 static rg_overlay_btn_t swap_btn;
 static bool swap_btn_ready = false;
 static uint32_t swap_flash_ms = 0;
-static bool swap_rebuild_pending = false;   /* 状态变了、等渲染线程重建掩码 */
+static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它发现"该重画了" */
 #define RG_OVERLAY_SWAP_PAD 10      /* 命中矩形比视觉矩形外扩（和左上角开关同一思路） */
 static uint32_t visual_mask;              /* 含"高亮保持"的显示用按下掩码 */
 static uint32_t debug_mask;               /* 预览用强制按下 */
@@ -556,6 +567,32 @@ void rg_overlay_init(void)
     build_button(&swap_btn, c565(0xE8, 0xA2, 0x2C), swap_label());
     swap_btn_ready = (swap_btn.mask != NULL);
 
+    /* ── 调换用的"另一套"掩码（预渲染，点击只对换）─────────────────────────
+     * 只给 X/Y/L/R 四个键和这颗切换按钮建；集合在调换下闭合，所以"另一套"就是
+     * 同一个位置的另一个键（含它的标签与配色）。开机多花约 90ms，换"点一下立刻变"。 */
+    for (size_t i = 0; i < n; ++i)
+    {
+        const rg_key_t k = btns[i].key;
+        if (k != RG_KEY_X && k != RG_KEY_Y && k != RG_KEY_L && k != RG_KEY_R)
+            continue;
+        const rg_key_t alt = rg_touch_swap_key(k);
+        rg_overlay_btn_t tmp = btns[i];
+        tmp.key = alt;
+        tmp.mask = NULL;
+        build_button(&tmp, overlay_key_color(alt), NULL);
+        btns[i].key_alt = alt;
+        btns[i].mask_alt = tmp.mask;
+        memcpy(btns[i].pal_alt, tmp.pal, sizeof(tmp.pal));
+        memcpy(btns[i].pal_p_alt, tmp.pal_p, sizeof(tmp.pal_p));
+    }
+    {
+        /* 这颗按钮的颜色/调色板两套相同（恒为琥珀），变的只有标签 → 只留备用掩码 */
+        rg_overlay_btn_t tmp = swap_btn;
+        tmp.mask = NULL;
+        build_button(&tmp, c565(0xE8, 0xA2, 0x2C), swap_yx ? "X/Y" : "L/R");
+        swap_btn.mask_alt = tmp.mask;
+    }
+
     ready = true;
     /* 这一行会出现在串口上：app 切换（进出游戏）时 lcd_init 里会重跑建层，
      * 耗时直接决定黑屏等待时长 —— 所以别把 double/除法/strlen 放回热路径。 */
@@ -643,33 +680,37 @@ bool rg_overlay_get_swap(void)
     return swap_yx;
 }
 
-/* 重建会被调换影响的按键掩码：只有 X/Y/L/R 四个。
- * 集合 {X,Y,L,R} 在调换下闭合，所以按 btn.key 过滤无论切换前/后都对。 */
-static void rebuild_swapped_buttons(void)
+/* 把当前生效的一套与备用的一套对换（X/Y/L/R 四个键 + 那颗切换按钮）。
+ * 只做 key/掩码/调色板的对换 —— **不分配、不释放**：
+ *   - 输入任务里直接调用也安全（显示线程不会读到正被释放的掩码），
+ *     代价只是"正在画的那一帧可能拿到旧一套"，下一帧就对；
+ *   - 不需要等下一帧重建，所以点一下画面立刻变（真机反馈"要切界面才生效"的另一半原因）。
+ * 切换窗口内的调色板对换是逐项赋值，理论上存在"一帧颜色串色"的窗口 ——
+ * 与模块既有的 update_acov() 同类（那也是在跑动中改共享状态），可接受。 */
+static void apply_swap_variants(void)
 {
     if (!ready || !btns)
         return;
     for (size_t i = 0; i < btn_count; ++i)
     {
-        const rg_key_t k = btns[i].key;
-        if (k != RG_KEY_X && k != RG_KEY_Y && k != RG_KEY_L && k != RG_KEY_R)
+        rg_overlay_btn_t *b = &btns[i];
+        if (!b->mask_alt)               /* 不受调换影响 */
             continue;
-        btns[i].key = rg_touch_swap_key(k);         /* 自反：应用一次 = 对调 */
-        if (btns[i].mask)                           /* 老掩码必须先还回去：这是"点一下重建一次"的路径 */
+        uint8_t *m = b->mask;       b->mask = b->mask_alt;      b->mask_alt = m;
+        rg_key_t k = b->key;        b->key = b->key_alt;        b->key_alt = k;
+        for (int r = 0; r < 4; ++r)
         {
-            free(btns[i].mask);
-            btns[i].mask = NULL;
+            uint16_t c = b->pal[r];     b->pal[r] = b->pal_alt[r];     b->pal_alt[r] = c;
+            uint16_t p = b->pal_p[r];   b->pal_p[r] = b->pal_p_alt[r]; b->pal_p_alt[r] = p;
         }
-        build_button(&btns[i], overlay_key_color(btns[i].key), NULL);
     }
-
-    if (swap_btn.mask)
+    if (swap_btn.mask_alt)
     {
-        free(swap_btn.mask);
-        swap_btn.mask = NULL;
+        uint8_t *m = swap_btn.mask;
+        swap_btn.mask = swap_btn.mask_alt;
+        swap_btn.mask_alt = m;
     }
-    build_button(&swap_btn, c565(0xE8, 0xA2, 0x2C), swap_label());
-    swap_btn_ready = (swap_btn.mask != NULL);
+    swap_generation++;
 }
 
 void rg_overlay_set_swap(bool on)
@@ -678,22 +719,20 @@ void rg_overlay_set_swap(bool on)
         return;
     swap_yx = on;
     swap_flash_ms = (uint32_t)(rg_system_timer() / 1000);   /* 点一下亮一次 */
+    apply_swap_variants();                                  /* 立刻生效（只对换，无分配） */
     rg_settings_set_boolean(NS_GLOBAL, SETTING_SWAP, on);
-    /* ⚠ 掩码重建**不在这里做**：输入任务和显示线程是两条线，blit_one 正解引用
-     * b->mask 时 free 掉它会读到野内存。改标记，让渲染线程在下一帧开头重建
-     * （见 swap_rebuild_if_pending()）。输入侧不受影响：它只查状态、即时生效。 */
-    swap_rebuild_pending = true;
     pending_commit = true;      /* 立刻生效、延后落盘（同 set_visible） */
-    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d\n", on);
+    /* 让画面也跟着立刻变：把覆盖层所在的逻辑行置脏。
+     * 不做这一步，菜单界面的"重绘"在行校验和层面是 no-op（内容没变 → 一行都不重推），
+     * 驱动就不会重新合成覆盖层 —— 标签要等下一次内容真的变化（进入/退出游戏）才更新。
+     * 真机反馈"点切换后要切界面才生效"就是这个（游戏里每帧都写，所以游戏内看不出来）。 */
+    rg_display_invalidate_lines(RG_TAB5_SWAP_DIRTY_TOP, RG_TAB5_SWAP_DIRTY_LINES);
+    RG_LOGI("touch overlay: X/Y <-> L/R swapped = %d (gen %u)\n", on, (unsigned)swap_generation);
 }
 
-/* 由合成路径每帧检查一次（渲染线程内），天然无并发 */
-static void swap_rebuild_if_pending(void)
+uint32_t rg_overlay_get_generation(void)
 {
-    if (!swap_rebuild_pending)
-        return;
-    swap_rebuild_pending = false;
-    rebuild_swapped_buttons();
+    return swap_generation;
 }
 
 void rg_overlay_debug_set_pressed(uint32_t mask)
@@ -905,7 +944,6 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
 
     retry_init_if_needed();
     commit_if_pending();
-    swap_rebuild_if_pending();   /* 调换状态变了就在这里重建掩码（渲染线程内，无并发） */
     poll_pressed();
 
     if (!visible || !ready)
@@ -1180,7 +1218,6 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
     retry_init_if_needed();
     commit_if_pending();
-    swap_rebuild_if_pending();   /* 调换状态变了就在这里重建掩码（渲染线程内，无并发） */
     poll_pressed();
 
     if (!visible || !ready)
@@ -1208,7 +1245,6 @@ void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, i
 
     retry_init_if_needed();
     commit_if_pending();
-    swap_rebuild_if_pending();   /* 调换状态变了就在这里重建掩码（渲染线程内，无并发） */
     poll_pressed();
 
     if (!visible || !ready)

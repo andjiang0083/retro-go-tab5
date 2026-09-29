@@ -87,6 +87,12 @@ void rg_overlay_get_swap_rect(int *x, int *y, int *w, int *h);
 bool rg_overlay_get_swap(void);
 void rg_overlay_set_swap(bool on);
 
+/* 每次调换 +1。给"菜单/启动器"这类**事件驱动重绘**的界面用：
+ * 它们只在收到按键时才重画，而调换不产生任何按键 —— 拿这个号比一下就知道
+ * 覆盖层的内容变了、该重画一帧（不然标签要等到下一次界面切换才更新）。
+ * 游戏里每帧都在写画面，用不到这个。 */
+uint32_t rg_overlay_get_generation(void);
+
 /* X/Y ↔ L/R 的调换规则 —— **只此一处**（输入命中、可视层标签、可视层配色共用）：
  *   X↔R、Y↔L；A/B、十字键、系统键都不动。
  * 它是自反的（应用两次回原样），所以"调换/换回"是同一个调用。 */

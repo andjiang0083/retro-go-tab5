@@ -13,6 +13,7 @@
 #include "bookmarks.h"
 #include "browser.h"
 #include "gui.h"
+#include "rg_touch_overlay.h"   /* 触摸覆盖层内容代际号（调换按钮 → 立刻重画，见 retro_loop） */
 #include "webui.h"
 #include "updater.h"
 
@@ -199,6 +200,12 @@ static void retro_loop(void)
     int change_tab = 0;
     int browse_last = -1;
     bool redraw_pending = true;
+#if RG_TOUCH_OVERLAY
+    /* 触摸覆盖层的"内容代际号"：L/R 中间那颗 X/Y ↔ L/R 调换按钮改的是覆盖层内容，
+     * 不产生任何按键 —— 只靠下面的 joystick 判断，标签要等到下一次界面切换才更新
+     * （真机反馈：点切换后要进出游戏才生效）。这里比一下号，变了就重画一帧。 */
+    uint32_t overlay_gen_seen = rg_overlay_get_generation();
+#endif
 
     gui_init(app->isColdBoot);
     applications_init();
@@ -339,6 +346,17 @@ static void retro_loop(void)
                 gui.browse = true;
             }
         }
+
+#if RG_TOUCH_OVERLAY
+        /* 覆盖层内容变了（比如刚点了调换按钮）→ 立刻重画。
+         * 只置脏行还不够：菜单重绘走的"行校验和"判定在内容没变时是 no-op，
+         * 得真的走一遍重绘，那几行才会被重推、覆盖层才会被重新合成。 */
+        if (rg_overlay_get_generation() != overlay_gen_seen)
+        {
+            overlay_gen_seen = rg_overlay_get_generation();
+            redraw_pending = true;
+        }
+#endif
 
         if (redraw_pending)
         {
