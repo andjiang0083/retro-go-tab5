@@ -98,16 +98,17 @@ The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch sc
 below the game (the game viewport is 720x480 anchored to the top of the portrait panel):
 
 ```
-┌──────────────────────────────┐
-│        game screen 720x480   │   ← 3x integer scale, never overlapped
-├──────────────────────────────┤
-│ [L]                      [R] │
-│                              │
-│    ✛        ●          Ⓨ     │   ● = battery light
-│            (battery)   ⓍⒶⓑ    │
-│                              │
-│  [SELECT]  [START]  [MENU]   │
-└──────────────────────────────┘
++----------------------------------+
+|         game screen 720x480      |   <- 3x integer scale, never overlapped
++----------------------------------+
+| [L]                          [R] |
+|                                  |
+|  [D-pad]    (LED)           [X]  |   (LED) = battery light
+|             battery      [Y] [A] |         green/amber/red
+|                            [B]   |
+|                                  |
+|    [SELECT]  [START]  [MENU]     |
++----------------------------------+
 ```
 
 - **D-pad** — control area, bottom-left
