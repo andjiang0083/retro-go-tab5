@@ -225,7 +225,7 @@ u32 function_cc update_gba(int remaining_cycles)
           u32 i;
           dispstat |= 0x01;
 
-#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG && RG_GBA_DIAG_SPAM
           /* ── P0-a · guest 时间轴锚点探针（2026-10-06，issue #4）────────────────────
            * 要回答的问题：dynarec 与解释器那"恒定 1 帧相位差"，是**真实差异**，
            * 还是**宿主帧边界采样**造出来的伪差？（两个引擎的帧边界落点天然差一个块，

@@ -2,7 +2,34 @@
 
 ## 一、当前状态
 
-### 🟢 最新（2026-10-06）：v0.4.4 已打包发布 —— 修好 GBA dynarec 下的"按键不响应"
+### 🟢 最新（2026-10-06 第二轮）：v0.4.5 —— 修两处 GBA 移植缺失（横条闪烁 + 启动器选存档）
+
+**① 画面横条闪烁**（issue [#5](https://github.com/andjiang0083/retro-go-tab5/issues/5)）—— **已修，用户真机目视确认「画面没有横条了」**
+- 根因：GBA 主循环只建了 `updates[0]`、`currentUpdate` **永不轮换**；而 `rg_display_submit()` 只是把**指针**交给
+  显示任务，显示任务在**另一个线程**异步读这块内存（`rg_display.c: display_task` → `write_update(msg.dataPtr)`）
+  ⇒ 核心渲染第 N+1 帧时显示任务可能还在读第 N 帧 ⇒「上半屏旧帧 + 下半屏新帧」= 一条条横条。
+  上游 NES/GBC/SNES/gwenesis 都是**两块 surface + 提交后轮换 + 切核心画面指针**。
+- 为何快速移动才明显：显示任务每帧工作量 ∝ 变化行数。静止时每帧 ~0.4 个 32 行带（实测 `blocks=18/s`、
+  `display=16ms/s` ≈1.5%），核心画完下一帧时显示早就读完；快速卷轴时近整屏 15 带 ≈13ms > 核心画下一帧 ~8–12ms ⇒ **必然重叠**。
+  v0.4.4 把帧率 34.7→59.7 后每秒提交次数 ×1.7，把**既有缺陷**放大到肉眼明显。
+- 修法（`gbsp/main/main.c`）：建 `updates[1]`；提交后 `currentUpdate = updates[currentUpdate == updates[0]]`；
+  `gba_screen_pixels = currentUpdate->data`（核心每帧现读 `get_screen_pixels()`，轮换安全）。建不出来退回单缓冲（仍有横条但不崩）。
+- ⚠️ 诚实记录：我另做的逐帧仪表（提交时显示任务是否仍占着上一帧）**不能作为量化证据** —— 抓取窗口里游戏几乎静止
+  （`blocks=18/s`），两轮读数都 ≈0；且它采样时机偏早（真实重叠发生在提交**之后**）。要量化「改前/改后」需在**真运动**场景抓取（本轮没做）。
+- 遗留（未动）：DPI 只有一个帧缓冲且写入不与面板扫描同步；如需再压可用 IDF 的 `on_refresh_done` 做 vblank 锚定。
+
+**② 启动器「继续游戏 + 存档位」不生效**（issue [#6](https://github.com/andjiang0083/retro-go-tab5/issues/6)）—— **已修，真机验证**
+- 根因：gbsp **从未消费 `RG_BOOT_RESUME`** —— 其它 8 个核心（NES/SNES/GBC/SMS/PCE/GW/fmsx/gwenesis）都有
+  `if (app->bootFlags & RG_BOOT_RESUME) rg_emu_load_state(app->saveSlot);`，而 `gbsp/main/main.c` 里连 `bootFlags`
+  都不出现 ⇒ 启动器给的存档位被丢弃（只能再从 menu 手动读档）；「保存并退出 → 下次开机自动续上」同样失效。
+  启动器→核心的管道本身是好的（`applications.c:127-140` 写 flags → `rg_system_switch_app` → `update_boot_config` 落盘）。
+- 修法：`sram_load()` 之后、主循环之前补那 3 行（位置与上游一致）。
+- 验证（真机日志）：`RG_TEST_RESUME: forced bootFlags=01 slot=0` → `rg_emu_load_state: Loading state from
+  '.../恶魔城_晓月之圆舞曲.gba.sav'`，无 `Load failed!`。
+
+**发版 0.4.5**：GitHub Release + M5Burner（见 §六）。
+
+### 🟢 上一版（2026-10-06）：v0.4.4 已打包发布 —— 修好 GBA dynarec 下的"按键不响应"
 
 **根因**：两个执行引擎的**周期记账口径不一致** —— 解释器按 `ws_cyc_nseq/ws_cyc_seq[区域][索引]` 动态扣
 等待周期，dynarec 写死常数（访存 load+2/store+1、取指用 `def_seq_cycles`、MUL/MLA 估算 +2/+3）。
@@ -163,7 +190,18 @@ python3 tools/make-cover.py --hero docs/screenshot-portrait.png
 
 ## 四、待办
 
-### ⭐ 本轮最新（2026-10-06）：v0.4.4 已发行；残余问题挂到 issue #4
+### ⭐ 本轮最新（2026-10-06 第二轮）：v0.4.5 —— 两处移植缺失已修并验证
+
+| # | 问题 | 根因 | 状态 |
+|---|---|---|---|
+| ① | 快速移动时**横条闪烁**（issue [#5](https://github.com/andjiang0083/retro-go-tab5/issues/5)） | GBA 主循环只有一块画面缓冲且**永不轮换**（`updates[0]`），显示任务在另一线程异步读它 ⇒ 核心渲染下一帧时显示任务还在读上一帧 ⇒「上旧下新」拼图 | **已修**（建 `updates[1]` + 提交后轮换 + 切 `gba_screen_pixels`）；**用户真机目视确认横条消失** |
+| ② | 启动器**「继续游戏 + 存档位」不生效**（issue [#6](https://github.com/andjiang0083/retro-go-tab5/issues/6)） | gbsp **从未消费 `RG_BOOT_RESUME`**（其它 8 个核心都有那 3 行）⇒ 存档位被丢弃 | **已修**（`sram_load()` 后补 3 行）；**真机日志验证**（`forced bootFlags=01 slot=0` → `Loading state from ...gba.sav`，无 `Load failed!`） |
+
+- 两个 issue 正文都是**中英双语**，含根因、代码位置、验证证据、以及诚实标注的"仪表不能当证据"。
+- 发版：**0.4.5** → GitHub Release + M5Burner（物料 `dist/m5burner-0.4.5/`）。
+- 待办（可选，未做）：横条「改前/改后」的**真运动**量化；DPI 面板侧 vblank 锚定（`on_refresh_done`）。
+
+### ⭐ 上一轮（2026-10-06）：v0.4.4 已发行；残余问题挂到 issue #4
 
 **发行状态（均已回读验证）**
 - **GitHub Release v0.4.4 ✅** <https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.4>

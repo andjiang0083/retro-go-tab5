@@ -190,6 +190,25 @@
 #define RG_GBA_INPUT_TRACE 0
 #endif
 
+/* 2026-10-06 临时测试钩子：强制"启动器带了存档位"那条路（真机上没人点启动器）。
+ * 与启动器语义等价：加 RG_BOOT_RESUME + 指定 slot。验证完必须改回 0。 */
+#ifndef RG_TEST_BOOT_RESUME
+#define RG_TEST_BOOT_RESUME 0
+#endif
+#ifndef RG_TEST_BOOT_RESUME_SLOT
+#define RG_TEST_BOOT_RESUME_SLOT 0
+#endif
+/* 2026-10-06 临时 A/B：=1 时关掉"第二块画面缓冲 + 轮换"，量改前的横条率。验证完删除。 */
+#ifndef RG_TEST_NO_SURFACE_ROTATION
+#define RG_TEST_NO_SURFACE_ROTATION 0
+#endif
+/* 2026-10-06 临时：诊断探针里的"每帧刷屏"部分（ANCH / DIAG_CURSOR / DIAG_DIR / DIAG_FB）。
+ * 量横条时必须关掉：每帧几十行 UART 会把核心拖慢、污染显示侧测量。
+ * 默认 1（行为不变），横条 A/B 时设 0 ⇒ 只留每秒一行的 DIAG_TEAR。 */
+#ifndef RG_GBA_DIAG_SPAM
+#define RG_GBA_DIAG_SPAM 1
+#endif
+
 #define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)/* 充电判定阈值（mA，取分流电流绝对值）：小于这个充电电流不算"在充电"，
  * 免得不插充电器时被噪声抖成闪烁。官方口径：分流电流**为负**表示在充电。 */
 #define RG_TAB5_CHARGE_CURRENT_MA   40
