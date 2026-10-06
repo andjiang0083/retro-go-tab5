@@ -26,6 +26,13 @@ Two firmware builds are published. **Installing the wrong one gives you a menu w
 
 Both files are attached to each [release](../../releases).
 
+### If you see "SD Card Error / Storage mount failed"
+
+**Reseat the microSD card**, then do a **full power cycle** (power off and on — a reset button is not enough).
+That is the only way to recover a card that has entered an unresponsive state; the firmware retries
+automatically but cannot revive a card that is already wedged. The same applies if it started after
+using a third-party launcher (e.g. M5Launcher).
+
 ## Screenshots
 
 **Portrait layout (v0.4.1)** — this image is rendered from the firmware's own drawing rules (same touch
