@@ -225,6 +225,54 @@ u32 function_cc update_gba(int remaining_cycles)
           u32 i;
           dispstat |= 0x01;
 
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+          /* ── P0-a · guest 时间轴锚点探针（2026-10-06，issue #4）────────────────────
+           * 要回答的问题：dynarec 与解释器那"恒定 1 帧相位差"，是**真实差异**，
+           * 还是**宿主帧边界采样**造出来的伪差？（两个引擎的帧边界落点天然差一个块，
+           * 同一份 guest 状态也会因读的时刻不同而读到不同值。）
+           * 做法：把采样点钉在**模拟 VBlank 起点** —— 本文件 vcount==160 分支，
+           *       这段核心扫描线代码**两个引擎共用** ⇒ 采样时刻与引擎无关；
+           *       采样方式为**直接读 EWRAM 页表指针**（纯内存读，零副作用、不参与周期记账）
+           *       ⇒ 探针可证惰性，不会自己改变被测对象。
+           * 输出：值变化即打一行；每 60 帧打一行 FNV-1a 累计哈希 ⇒ 两轮日志可直接 diff。 */
+          {
+            static u32 anch_n, anch_h = 2166136261u;
+            static unsigned anch_last_cur = 0xFFFFFFFFu, anch_last_dir = 0xFFFFFFFFu;
+            const u8 *ew = (const u8 *)memory_map_read[0x02000000 >> 15];
+            u32 cur = ew[0x04F9];
+            u32 dir = (u32)(ew[0x001A] | (ew[0x001B] << 8));
+            anch_h = (anch_h ^ ((dir << 8) | cur)) * 16777619u;
+            anch_n++;
+            if (cur != anch_last_cur || dir != anch_last_dir)
+            {
+              anch_last_cur = cur; anch_last_dir = dir;
+#if defined(RG_TARGET_SDL2)
+              { FILE *af = fopen("/tmp/diag_host_anch.log", "a");
+                if (af) { fprintf(af, "ANCH chg f=%u n=%u dir=%04X cur=%u\n",
+                                  (unsigned)frame_counter, (unsigned)anch_n, (unsigned)dir, (unsigned)cur);
+                          fclose(af); } }
+#else
+              printf("ANCH chg f=%u n=%u dir=%04X cur=%u\n",
+                     (unsigned)frame_counter, (unsigned)anch_n, (unsigned)dir, (unsigned)cur);
+#endif
+            }
+            if ((anch_n % 60) == 0)
+            {
+#if defined(RG_TARGET_SDL2)
+              { FILE *af = fopen("/tmp/diag_host_anch.log", "a");
+                if (af) { fprintf(af, "ANCH sync f=%u n=%u h=%08X dir=%04X cur=%u\n",
+                                  (unsigned)frame_counter, (unsigned)anch_n, (unsigned)anch_h,
+                                  (unsigned)dir, (unsigned)cur);
+                          fclose(af); } }
+#else
+              printf("ANCH sync f=%u n=%u h=%08X dir=%04X cur=%u\n",
+                     (unsigned)frame_counter, (unsigned)anch_n, (unsigned)anch_h,
+                     (unsigned)dir, (unsigned)cur);
+#endif
+            }
+          }
+#endif
+
           // Reinit affine transformation counters for the next frame
           video_reload_counters();
 
