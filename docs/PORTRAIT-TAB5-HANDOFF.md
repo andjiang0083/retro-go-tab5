@@ -30,8 +30,18 @@ dynarec 在**块边界**结算周期/中断、解释器按**每条指令**结算
 **仍未对齐的两个口径**（会"增加" dynarec 扣费，改前先备份并复测）：① LDM/STM 每寄存器 `+1` →
 应为 `ws_cyc_seq[区域][1]`；② 直接分支 B/BL/BX 未扣 → 应为 `ws_cyc_nseq[目标区域][1]`。
 
-**发布物料**：`dist/m5burner-0.4.4/`（merged 2,293,760 B / 单 app 1,376,256 B + 双语 README +
-字段表 + Release Notes）。GitHub Release v0.4.4 已发布；M5Burner 走 Web 平台对已有条目追加版本。
+**发布物料与状态（2026-10-06 完成）**：`dist/m5burner-0.4.4/`（merged 2,293,760 B / sha256 `2bf47ee1…`；
+单 app 1,376,256 B / sha256 `83bcd599…` + 双语 README + 字段表 + Release Notes）。
+- **GitHub Release v0.4.4 已发布**：<https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.4>
+  （8 个附件全部 uploaded，tag → 公开仓 `22ac3c7`；公开仓与 dev 树已同步）
+- **M5Burner 已提交**：`retro-go Tab5`（firmwareId `2105333864932450305`）追加版本 **0.4.4**，
+  状态 **PENDING / PUBLIC**（待 M5Stack 审核），bin `retro-go-tab5-0.4.4-merged.bin`，
+  上传时间 `2026-10-06T19:38:55+08:00`，设备 Tab5。审核通过后需再回读确认 PUBLISHED。
+- **发版门禁（本次实测）**：与 v0.4.3 镜像的差异仅三处 —— bootloader 内构建时间戳、
+  分区尺寸随 app 自动收缩（gbsp `0x150000`→`0x130000`）、app 段内容；
+  bootloader **入口点 `da9ef24f` 完全相同**、分区表偏移量未变 ⇒ 无黑屏风险。
+  ⚠️ 注意：这类"分区尺寸自动收缩"是正常的（`build_image` 按 app 实际大小定尺寸），
+  不要把它误判成布局变更；真正的判据是 **bootloader 入口点 + 各分区偏移量**。
 
 **测试脚手架（已全部关闭，钩子保留在树里）**：`RG_GBA_DIAG 0`、`RG_GBA_INPUT_TRACE 0`、
 `RG_TEST_KEYS_DEVICE ""`、`RG_TEST_NO_AUTOSAVE 0`、`#undef RG_TOUCH_TRACE`。
@@ -152,7 +162,45 @@ python3 tools/make-cover.py --hero docs/screenshot-portrait.png
 6. 用户会看报告末尾的「待办建议」并据此批准执行 —— 待办必须写具体（文件/参数/验证方式）。
 
 ## 四、待办
-### 0) ✅ v0.4.3：M5Launcher 兼容（本轮完成，已真机验证）—— 详见"一、当前状态"顶部
+
+### ⭐ 本轮最新（2026-10-06）：v0.4.4 已发行；残余问题挂到 issue #4
+
+**发行状态（均已回读验证）**
+- **GitHub Release v0.4.4 ✅** <https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.4>
+  （8 个附件全 uploaded；tag → 公开仓 `22ac3c7`；issue #3 已结案关闭）
+- **M5Burner ✅ 已提交**：`retro-go Tab5`（firmwareId `2105333864932450305`）追加 **0.4.4**，
+  状态 `PENDING / PUBLIC`（待 M5Stack 审核，**用户无需操作**），bin `retro-go-tab5-0.4.4-merged.bin`，
+  上传时间 `2026-10-06T19:38:55+08:00`；旧版 0.4.3 仍 `PUBLISHED` 在线。
+  ⇒ **后续动作：某天用登录态接口回读一次，确认 0.4.4 → `PUBLISHED`。**
+
+**① 残余问题 → issue [#4](https://github.com/andjiang0083/retro-go-tab5/issues/4)：先自证清白，再谈修**
+
+现象：dynarec 与解释器在 BIOS LZ77 循环的**帧边界落点**差恒定 1 帧（块首 PC `0x0B30` vs 块内 `0x0B34`），
+速率完全相同（f=50→400 两者计数器都降 342 ⇒ 不是漂移）。
+
+**最高优先级怀疑：这 1 帧差可能是测量探针自己造的。** 观测量来自注入代码（`DIAG_DIR` 读 EWRAM、落盘、
+自动按键脚本、输入追踪），它们本身会改变每帧时序，而两个引擎的探针代码路径根本不同
+（dynarec 走 RISC-V 后端、解释器走 C 大循环）。**#3 里误判"内存扣费模型已证伪"正是栽在探针噪声上**
+（宿主编译根本没编 `DIAG_DIR`，比的是两套 PC 噪声）。
+
+**计划（一步一个口径，每步都要能单独否掉自己）**
+1. **P0 · probe-free 判定（先做）**：找**不注入代码**的观测量 —— ROM 自写的存档/校验字节、
+   真机屏幕像素哈希（两引擎跑到同一帧号截图比对）、游戏自身计时标记落在 ROM 的哪个字节。
+   ⇒ 若 probe-free 显示两引擎一致 ⇒ **判"自造"，关掉 #4，并把所有探针类结论标"需重测"**。
+2. **P1 · 未改动基线对照**：完全不改上游的树 + 同一探针跑同一 ROM，看该差是否本来就有。
+3. **P2 · 逐口径二分**：两处未对齐改动分别单独加上（一次只动一个，同窗口复测），看 1 帧差是否移动。
+4. **P3 · 功能等价性（更严判据）**：⚠️ 现在两引擎光标值序列**并非逐字节一致** ——
+   dynarec `9,24,39,0,9,24,9` vs 解释器 `9,24,39,0,39,24,9`（第 5 个值不同）。
+   差 1 帧相位天然会让逐帧采样错位一位，但**要用更长脚本 + 画面/存档哈希复核，不能只比事件数**。
+5. **P4 · 只在 P0~P3 全排除"自造"之后**才动 LDM/STM 与直接分支扣费
+   （两处都会*增加* dynarec 扣费 ⇒ 必须同窗口复测帧率 + 输入，别拿"机制上更一致"当收益）。
+
+**② 性能（用户定调：以此状态为基准；无止境，但不阻塞任何事）**
+
+基准 = **59.7 fps**（dynarec，185s 窗口；解释器 34.7）。可选只有两项：`-Oz` 回 `-O3` 复测、
+P4 两条口径复测。
+
+### 0) ✅ v0.4.3：M5Launcher 兼容（已真机验证 + **已上架** M5Burner）
 字库内嵌 + 单 app 形态 + 两份发布物料；只差用户本人发布。
 ### 0.5) ⏳ ③ SD 读不到（用户要求稍后处理）
 候选修法：我们 SD 初始化 4-bit **失败后回退 1-bit**（M5Launcher 用同一组引脚、1-bit、挂 `/sdcard`）。
@@ -172,7 +220,7 @@ python3 tools/make-cover.py --hero docs/screenshot-portrait.png
 - **遗留观察（未做）**：分流读值会抖（-871mA 与 +1mA 交替采样），单次采样让 `charging` 在 2 秒周期里翻一次
   → 视觉上是"闪 2s / 停 2s"。要更稳就改成"连续两次同向才改状态"（一个变量，等用户决定）。
 
-### 2) ⏳ 发布 v0.4.2 —— 代码/真机/物料全部就绪，只差用户本人在 M5Burner 里点 Publish
+### 2) ✅ 发布 v0.4.2 —— 已被 0.4.3 / 0.4.4 取代（历史记录；两次都已实际发布上架）
 - **物料已备好**：`dist/m5burner-0.4.2/`（merged bin 2,490,368 B + sha256 + 320×200 封面 + 双语
   `README_M5Burner.md` / `GITHUB_RELEASE_NOTES.md` / `PUBLISH_DESCRIPTION.txt` / `PUBLISH_CHANGELOG.txt`
   + 两张配图；bin 不入库）。逐字段抄 `PUBLISH_FIELDS.md`：Name `retro-go Tab5`、Version **`0.4.2`**、
