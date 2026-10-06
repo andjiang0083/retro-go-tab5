@@ -113,7 +113,9 @@ def main():
     dd.text((tx, 22), "retro-go", font=font(26, True), fill=(240, 242, 248, 255))
     dd.text((tx, 52), "Tab5", font=font(26, True), fill=(122, 176, 232, 255))
     dd.text((tx, 86), "GBA 模拟器 · 竖屏版", font=font(13), fill=(206, 212, 224, 255))
-    dd.text((tx, 104), "v" + ver, font=font(17, True), fill=(232, 162, 44, 255))
+    # 封面永不印版本号：版本号每发一版就过期，旧图会与线上版本自相矛盾（实测 0.4.5 的包印着 v0.4.2）。
+    # 这里放与版本无关的固定卖点；ver 只用于输出目录名。
+    dd.text((tx, 104), "ROM 放 SD 卡即玩", font=font(17, True), fill=(232, 162, 44, 255))
     dd.text((tx, 130), "M5Stack Tab5 (ESP32-P4)", font=font(11), fill=(150, 158, 174, 255))
     dd.text((tx, 146), "触摸虚拟手柄 · 中文界面", font=font(11), fill=(150, 158, 174, 255))
 
