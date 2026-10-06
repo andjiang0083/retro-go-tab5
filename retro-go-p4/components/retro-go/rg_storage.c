@@ -149,13 +149,13 @@ void rg_storage_init(void)
 #endif
 
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.width = 1;
+    slot_config.width = RG_STORAGE_SDMMC_WIDTH;
 #if SOC_SDMMC_USE_GPIO_MATRIX /* Only the esp32-s3 routes SDMMC through the GPIO matrix */
     slot_config.clk = RG_GPIO_SDMMC_CLK;
     slot_config.cmd = RG_GPIO_SDMMC_CMD;
     slot_config.d0 = RG_GPIO_SDMMC_D0;
 #if defined(RG_GPIO_SDMMC_D1) && defined(RG_GPIO_SDMMC_D2) && defined(RG_GPIO_SDMMC_D3)
-    slot_config.width = 4;
+    slot_config.width = RG_STORAGE_SDMMC_WIDTH;
     slot_config.d1 = RG_GPIO_SDMMC_D1;
     slot_config.d2 = RG_GPIO_SDMMC_D2;
     slot_config.d3 = RG_GPIO_SDMMC_D3;
@@ -163,6 +163,16 @@ void rg_storage_init(void)
     // d1 and d3 normally not used in width=1 but sdmmc_host_init_slot saves them, so just in case
     slot_config.d1 = slot_config.d3 = -1;
 #endif
+#endif
+#if defined(RG_STORAGE_SDMMC_VENDOR_RECIPE) && (RG_STORAGE_SDMMC_VENDOR_RECIPE > 0)
+    /* 厂商 BSP 配方（实验 A/B）：ESP32-P4 的 slot0 允许显式指定引脚 ——
+     * 与 vendor/m5stack_tab5/m5stack_tab5.c 的 bsp_sdcard_init 完全一致。 */
+    slot_config.clk = RG_GPIO_SDMMC_CLK;
+    slot_config.cmd = RG_GPIO_SDMMC_CMD;
+    slot_config.d0 = RG_GPIO_SDMMC_D0;
+    slot_config.d1 = RG_GPIO_SDMMC_D1;
+    slot_config.d2 = RG_GPIO_SDMMC_D2;
+    slot_config.d3 = RG_GPIO_SDMMC_D3;
 #endif
 
     esp_vfs_fat_mount_config_t mount_config = {
@@ -172,6 +182,38 @@ void rg_storage_init(void)
     };
 
     esp_err_t err = esp_vfs_fat_sdmmc_mount(RG_STORAGE_ROOT, &host_config, &slot_config, &mount_config, &card_handle);
+
+    /* 【回退 1：片上 LDO 给 SD 卡槽 I/O 供电 · 2026-10-06】
+     * Tab5 的 SD 卡槽 I/O 供电走 ESP32-P4 片上 LDO 的 chan4（厂商 BSP 原文注释：
+     *   "`LDO_VO4` is used as the SDMMC IO power"，BSP_LDO_PROBE_SD_CHAN=4 / 3300mV）。
+     * 我们平时**不碰**片上 LDO —— 见本文件上方那段关于 DSI PHY 的注释：过早申请 LDO 通道会让
+     * LDO 单元进入坏状态、拖死后面的 MIPI DSI PHY 上电。
+     * 但这份"好状态"不是我们的：**它会随别的固件被改掉，而且跨软复位保留**（真机实测：用
+     * M5Launcher 装过固件之后，卡槽 I/O 处于无供电状态，我们的初始化永远等不到 CMD1 应答 ——
+     * send_op_cond 返回 0x107 (ESP_ERR_TIMEOUT)，降速重试同样失败，屏幕上就是那句
+     * "SD Card Error / Storage mount failed"）。
+     * 所以只在第一次挂载失败时才照厂商写法把 chan4 配起来重试一次：正常开机路径一字不变，
+     * 也就不会碰到当年那类 DSI PHY 的 LDO 冲突。 */
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && (RG_STORAGE_SDMMC_LDO_CHAN > 0)
+    if (err != ESP_OK)
+    {
+        RG_LOGW("SD Card mounting failed (0x%x), powering SD I/O via on-chip LDO chan %d and retrying...\n",
+                err, RG_STORAGE_SDMMC_LDO_CHAN);
+        sdmmc_host_deinit();
+        sd_pwr_ctrl_ldo_config_t ldo_config = {.ldo_chan_id = RG_STORAGE_SDMMC_LDO_CHAN};
+        sd_pwr_ctrl_handle_t ldo_handle = NULL;
+        if (sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &ldo_handle) == ESP_OK)
+        {
+            host_config.pwr_ctrl_handle = ldo_handle;
+            err = esp_vfs_fat_sdmmc_mount(RG_STORAGE_ROOT, &host_config, &slot_config, &mount_config, &card_handle);
+        }
+        else
+        {
+            RG_LOGE("Failed to create on-chip LDO power control driver (chan %d)\n", RG_STORAGE_SDMMC_LDO_CHAN);
+        }
+    }
+#endif
+
     if (err == ESP_ERR_TIMEOUT || err == ESP_ERR_INVALID_RESPONSE || err == ESP_ERR_INVALID_CRC)
     {
         RG_LOGW("SD Card mounting failed (0x%x), retrying at lower speed...\n", err);

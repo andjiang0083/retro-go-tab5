@@ -5,7 +5,8 @@ platform_entries:
   - name: retro-go Tab5
     device: Tab5
     category: Games
-    version: "0.4.3"
-    bin: dist/m5burner-0.4.3/retro-go-tab5-0.4.3-merged.bin
+    version: "0.4.4"
+    bin: dist/m5burner-0.4.4/retro-go-tab5-0.4.4-merged.bin
     cover: releases/cover-1280x720-retro-go-tab5-tab5.png
     project_link: ""
+    readback: 2026-10-06 PENDING vid=2107435423145271298

@@ -2,7 +2,47 @@
 
 ## 一、当前状态
 
-### 🟢 最新（2026-10-06 第二轮）：v0.4.5 —— 修两处 GBA 移植缺失（横条闪烁 + 启动器选存档）
+### 🟢 最新（2026-10-06 第三轮）：v0.4.6 —— 修「用 M5Launcher 装完跑不起来」+ SD 装载错误兜底
+
+**① 用 M5Launcher 装本固件后进不了游戏（旧版本还会崩）** —— issue [#7](https://github.com/andjiang0083/retro-go-tab5/issues/7)
+- 根因（代码级）：本固件是**双 app**形态（`launcher` 菜单 + `gbsp` 核心各占一个分区），而"某核心算不算已安装"
+  在双 app 形态下是**运行时查分区**（`rg_system_have_app()` → `esp_partition_find_first(APP, ANY, "gbsp")`）；
+  **M5Launcher 的安装器只抽取内嵌分区表里的第一个 app**（`src/sd_functions.cpp: updateFromSD()` 读 0x8000 分区表
+  → `installFirmwareDynamic(..., appOffset, ...)`）⇒ 整包装进去只有菜单、没有核心分区 ⇒ `applications.c` 里
+  每个 `application()` 都早退 ⇒ **零标签页** ⇒ `gui_set_current_tab()` 返回 NULL，而主循环无条件解引用
+  `tab->enabled` ⇒ **空指针崩溃** = 用户说的"跑不起来"。
+- 真机证据（T2）：刷 M5Launcher 2.9.1 + 用它**自己的安装通道**装**单 app 包** ⇒ `launcher v0.0.1-87-g2d30c` 正常、
+  `Storage mounted at /sd`、`Touch ready`、`gui_add_tab: Tab 'gba' added at index 0`、无 panic；安装后真实分区表
+  `[4] retrog app/ota_0 off=0x1a0000 size=0x140000`（与我们的 app 分区尺寸一致）⇒ **单 app 包经 Launcher 安装能跑**，
+  用户撞的是"装错文件（整包）"。
+- 修法：① `launcher/main/main.c` **零标签页防护**（不再崩）；② `applications.c` 在缺核心分区时**弹窗自解释**
+  （直接把原因与动作摆屏幕上，而不是留空白界面）。
+- ✅ **真机验证（T11，2026-10-06 22:12）**：用 Launcher bootloader+分区表 + **新构建的菜单 app** 复刻"只有菜单"布局 ⇒
+  `[error] applications_init: No emulator core partition found: this is a dual-app build…` 弹窗出现在屏幕上，
+  崩溃迹象 grep = **0 匹配**（Panic/Guru/LoadProhibited/abort 全无）。
+- ⚠️ 上游已知：M5Launcher **2.9.1 的 Tab5 安装路径本身偶发崩** —— 实测传输到约 40KB 处设备 `E BOD: Brownout
+  detector was triggered`（欠压复位）；其 changelog 自述 2.10.0 才修 "FIXED M5Stack Tab5 OTA function randomly
+  crashing"（尚未发布）⇒ 文档写明"装失败就重试，或用 M5Burner / esptool 刷整包"。
+
+**② SD 提示 "Storage mount failed"（0x107）** —— issue [#8](https://github.com/andjiang0083/retro-go-tab5/issues/8)
+- 现象：进固件弹 `SD Card Error / Storage mount failed…`，菜单无游戏；串口 `sdmmc_init_ocr: send_op_cond (1)
+  returned 0x107`（ESP_ERR_TIMEOUT）⇒ 卡对 CMD1 完全不应答，降速重试同样失败。
+- 定性（**三条真机实验定案**）：卡槽 I/O 供电走 **ESP32-P4 片上 LDO 的 chan4**（厂商 BSP 原注释
+  `LDO_VO4 is used as the SDMMC IO power`，`BSP_LDO_PROBE_SD_CHAN=4`/3300mV）；本固件历来**从不申请片上 LDO**
+  （历史原因：过早申请会拖死 MIPI DSI PHY 上电），默认状态能读卡 ⇒ 这份硬件状态**会被别的固件（Launcher 自己
+  会配 chan3/chan4）改掉且跨软复位保留**，于是"装过 Launcher 回来"就读不到卡。
+
+  | 手段 | 结果 |
+  |---|---|
+  | 仅"失败后启用片上 LDO chan4 重试" | ❌ 仍 0x107（但证明启用 LDO **不再拖死显示** ✅） |
+  | 厂商配方（slot0 + 4-bit + LDO + 显式引脚） | ❌ 仍 0x107 |
+  | **重插卡 + 真断电**（不是复位） | ✅ **立即恢复**（`Storage mounted at /sd`，首次尝试即成功、未走回退） |
+
+  ⇒ 属"卡/供电进入不可应答态"，**软件侧救不回来** —— 已记 `~/esp32/ESP32-经验沉淀.md` §183。
+- 修法：① 首次挂载失败时按厂商写法启用 LDO chan4 **重试一次**（正常开机路径一字未动；实测无 DSI 副作用）；
+  ② 留存 `RG_STORAGE_SDMMC_VENDOR_RECIPE`（默认 0）作可复现对照；③ 文档写明用户侧规避 = **重插卡 + 真断电**。
+
+### 🟢 上一版（2026-10-06 第二轮）：v0.4.5 —— 修两处 GBA 移植缺失（横条闪烁 + 启动器选存档）
 
 **① 画面横条闪烁**（issue [#5](https://github.com/andjiang0083/retro-go-tab5/issues/5)）—— **已修，用户真机目视确认「画面没有横条了」**
 - 根因：GBA 主循环只建了 `updates[0]`、`currentUpdate` **永不轮换**；而 `rg_display_submit()` 只是把**指针**交给
@@ -244,10 +284,11 @@ P4 两条口径复测。
 
 ### 0) ✅ v0.4.3：M5Launcher 兼容（已真机验证 + **已上架** M5Burner）
 字库内嵌 + 单 app 形态 + 两份发布物料；只差用户本人发布。
-### 0.5) ⏳ ③ SD 读不到（用户要求稍后处理）
-候选修法：我们 SD 初始化 4-bit **失败后回退 1-bit**（M5Launcher 用同一组引脚、1-bit、挂 `/sdcard`）。
-需要真机复现来定性：刷 M5Launcher 2.9.1 → 用它装我们的**单 app 包** → 抓我们 app 的启动日志
-（区分"NVS 被重排"还是"挂载失败"）；可逆，1 分钟刷回。顺带也就验证了 Launcher 平台侧的实际安装。
+### 0.5) ✅ ③ SD 读不到 —— 已定性并收口（2026-10-06 第三轮，issue #8）
+**旧候选修法（4-bit 失败回退 1-bit）与真因无关，未采用。** 三条真机实验定案：真因是**卡槽状态被别的固件改坏
+且跨软复位保留**（卡槽 I/O 走 P4 片上 LDO chan4，本固件历来不申请），属"卡进入不可应答态"——
+启用 LDO 重试 ❌、厂商配方 slot0+4-bit+LDO ❌、**重插卡 + 真断电 ✅ 立即恢复**。
+固件侧已加"首次挂载失败时启用 LDO chan4 重试一次"作兜底；用户侧规避写进 README（重插卡 + 真断电）。详见 §一 v0.4.6 ②。
 ### 1) ✅ 充电中绿闪 —— 已修 + 真机验证（v40 `gef349`，2026-09-29）
 - **根因**：`bsp_io_expander_pi4ioe_init()` 往 PI4IOE2 输出寄存器写的是 `0b00001001`（只置 P0/WLAN_PWR_EN、
   P3/USB5V_EN），**P7(CHG_EN) 是 0** —— 它上面那行注释和被注释掉的 `0b10001001` 才是带 P7 的。

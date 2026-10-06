@@ -268,6 +268,17 @@ static void retro_loop(void)
 
         int64_t start_time = rg_system_timer();
 
+        /* 【零标签页防护 · 2026-10-06】
+         * 一个核心都没注册时（双 app 形态被"只装单个 app 镜像"的安装器装成了只有菜单，
+         * 见 applications.c 里 apps_count==0 那段的说明），tabs_count 为 0，gui_set_current_tab()
+         * 返回 NULL。而下面这段无条件解引用 tab->enabled ⇒ 空指针崩溃（用户报的"装了玩不了"）。
+         * 这里直接跳过所有标签操作，保持输入/重绘即可；真正的原因由 applications_init() 的弹窗讲。 */
+        if (!tab)
+        {
+            rg_task_delay(100);
+            continue;
+        }
+
         if (!tab->enabled && !change_tab)
         {
             change_tab = 1;

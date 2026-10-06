@@ -16,11 +16,30 @@
  * Storage (SD 卡, SDMMC 4-bit) — 引脚与 Tab5 硬件一致                       *
  ****************************************************************************/
 #define RG_STORAGE_ROOT             "/sd"
+/* 【A/B 实验结论 · 2026-10-06】厂商配方（slot0 + 4-bit + 片上 LDO chan4）与被别的固件改坏的
+ * 卡槽状态无关：真机实测，卡进入"CMD1 不应答（0x107）"状态后，软件侧（含启用 LDO chan4 重试）
+ * **救不回来**，只有重插卡 + 真断电才恢复 ⇒ 依据"不改动能用的东西"，仍用原配方
+ * （slot1 + 1-bit + 不主动申请 LDO），只在**首次挂载失败**时启用 LDO 回退（见 rg_storage.c）。
+ * 这个开关保留下来仅作为可复现的对照配置，默认 0。 */
+#define RG_STORAGE_SDMMC_VENDOR_RECIPE 0
+#if RG_STORAGE_SDMMC_VENDOR_RECIPE
+#define RG_STORAGE_SDMMC_HOST       SDMMC_HOST_SLOT_0
+#define RG_STORAGE_SDMMC_ONCHIP_LDO 1
+#define RG_STORAGE_SDMMC_WIDTH      4
+#else
 #define RG_STORAGE_SDMMC_HOST       SDMMC_HOST_SLOT_1
-#define RG_STORAGE_SDMMC_SPEED      SDMMC_FREQ_HIGHSPEED
 /* Tab5 不做 SD 卡槽的片上 LDO 供电申请（卡槽固定供电，本来就读得到卡）。
  * 原因见 rg_storage.c 里那段注释：显示初始化前申请片上 LDO 会卡死 DSI PHY 上电。 */
 #define RG_STORAGE_SDMMC_ONCHIP_LDO 0
+#define RG_STORAGE_SDMMC_WIDTH      1
+#endif
+#define RG_STORAGE_SDMMC_SPEED      SDMMC_FREQ_HIGHSPEED
+/* 【但硬件状态会被别的固件改掉 · 2026-10-06】卡槽 I/O 的供电其实是片上 LDO 的 chan4
+ * （厂商 BSP：BSP_LDO_PROBE_SD_CHAN=4 / 3300mV，"LDO_VO4 is used as the SDMMC IO power"），
+ * 而这份状态**跨软复位保留**：被会自己配 LDO 的固件（如 M5Launcher）改过之后，我们的 SD 初始化
+ * 就永远等不到 CMD1 应答（0x107 超时，屏幕提示 "SD Card Error / Storage mount failed"）。
+ * rg_storage.c 里在"第一次挂载失败"时才用这个通道号配 LDO 重试 —— 正常开机路径不受影响。 */
+#define RG_STORAGE_SDMMC_LDO_CHAN   4
 #define RG_GPIO_SDMMC_CLK           GPIO_NUM_43
 #define RG_GPIO_SDMMC_CMD           GPIO_NUM_44
 #define RG_GPIO_SDMMC_D0            GPIO_NUM_39
