@@ -311,9 +311,23 @@ P4 两条口径复测。
 - SRAM 电池存档已修（算路径→开机只读回→运行中检测变化写回；**开机阶段绝不碰 SD**）。
 
 ## 六、镜像、包与 GitHub（本次新增的工作流）
-- **当前镜像（v0.4.3，2026-09-29）**：
-  - 双 app（M5Burner/esptool 主产物）：`retro-go-p4/retro-go_v0.0.1-82-g532c3_tab5.img`（2,424,832 B）
-  - 单 app（M5Launcher 专用）：`retro-go-p4/retro-go_v0.0.1-82-g532c3_tab5-single.img`（1,507,328 B）
+- **当前镜像（v0.4.5，2026-10-06）**：
+  - 双 app（M5Burner / esptool 主产物）：`retro-go-p4/retro-go_v0.0.1-86-gb799a_tab5.img`（2,293,760 B；sha256 `f8bd0252…`）
+  - 单 app（M5Launcher 专用）：`retro-go-p4/retro-go_v0.0.1-87-g2d30c_tab5-single.img`（1,376,256 B；sha256 `6efcdf38…`）
+  - M5Burner 包：`dist/m5burner-0.4.5/` = merged + 单 app（**均不入库**）+ `.sha256`×2 + 封面/配图 + 5 份文本物料
+  - **发布门禁（本次实测）**：三个镜像头（bootloader@0x2000 / launcher@0x10000 / gbsp@0x100000）的
+    magic·段数·spi(02,4f)·**入口点**与 0.4.4 **完全一致**（bootloader `4ff29eda` / launcher `4ff00484` / gbsp `4ff00408`）；
+    分区表 0x8000 逐字节一致；4KB 块级差异只落在 bootloader 时间戳 + 两个 app 区 ⇒ **无黑屏风险**。
+    （方法：`check_merged.py` 全量扫描 108/108 VALID + 逐段头比对；别用单一硬编码偏移。）
+  - **已发布**：GitHub Release [v0.4.5](https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.5)（8 个附件，回读确认）；
+    M5Burner 条目 `retro-go Tab5`（firmwareId `2105333864932450305`）**0.4.5 = PENDING / PUBLIC**
+    （`retro-go-tab5-0.4.5-merged.bin`，2026-10-06T21:02:45+08:00，**仅一条**）；0.4.4 亦 PENDING、0.4.3 仍 PUBLISHED。
+  - **发布后自验**：把**上架用的那份 merged**（先 `shasum -c` 校验）整片刷 0x0 进设备，抓启动日志确认可启动
+    （见本轮 `/tmp/rel045_boot.log`）。⚠️ 整片刷会抹掉 NVS ⇒ boot config 复位（设备开机进 launcher，属预期）。
+- **历史（v0.4.4，2026-10-06）**：双 app `…-85-g1648f_tab5.img`（2,293,760 B）/ 单 app `…-85-g1648f_tab5-single.img`（1,376,256 B）
+- **历史基线（v0.4.3，2026-09-29）**：
+  - 双 app：`retro-go-p4/retro-go_v0.0.1-82-g532c3_tab5.img`（2,424,832 B）
+  - 单 app：`retro-go-p4/retro-go_v0.0.1-82-g532c3_tab5-single.img`（1,507,328 B）
   - 历史可用基线：`…-34-g074f4_tab5.img`（电量未通但显示/触摸干净）、`…-49-g558cf_tab5.img`
 - **M5Burner 包**：`dist/m5burner-0.4.3/` = merged bin（**不入库**，`dist/` 已 gitignore）+ `.sha256`（入库）
   + 封面 + `README_M5Burner.md` / `PUBLISH_FIELDS.md` / `PUBLISH_DESCRIPTION.txt` / `PUBLISH_CHANGELOG.txt` /
