@@ -21,6 +21,10 @@ boot_mode selected_boot_mode = boot_game;
 u32 skip_next_frame = 0;
 int sprite_limit = 1;
 
+/* 诊断计数器（2026-10-06 "横条闪烁"排查用，仅 RG_GBA_DIAG 编译） */
+static uint32_t display_busy_frames;     /* 提交时显示任务仍占着上一帧的次数 */
+static uint32_t display_submit_frames;   /* 提交总次数 */
+
 /* 上游把 dynarec_enable 定义在 libretro/libretro.c，但 retro-go 的入口不编译那个文件
  * （初始化与主循环由我们接管）→ 必须在 app 层定义。
  * savestate.c 靠它判断是否需要保存/恢复 JIT 翻译缓存，开着 dynarec 就必须为 1。 */
@@ -355,6 +359,14 @@ void app_main(void)
 
     updates[0] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_FAST);
     updates[0]->height = GBA_SCREEN_HEIGHT;
+    /* 第二块画面缓冲（2026-10-06 修"横条闪烁"）：上游 NES/GBC/SNES/gwenesis 都是两块 +
+     * 提交后轮换。GBA 移植只建了 updates[0] 且永不轮换 ⇒ 显示任务（另一个线程）还在异步读
+     * 这块缓冲时，核心已把下一帧渲染进同一块内存 ⇒ 显示任务读到"上半屏旧帧 + 下半屏新帧"
+     * 拼起来的画面 = 一条条横条；快速卷轴/换房间时最严重（变化行最多 ⇒ 显示耗时最长 ⇒
+     * 落后核心最多）。建不出来就退回原单缓冲行为（只是仍有横条，不会崩）。 */
+    updates[1] = rg_surface_create(GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT + 1, RG_PIXEL_565_LE, MEM_FAST);
+    if (updates[1])
+        updates[1]->height = GBA_SCREEN_HEIGHT;
     currentUpdate = updates[0];
 
     gba_screen_pixels = currentUpdate->data;
@@ -377,6 +389,26 @@ void app_main(void)
         app->romPath = rg_test_auto_rom;
 #endif
     sram_setup_path();   /* step1：只算路径，不碰 SD */
+#if defined(RG_TEST_BOOT_RESUME) && RG_TEST_BOOT_RESUME
+    /* 测试钩子（2026-10-06）：真机上没人点启动器，这里强制走"启动器带了存档位"的那条路，
+     * 用来验证 step2b 的自动读档。语义与启动器等价：RG_BOOT_RESUME + slot<<4。
+     * slot < 0 表示"用最后用过的那个存档位"（与启动器 Resume 菜单的默认高亮同一口径）。用完撤掉。 */
+    {
+        int slot = RG_TEST_BOOT_RESUME_SLOT;
+        if (slot < 0)
+        {
+            rg_emu_states_t *st = rg_emu_get_states(app->romPath, 4);
+            slot = st->lastused ? (int)st->lastused->id : (st->latest ? (int)st->latest->id : 0);
+            RG_LOGW("RG_TEST_RESUME: 自动挑存档位 slot=%d（存在 %d 个）\n", slot, (int)st->used);
+            free(st);
+        }
+        app->bootFlags |= RG_BOOT_RESUME;
+        app->saveSlot = slot;
+        RG_LOGW("RG_TEST_RESUME: forced bootFlags=%02X slot=%d rom=%s\n",
+                (unsigned)app->bootFlags, (int)app->saveSlot, app->romPath);
+    }
+#endif
+
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {
         RG_PANIC("Could not load the game file.");
@@ -388,6 +420,14 @@ void app_main(void)
     RG_LOGI("emulation loop");
 
     sram_load();   /* step2：开机读回 .srm（只读，文件不存在就跳过）*/
+
+    /* step2b（2026-10-06 修）：启动器带了"从存档位起"的意图就恢复它。
+     * 上游其它核心（NES / SNES / GBC / SMS / PCE / GW / fmsx / gwenesis）都有这一段，
+     * GBA 移植漏了 ⇒ 从启动器选"继续游戏 + 存档位"进游戏后仍是新开局（只回了 .srm），
+     * 必须再从 menu 手动读档；顺带"menu 里保存并退出 → 下次开机自动续上"也失效。
+     * 位置与上游一致：reset 之后、主循环之前（app->saveSlot 由 rg_system.c 从 bootFlags 解出）。 */
+    if (app->bootFlags & RG_BOOT_RESUME)
+        rg_emu_load_state(app->saveSlot);
 
 #if defined(RG_TARGET_SDL2)
     /* 宿主：载入切片存档，秒级回到目标界面（配合 RG_TEST_SAVEAT） */
@@ -442,7 +482,7 @@ void app_main(void)
         sram_autosave();          /* step3：电池存档变了就落盘 */   // dynarec 可用时走 JIT，否则走解释器
         // RG_TIMER_LAP("execute_arm");
 
-#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG && RG_GBA_DIAG_SPAM
         /* ── 真机"输入 vs 显示"分辨探针（2026-10-06）────────────────────────────
          * 只有一个问题要回答：菜单里按方向键没反应，是**游戏没收到键**还是**面板没收到像素**。
          * 三条独立证据：
@@ -558,7 +598,23 @@ void app_main(void)
         }
 #endif
         if (!skip_next_frame)
+        {
+            /* 仪表（2026-10-06，仅诊断版编译）：提交前先问显示任务是否还占着上一帧。
+             * 占着 = 我们马上要覆盖它可能还在读的缓冲。轮换生效后正常应恒为"空"。 */
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+            display_submit_frames++;
+            if (!rg_display_sync(false))
+                display_busy_frames++;
+#endif
             rg_display_submit(currentUpdate, 0);
+            /* 轮换：交给显示任务的那块不再被核心改写，核心画到另一块（gba_screen_pixels
+             * 是核心每帧现读的全局，见 components/gbsp-libretro/video.cpp get_screen_pixels()）。 */
+            if (updates[1] && !RG_TEST_NO_SURFACE_ROTATION)
+            {
+                currentUpdate = updates[currentUpdate == updates[0]];
+                gba_screen_pixels = currentUpdate->data;
+            }
+        }
 
         size_t frames_count = sound_read_samples((s16 *)mixbuffer, AUDIO_BUFFER_LENGTH);
         // RG_TIMER_LAP("sound_read_samples");
@@ -567,6 +623,22 @@ void app_main(void)
 
         rg_audio_submit(mixbuffer, frames_count);
         // RG_TIMER_LAP("rg_audio_submit");
+
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+        {
+            static int64_t tear_last_us;
+            static uint32_t tear_last_busy;
+            const int64_t tear_now = rg_system_timer();
+            if (tear_now - tear_last_us >= 1000000)
+            {
+                RG_LOGW("DIAG_TEAR: 每秒提交时显示仍忙 = %u 帧（累计忙 %u / 提交 %u）\n",
+                        (unsigned)(display_busy_frames - tear_last_busy),
+                        (unsigned)display_busy_frames, (unsigned)display_submit_frames);
+                tear_last_busy = display_busy_frames;
+                tear_last_us = tear_now;
+            }
+        }
+#endif
 
         if (skip_next_frame == 0)
             skip_next_frame = app->frameskip;

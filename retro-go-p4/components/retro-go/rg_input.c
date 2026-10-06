@@ -507,7 +507,14 @@ static uint32_t rg_test_script_keys(uint32_t state)
     if (!enabled)
         return state;
 
-#ifdef RG_TARGET_SDL2
+#if defined(RG_TEST_KEYS_FRAME_CLOCK) && RG_TEST_KEYS_FRAME_CLOCK
+    /* P0-a（issue #4）：脚本时钟改用**模拟帧**而非真实时间。
+     * 理由：两引擎帧率差 1.7 倍（解释器 ~35、dynarec ~60），按真实秒注入会让同一个按键
+     * 落在**完全不同的模拟帧**上 ⇒ 两轮对照失去帧对齐，"输入序列不一致"这类结论
+     * 可能全是夹具造出来的。改成帧时钟后，两引擎在**同一模拟帧**按下同一个键。 */
+    extern uint32_t frame_counter;   /* 核心全局（gbsp-libretro/main.c） */
+    const float now = (float)frame_counter / 60.0f;
+#elif defined(RG_TARGET_SDL2)
     const float now = SDL_GetTicks() / 1000.0f;
 #else
     const float now = (float)(rg_system_timer() / 1000000);  /* µs → s */
