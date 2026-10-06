@@ -37,6 +37,7 @@ static rg_display_counters_t counters;
 static rg_display_config_t config;
 static rg_surface_t *osd;
 static rg_surface_t *border;
+static bool border_foreign;   /* border 指向的是别人（rg_touch_skin.c）持有的内存面板 */
 static rg_display_t display;
 static int16_t map_viewport_to_source_x[RG_SCREEN_WIDTH + 1];
 static int16_t map_viewport_to_source_y[RG_SCREEN_HEIGHT + 1];
@@ -429,7 +430,12 @@ static bool load_border_file(const char *filename)
 {
     RG_LOGI("Loading border file: %s", filename ?: "(none)");
 
-    free(border), border = NULL;
+    /* 内存面板（皮肤底图）不归我们分配：只脱手，别 free —— 所有权在 rg_touch_skin.c，
+     * free 掉会让那边的 panel 变成野指针（下次换皮肤原地重画就踩空）。 */
+    if (border && !border_foreign)
+        free(border);
+    border = NULL;
+    border_foreign = false;
     display.changed = true;
 
     if (filename && (border = rg_surface_load_image_file(filename, 0)))
@@ -592,6 +598,38 @@ void rg_display_set_border(const char *filename)
 char *rg_display_get_border(void)
 {
     return rg_settings_get_string(NS_APP, SETTING_BORDER, NULL);
+}
+
+/* 内存面板当边框用（皮肤底图）：surface **由调用方持有**，本模块只借指针，永不 free。
+ * 为什么复用 border 这条路：脏条带重建（画面外围的重绘）本来就从 border 取背景 ——
+ * 面板接进来，"控制区底图"这件事一行新机制都不用加。
+ * ⚠ 只在用户没手选 Border 图时生效（用户的选择优先）。 */
+void rg_display_set_border_surface(rg_surface_t *surface)
+{
+    if (config.border_file)
+    {
+        RG_LOGI("display: 用户已选边框图 (%s)，内存面板不接管\n", config.border_file);
+        return;
+    }
+    if (!surface || surface->width != rg_display_get_width() || surface->height != rg_display_get_height())
+    {
+        RG_LOGW("display: 内存面板尺寸不符（%dx%d，应为 %dx%d），忽略\n",
+                surface ? surface->width : 0, surface ? surface->height : 0,
+                rg_display_get_width(), rg_display_get_height());
+        return;
+    }
+
+    border = surface;
+    border_foreign = true;
+    display.changed = true;     /* 整屏重推一次：面板内容变了 */
+    RG_LOGI("display: 内存面板接管边框底图 (%dx%d)\n", surface->width, surface->height);
+}
+
+/* 面板内容已**原地**改过（换皮肤/换机型）：让显示任务把整张边框重铺一遍。
+ * 走 display.changed 这条现成通路 —— 视口不覆盖整屏时会整张重写（GBA 竖屏正是如此）。 */
+void rg_display_border_refresh(void)
+{
+    display.changed = true;
 }
 
 void rg_display_submit(const rg_surface_t *update, uint32_t flags)
