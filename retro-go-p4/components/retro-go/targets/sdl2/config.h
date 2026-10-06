@@ -1,3 +1,9 @@
+/* 宿主也编诊断探针（与真机同一套 DIAG_*）。⚠ 必须放顶层：
+ * 之前塞进 #ifdef RG_TAB5_OVERLAY_PREVIEW 里，普通宿主构建根本看不到。 */
+#ifndef RG_GBA_DIAG
+#define RG_GBA_DIAG 1
+#endif
+
 // Target definition
 #define RG_TARGET_NAME             "SDL2"
 
@@ -26,6 +32,28 @@
 #else
 #define RG_SCREEN_WIDTH             320
 #define RG_SCREEN_HEIGHT            240
+#endif
+
+/* ── Tab5 显示几何仿真（宿主专用，2026-10-06）─────────────────────────────────
+ * 用途：让**共享的** rg_display.c（缩放映射 / 逐行校验和 / 32 行块推送）在宿主上走
+ *       与 Tab5 真机同一条路径，然后用 SDL2 驱动的 canvas（它按"窗口 + 写指针推进"
+ *       写像素，语义等同面板帧缓冲）验证"小面积变化有没有真的到达面板"。
+ * 为什么需要它：真机症状是"静态菜单里方向键不生效、游戏内正常"—— 差别正是
+ *       只推变化行 vs 整屏都在变。宿主默认 320x240/1:1 走不到那条分支（缩放=1、
+ *       块边界也不同），所以必须把几何和块大小照抄过来。
+ * 打开方式：构建时加 -DRG_TAB5_DISPLAY_EMU（见 tools/build_sdl2_mac.sh）。 */
+#ifdef RG_TAB5_DISPLAY_EMU
+#undef RG_SCREEN_WIDTH
+#undef RG_SCREEN_HEIGHT
+#define RG_SCREEN_WIDTH             720
+#define RG_SCREEN_HEIGHT            1280
+#undef RG_SCREEN_VISIBLE_AREA
+#define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 800}   /* 同 tab5/config.h */
+#define RG_SCREEN_PARTIAL_UPDATES   1
+#define LCD_BUFFER_LENGTH           (RG_SCREEN_WIDTH * 32)   /* 同 tab5：32 行一块 */
+#define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 3.0
+#define RG_DISPLAY_MAX_CUSTOM_ZOOM     4.0
 #endif
 #define RG_SCREEN_ROTATE            0
 #define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 0}

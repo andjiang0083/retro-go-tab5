@@ -174,4 +174,34 @@ typedef u32 fixed8_24;
 #include "cheats.h"
 #include "serial.h"
 
+/* ── 宿主专用 GBA 侧探针（真机一行都不编，零影响）──────────────────────────
+ * 用法：RG_GBA_TRACE=/tmp/trace.txt 跑宿主 gbsp → 键/中断事件逐行写文件（每行 fflush，
+ *       进程被强杀也不丢）。存在的理由：只看画面分不清下面三件事，这三件事必须分开证：
+ *         INPUT   = 我们的输入层有没有把键送到核心
+ *         P1CNT   = 游戏有没有设置键盘中断（写 KEYCNT=0x04000132）
+ *         TRIGGER = 模拟器认不认这个设置、有没有抬 IRQ_KEYPAD
+ *       三者交叉就能定位"名字/存档界面无法交互"到底是哪一层。
+ * 历史坑：ESP-IDF 的 esp_log 不支持 %lld/%f（会让后面参数错位），所以这里一律整数格式化。 */
+#ifndef RG_GBA_TRACE_HOOK
+#define RG_GBA_TRACE_HOOK
+#if !defined(ESP_PLATFORM)
+#include <stdio.h>
+static FILE *rg_trace_fp(void)
+{
+  static FILE *fp = NULL;
+  static int state = 0;
+  if (!state)
+  {
+    const char *p = getenv("RG_GBA_TRACE");
+    state = p ? 1 : -1;
+    if (p) fp = fopen(p, "w");
+  }
+  return (state == 1) ? fp : NULL;
+}
+#define RG_TRACE(...) do { FILE *f_ = rg_trace_fp(); if (f_) { fprintf(f_, __VA_ARGS__); fflush(f_); } } while (0)
+#else
+#define RG_TRACE(...) do {} while (0)
+#endif
+#endif
+
 #endif

@@ -161,8 +161,36 @@
  * 结果在 rg_input.c 里还会被 clamp 到 0..100（低电压/无电池时会出现负值）。 */
 #define RG_BATTERY_CALC_PERCENT(raw) ((((raw) / 2.f) - 3300.f) / 850.f * 100.f)
 /* 显示用电包电压（7.4V 那种，与 M5Unified getBatteryVoltage 一致），不折半 */
-#define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)
-/* 充电判定阈值（mA，取分流电流绝对值）：小于这个充电电流不算"在充电"，
+/* 诊断开关（2026-10-03）：=1 时把每次触点的 raw/logical 坐标与矢量判定结果打到串口。
+ * 用于分辨"点没命中"与"命中了但出的键不对"。查完问题记得改回 0（会刷日志）。 */
+/* 2026-10-06 验证完成：关闭触摸追踪日志。
+ * 注意：rg_input.c 用 #ifdef 判定，设 0 无效，必须不定义。 */
+#undef RG_TOUCH_TRACE
+
+/* 诊断开关：记录传入 GBA 核心的按键掩码与 KEYINPUT 值；仅用于一次性真机捕获。 */
+/* 2026-10-06 临时：显示层 A/B —— 关掉行级部分刷新（每帧全刷），用于判定
+ * "静态菜单按键没反应"是否由行校验和过滤/丢块造成。验证后删除。 */
+/* #define RG_DISPLAY_FULL_REFRESH_AB 1 */
+
+/* 2026-10-06 临时：真机无人值守按键时间轴（时间基准 = 开机秒数，跨 launcher→gbsp 连续）。
+ * 8.0s 在启动器里按 A 启动高亮 ROM；之后是游戏内的按键序列。验证完删除。 */
+/* 2026-10-06 无人值守复现用：真机按键时间轴。验证完毕，默认关闭（要复现去掉注释）。 */
+/* 2026-10-06 验证完成：关闭自动按键脚本（空字符串 = 关闭），恢复真机手动输入 */
+#define RG_TEST_KEYS_DEVICE ""
+#define RG_TEST_NO_AUTOSAVE 0   /* 恢复常规存档行为 */
+#define RG_TEST_FLUSH_CACHE 0
+
+/* 2026-10-06 临时：真机"输入 vs 显示"分辨探针（DIAG_CURSOR/DIR/FB）。验证后删除。 */
+/* 2026-10-06 无人值守测试用的诊断探针，验证完毕，默认关闭（要复现再打开）。 */
+#ifndef RG_GBA_DIAG
+#define RG_GBA_DIAG 0   /* 验证完成：关闭诊断探针与脚本按键，出干净发行版 */
+#endif
+
+#ifndef RG_GBA_INPUT_TRACE
+#define RG_GBA_INPUT_TRACE 0
+#endif
+
+#define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)/* 充电判定阈值（mA，取分流电流绝对值）：小于这个充电电流不算"在充电"，
  * 免得不插充电器时被噪声抖成闪烁。官方口径：分流电流**为负**表示在充电。 */
 #define RG_TAB5_CHARGE_CURRENT_MA   40
 #endif

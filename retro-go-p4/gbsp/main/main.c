@@ -24,6 +24,9 @@ int sprite_limit = 1;
 /* 上游把 dynarec_enable 定义在 libretro/libretro.c，但 retro-go 的入口不编译那个文件
  * （初始化与主循环由我们接管）→ 必须在 app 层定义。
  * savestate.c 靠它判断是否需要保存/恢复 JIT 翻译缓存，开着 dynarec 就必须为 1。 */
+/* 2026-10-03 临时 A/B：关掉 dynarec 走解释器，用来判定"取名界面方向键错乱"
+ * 是否是 P4 移植版 dynarec 的问题（Gemini 第 4 条假设 + 宿主/真机行为不一致）。
+ * 判定完要改回 1（解释器慢很多）。 */
 int dynarec_enable = 1;
 
 static rg_surface_t *updates[2];
@@ -165,6 +168,9 @@ static void sram_load(void)
  * 建目录放在这里（第一次真要写时才建）——开机阶段一律不碰 SD。 */
 static void sram_autosave(void)
 {
+#if defined(RG_TEST_NO_AUTOSAVE) && RG_TEST_NO_AUTOSAVE
+    return;   /* 测试期禁用自动存档：防止把测试 SRAM 写回用户存档 */
+#endif
     static int64_t next_check = 0;
     int64_t now = rg_system_timer();
     if (now < next_check) return;
@@ -191,8 +197,150 @@ static void sram_autosave(void)
         RG_LOGE("SRAM step3: save FAILED -> %s\n", sram_file);
 }
 
+#if defined(RG_TARGET_SDL2)
+#include <sys/stat.h>
+#include <string.h>
+/* ── 宿主自动化测试钩子（**只编进 SDL2 宿主构建**，真机一行都不编）───────────────
+ * 动机：恶魔城这类游戏的"片头→标题→存档选择→名字输入"要跑 1~2 分钟才到目标界面，
+ *       每次改一点代码都重放一遍太慢、还容易错过窗口。这里的做法是**一次长跑 + 切片存档**：
+ *         RG_TEST_SAVEAT="t1,t2,...:<目录>"   在这些墙钟秒各存一份 state_t##.gs0
+ *         RG_TEST_RAMAT="t1,t2,...:<目录>"    在这些秒把 EWRAM+IWRAM 落盘 ram_t##.bin
+ *         RG_TEST_LOADSTATE=<文件>            启动时（reset 之后）载入切片，秒级回到目标界面
+ *      之后配合 rg_input.c 的 RG_TEST_KEYS（时间轴注入按键）就能做无人值守 A/B。
+ * 注意：这些钩子写的是**绝对路径**（绕过 rg_storage 的路径约束），只在宿主上用。 */
+static void rg_test_dump_ram(const char *path)
+{
+    const size_t ew = 256 * 1024, iw = 32 * 1024;
+    u8 *buf = malloc(ew + iw);
+    if (!buf)
+        return;
+    for (size_t i = 0; i < ew; i++)
+        buf[i] = memory_map_read[(0x02000000 + i) >> 15][(0x02000000 + i) & 0x7FFF];
+    for (size_t i = 0; i < iw; i++)
+        buf[ew + i] = memory_map_read[(0x03000000 + i) >> 15][(0x03000000 + i) & 0x7FFF];
+    FILE *f = fopen(path, "wb");
+    if (f)
+    {
+        fwrite(buf, 1, ew + iw, f);
+        fclose(f);
+        RG_LOGI("RG_TEST_RAMAT: -> %s (%u bytes)\n", path, (unsigned)(ew + iw));
+    }
+    else
+        RG_LOGE("RG_TEST_RAMAT: cannot write %s\n", path);
+    free(buf);
+}
+
+static void rg_test_hooks(void)
+{
+    static bool init = false, on = false;
+    static float ts[256], tr[256];
+    static int ns, nr, is, ir;
+    static char ds[400], dr[400];
+    static float t0;
+
+    if (!init)
+    {
+        init = true;
+        t0 = rg_system_timer() / 1000000.0f;
+        const char *evs = getenv("RG_TEST_SAVEAT");
+        const char *evr = getenv("RG_TEST_RAMAT");
+        if (evs)
+        {
+            char buf[800];
+            snprintf(buf, sizeof(buf), "%s", evs);
+            char *colon = strrchr(buf, ':');
+            if (colon)
+            {
+                *colon = 0;
+                snprintf(ds, sizeof(ds), "%s", colon + 1);
+                char *tok = strtok(buf, ",");
+                while (tok && ns < 256) { ts[ns++] = atof(tok); tok = strtok(NULL, ","); }
+            }
+        }
+        if (evr)
+        {
+            char buf[800];
+            snprintf(buf, sizeof(buf), "%s", evr);
+            char *colon = strrchr(buf, ':');
+            if (colon)
+            {
+                *colon = 0;
+                snprintf(dr, sizeof(dr), "%s", colon + 1);
+                char *tok = strtok(buf, ",");
+                while (tok && nr < 256) { tr[nr++] = atof(tok); tok = strtok(NULL, ","); }
+            }
+        }
+        on = (ns > 0 || nr > 0);
+        if (on)
+            RG_LOGI("RG_TEST: saveat n=%d dir='%s' ramat n=%d dir='%s'\n", ns, ds, nr, dr);
+    }
+    if (!on)
+        return;
+
+    const float now = rg_system_timer() / 1000000.0f - t0;
+    while (is < ns && now >= ts[is])
+    {
+        char path[512];
+        void *buffer = malloc(GBA_STATE_MEM_SIZE);
+        if (buffer)
+        {
+            gba_save_state(buffer);
+            snprintf(path, sizeof(path), "%s/state_t%03d.gs0", ds, (int)ts[is]);
+            FILE *f = fopen(path, "wb");
+            if (f)
+            {
+                fwrite(buffer, 1, GBA_STATE_MEM_SIZE, f);
+                fclose(f);
+                RG_LOGI("RG_TEST_SAVEAT: t=%.1fs -> %s\n", now, path);
+            }
+            free(buffer);
+        }
+        is++;
+    }
+    while (ir < nr && now >= tr[ir])
+    {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/ram_t%03d.bin", dr, (int)tr[ir]);
+        rg_test_dump_ram(path);
+        ir++;
+    }
+}
+#endif /* RG_TARGET_SDL2 */
+
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG && !defined(RG_TARGET_SDL2)
+/* 2026-10-06 临时：无人值守真机测试 —— 启动器没给 ROM 路径时自己挑一个 ROM 载入。
+ * 为什么需要：真机上没人点屏幕，必须让游戏自己跑起来，才能验证"静态菜单里按键没反应"。
+ * 优先 恶魔城系列 目录里的第一个 .gba（晓月/月下都在里面），挑不到再退回整个 gba 目录。 */
+static char rg_test_auto_rom[RG_PATH_MAX + 1];
+static char rg_test_auto_rom_pref[RG_PATH_MAX + 1];   /* 首选：名字含"晓月"的那个 */
+static int rg_test_rom_cb(const rg_scandir_t *entry, void *arg)
+{
+    if (!entry->is_file || !rg_extension_match(entry->basename, "gba"))
+        return RG_SCANDIR_SKIP;
+    if (!rg_test_auto_rom[0])
+        snprintf(rg_test_auto_rom, sizeof(rg_test_auto_rom), "%s", entry->path);
+    if (strstr(entry->basename, "晓月") && !rg_test_auto_rom_pref[0])
+        snprintf(rg_test_auto_rom_pref, sizeof(rg_test_auto_rom_pref), "%s", entry->path);
+    return RG_SCANDIR_SKIP;
+}
+static void rg_test_auto_rom_pick(void)
+{
+    const char *cands[] = { RG_BASE_PATH_ROMS "/gba/恶魔城系列（3作）", RG_BASE_PATH_ROMS "/gba" };
+    for (size_t i = 0; i < RG_COUNT(cands) && !rg_test_auto_rom_pref[0]; ++i)
+        rg_storage_scandir(cands[i], rg_test_rom_cb, NULL, 0);
+    if (rg_test_auto_rom_pref[0])
+        snprintf(rg_test_auto_rom, sizeof(rg_test_auto_rom), "%s", rg_test_auto_rom_pref);
+    RG_LOGW("RG_TEST_AUTOROM: %s\n", rg_test_auto_rom[0] ? rg_test_auto_rom : "(none)");
+}
+#endif
+
 void app_main(void)
 {
+#if defined(RG_TARGET_SDL2)
+    /* 宿主：日志直接落盘不丢 —— 被 alarm 杀掉时块缓冲会整段丢失（吃过这个亏）。 */
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+#endif
     const rg_handlers_t handlers = {
         .loadState = &load_state_handler,
         .saveState = &save_state_handler,
@@ -222,6 +370,12 @@ void app_main(void)
         memcpy(bios_rom, open_gba_bios_rom, sizeof(bios_rom));
 
     memset(gamepak_backup, 0xff, sizeof(gamepak_backup));
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG && !defined(RG_TARGET_SDL2)
+    /* 强制用晓月（用户复现对象）：忽略启动器/boot.json 给的路径，保证每次复现的是同一个 ROM */
+    rg_test_auto_rom_pick();
+    if (rg_test_auto_rom[0])
+        app->romPath = rg_test_auto_rom;
+#endif
     sram_setup_path();   /* step1：只算路径，不碰 SD */
     if (load_gamepak(NULL, app->romPath, FEAT_DISABLE, FEAT_DISABLE, SERIAL_MODE_DISABLED) != 0)
     {
@@ -234,9 +388,32 @@ void app_main(void)
     RG_LOGI("emulation loop");
 
     sram_load();   /* step2：开机读回 .srm（只读，文件不存在就跳过）*/
+
+#if defined(RG_TARGET_SDL2)
+    /* 宿主：载入切片存档，秒级回到目标界面（配合 RG_TEST_SAVEAT） */
+    {
+        const char *p = getenv("RG_TEST_LOADSTATE");
+        if (p && *p)
+        {
+            void *buffer = malloc(GBA_STATE_MEM_SIZE);
+            FILE *f = buffer ? fopen(p, "rb") : NULL;
+            size_t n = f ? fread(buffer, 1, GBA_STATE_MEM_SIZE, f) : 0;
+            if (f)
+                fclose(f);
+            bool ok = (n == GBA_STATE_MEM_SIZE) && gba_load_state(buffer);
+            RG_LOGI("RG_TEST_LOADSTATE: %s -> %s (%u bytes)\n", p, ok ? "OK" : "FAILED", (unsigned)n);
+            free(buffer);
+        }
+    }
+#endif
+
     while (true)
     {
         // RG_TIMER_INIT();
+
+#if defined(RG_TARGET_SDL2)
+        rg_test_hooks();
+#endif
 
         rg_audio_sample_t mixbuffer[AUDIO_BUFFER_LENGTH];
         uint32_t joystick = rg_input_read_gamepad();
@@ -255,10 +432,131 @@ void app_main(void)
         rumble_frame_reset();
 
         clear_gamepak_stickybits();
+#if defined(RG_TEST_FLUSH_CACHE) && RG_TEST_FLUSH_CACHE
+        /* TEST 2026-10-06：每帧强制刷新翻译缓存（限 f<600 控制开销），
+         * 验证「游戏把解压出来的代码写进 RAM 后 dynarec 仍用陈旧翻译」这一假设。 */
+        if (frame_counter < 600)
+            flush_translation_cache_ram();
+#endif
         gba_execute_frame(execute_cycles);
         sram_autosave();          /* step3：电池存档变了就落盘 */   // dynarec 可用时走 JIT，否则走解释器
         // RG_TIMER_LAP("execute_arm");
 
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+        /* ── 真机"输入 vs 显示"分辨探针（2026-10-06）────────────────────────────
+         * 只有一个问题要回答：菜单里按方向键没反应，是**游戏没收到键**还是**面板没收到像素**。
+         * 三条独立证据：
+         *   DIAG_CURSOR 游戏自己的菜单光标字节（EWRAM 0x020004F9；宿主已证明按左 -1）
+         *   DIAG_DIR    游戏自己的方向状态（EWRAM 0x0200001A；宿主实测 按左=02 按下=06）
+         *   DIAG_FB     游戏帧缓冲哈希 vs 累计"推给面板的像素"哈希/次数/丢块数
+         * 判据：按键后 CURSOR/DIR 变了、推像素哈希没变 ⇒ 显示层丢了；两者都没变 ⇒ 游戏侧没收到键。 */
+        {
+            static unsigned diag_tick;
+            static u8 last_cur = 0xFF;
+            static u16 last_dir = 0xFFFF;
+            extern uint32_t rg_display_push_hash, rg_display_push_blocks;
+            extern uint32_t rg_display_dirty_lines;
+            extern uint32_t rg_display_push_drops, rg_display_push_redirty;
+            const u8 *ew = (const u8 *)memory_map_read[0x02000000 >> 15];
+            u8 cur = ew[0x04F9];
+            u16 dir = (u16)(ew[0x001A] | (ew[0x001B] << 8));
+            if (cur != last_cur)
+            {
+                last_cur = cur;
+#if defined(RG_TARGET_SDL2)
+                { FILE *df = fopen("/tmp/diag_host.log", "a");
+                  if (df) { fprintf(df, "DIAG_CURSOR f=%u cur=%u\n", (unsigned)frame_counter, (unsigned)cur); fclose(df); } }
+#else
+                RG_LOGW("DIAG_CURSOR f=%u cur=%u\n", (unsigned)frame_counter, (unsigned)cur);
+#endif
+            }
+            if (dir != last_dir)
+            {
+                last_dir = dir;
+#if defined(RG_TARGET_SDL2)
+                { FILE *df = fopen("/tmp/diag_host.log", "a");
+                  if (df) { fprintf(df, "DIAG_DIR f=%u dir=%04X\n", (unsigned)frame_counter, (unsigned)dir); fclose(df); } }
+#else
+                RG_LOGW("DIAG_DIR f=%u dir=%04X\n", (unsigned)frame_counter, (unsigned)dir);
+#endif
+            }
+            if ((diag_tick++ % 60) == 0)
+            {
+                u32 hg = rg_hash((const char *)gba_screen_pixels, GBA_SCREEN_WIDTH * GBA_SCREEN_HEIGHT * 2);
+#if defined(RG_TARGET_SDL2)
+                /* 宿主日志被吞（实测 stdout 无输出），诊断直接落盘，便于和真机逐帧比对 */
+                {
+                    FILE *df = fopen("/tmp/diag_host.log", "a");
+                    if (df)
+                    {
+                        fprintf(df, "DIAG_FB f=%u game=%08X push=%08X n=%u drops=%u dirty=%u\n",
+                                (unsigned)frame_counter, (unsigned)hg,
+                                (unsigned)rg_display_push_hash, (unsigned)rg_display_push_blocks,
+                                (unsigned)rg_display_push_drops, (unsigned)rg_display_dirty_lines);
+                        fclose(df);
+                    }
+                }
+#else
+                RG_LOGW("DIAG_FB f=%u game=%08X push=%08X n=%u drops=%u dirty=%u\n",
+                        (unsigned)frame_counter, (unsigned)hg,
+                        (unsigned)rg_display_push_hash, (unsigned)rg_display_push_blocks,
+                        (unsigned)rg_display_push_drops, (unsigned)rg_display_dirty_lines);
+#endif
+            }
+            /* ── 区域哈希探针（2026-10-06）────────────────────────────────────────
+             * mh 只说"两构建内存不同"，不说"哪里不同"。这里把 EWRAM 切 8 块(32KB)、
+             * IWRAM 切 8 块(4KB)，每 10 帧打一次，按块定位分岔位置。
+             * 同时跑两次解释器做运次间对照：若解释器两次自身就不一致，说明是未初始化内存。 */
+            if (frame_counter <= 600 && (frame_counter % 10) == 0)
+            {
+                const char *ew = (const char *)memory_map_read[0x02000000 >> 15];
+                const char *iw = (const char *)memory_map_read[0x03000000 >> 15];
+                char b[320]; int o = 0;
+                o += snprintf(b + o, sizeof(b) - o, "MHDIFF f=%u E", (unsigned)frame_counter);
+                for (int sl = 0; sl < 8; ++sl)
+                    o += snprintf(b + o, sizeof(b) - o, " %08X", (unsigned)rg_hash(ew + sl * 32768, 32768));
+                o += snprintf(b + o, sizeof(b) - o, " I");
+                for (int sl = 0; sl < 8; ++sl)
+                    o += snprintf(b + o, sizeof(b) - o, " %08X", (unsigned)rg_hash(iw + sl * 4096, 4096));
+                RG_LOGW("%s\n", b);
+            }
+
+            /* ── 状态级探针（2026-10-06）：定位 dynarec 从哪一帧开始算错 ─────────────
+             * rh = 整个 GBA 寄存器文件 reg[0..63] 的哈希（CPSR 也在这段里），每帧打；
+             *      mh = EWRAM(256K)+IWRAM(32K) 哈希，每 60 帧打一次。
+             * 判据：宿主(解释器) 与 真机(dynarec) 的 rh 序列**第一处分歧** = dynarec 算错的那一帧，
+             *       该帧的 pc 就是出错代码的位置。 */
+            {
+                extern u32 reg[64];
+                u32 rh = rg_hash((const char *)reg, 18 * sizeof(u32));  /* 只比 r0-r15+CPSR+模式：reg[16..63] 是 JIT 暂存/缓存槽，两边布局本就不同 */
+                unsigned freq = (frame_counter <= 420) ? 1u : 60u;
+                if ((frame_counter % freq) == 0)
+                {
+                    u32 mh = 0;
+                    if ((frame_counter % 60) == 0)
+                    {
+                        const char *ew = (const char *)memory_map_read[0x02000000 >> 15];
+                        const char *iw = (const char *)memory_map_read[0x03000000 >> 15];
+                        mh = rg_hash(ew, 256 * 1024) ^ rg_hash(iw, 32 * 1024);
+                    }
+#if defined(RG_TARGET_SDL2)
+                    {
+                        FILE *df = fopen("/tmp/diag_host.log", "a");
+                        if (df)
+                        {
+                            fprintf(df, "DIAG_ST f=%u rh=%08X pc=%08X mh=%08X\n",
+                                    (unsigned)frame_counter, (unsigned)rh, (unsigned)reg[15], (unsigned)mh);
+                            fclose(df);
+                        }
+                    }
+#else
+                    RG_LOGW("DIAG_ST f=%u rh=%08X pc=%08X mh=%08X\n",
+                            (unsigned)frame_counter, (unsigned)rh, (unsigned)reg[15], (unsigned)mh);
+#endif
+                }
+            }
+        }
+#endif
         if (!skip_next_frame)
             rg_display_submit(currentUpdate, 0);
 

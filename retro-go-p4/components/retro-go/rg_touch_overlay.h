@@ -36,7 +36,18 @@
 #define RG_TOUCH_OVERLAY 1
 #endif
 
+/* 「这次编译到底有没有可视层模块」的**唯一判据** —— 调用方（launcher/显示层/输入层）
+ * 一律用这个宏，别写 `#if RG_TOUCH_OVERLAY`。
+ * 原因：RG_TOUCH_OVERLAY 有默认值 1，而真正的开关是 RG_GAMEPAD_TOUCH_MAP（宿主/无触摸
+ * target 没定义它 → 整个模块编成空）。拿 RG_TOUCH_OVERLAY 判断会「调用留着、声明被编掉」，
+ * 症状是编译期 undeclared function（2026-10-03：SDL2 宿主构建就是这么坏的）。 */
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+#define RG_OVERLAY_ENABLED 1
+#else
+#define RG_OVERLAY_ENABLED 0
+#endif
+
+#if RG_OVERLAY_ENABLED
 
 #define RG_OVERLAY_ALPHA_LEVEL_COUNT 5
 #define RG_OVERLAY_PRESS_LINGER_MS   120   /* 按下高亮的最短保持（快速点按也看得见） */

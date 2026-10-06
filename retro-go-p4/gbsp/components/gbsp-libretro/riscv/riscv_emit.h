@@ -1342,15 +1342,37 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
  * Return value is in a0; copy to reg_rv for compatibility.
  * ================================================================== */
 
+/* ── 访存周期记账修复（2026-10-06）─────────────────────────────────────────
+ * 解释器按区域表动态扣费：ws_cyc_nseq[addr>>24][(size-8)/16]（8/16位→0，32位→1）。
+ * 原 dynarec 写死 load +2 / store +1，单次访存与解释器差 3~4 拍；累计后使加载窗口
+ * 跨的 VBlank 帧数相差 1，游戏自身计时节拍永久错位（症状：按键部分失灵）。
+ * 改为运行时按实际地址查表扣费，与解释器口径完全一致。 */
+#define rg_acc_idx_u8   0
+#define rg_acc_idx_s8   0
+#define rg_acc_idx_u16  0
+#define rg_acc_idx_s16  0
+#define rg_acc_idx_u32  1
+
+#define rv_generate_access_charge(addr_reg, size_idx)                          \
+  rv_emit_srli(reg_temp, addr_reg, 24);                                        \
+  rv_emit_andi(reg_temp, reg_temp, 0xF);                                       \
+  rv_emit_slli(reg_temp, reg_temp, 1);                                         \
+  { u32 _ct = (u32)ws_cyc_nseq;                                                \
+    rv_emit_lui(reg_rv, (_ct + 0x800) >> 12);                                  \
+    rv_emit_addi(reg_rv, reg_rv, _ct & 0xFFF); }                               \
+  rv_emit_add(reg_temp, reg_temp, reg_rv);                                     \
+  rv_emit_lbu(reg_temp, reg_temp, size_idx);                                   \
+  rv_emit_sub(reg_cycles, reg_cycles, reg_temp)
+
 #define arm_access_memory_load(mem_type)                                      \
-  cycle_count += 2;                                                           \
+  rv_generate_access_charge(reg_a0, rg_acc_idx_##mem_type);                   \
   generate_function_call(execute_load_##mem_type);                            \
   rv_emit_mv(reg_rv, reg_a0);                                                \
   generate_store_reg(reg_rv, rd);                                             \
   check_store_reg_pc_no_flags(rd)
 
 #define arm_access_memory_store(mem_type)                                     \
-  cycle_count++;                                                              \
+  rv_generate_access_charge(reg_a0, rg_acc_idx_##mem_type);                   \
   generate_load_pc(reg_a2, (pc + 4));                                         \
   generate_load_reg_pc(reg_a1, rd, 12);                                       \
   generate_function_call(execute_store_##mem_type)
@@ -1677,13 +1699,13 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 
 /* Thumb memory access */
 #define thumb_access_memory_load(mem_type, reg_rd)                            \
-  cycle_count += 2;                                                           \
+  rv_generate_access_charge(reg_a0, rg_acc_idx_##mem_type);                   \
   generate_function_call(execute_load_##mem_type);                            \
   rv_emit_mv(reg_rv, reg_a0);                                                \
   generate_store_reg(reg_rv, reg_rd)
 
 #define thumb_access_memory_store(mem_type, reg_rd)                           \
-  cycle_count++;                                                              \
+  rv_generate_access_charge(reg_a0, rg_acc_idx_##mem_type);                   \
   generate_load_pc(reg_a2, (pc + 2));                                         \
   generate_load_reg(reg_a1, reg_rd);                                          \
   generate_function_call(execute_store_##mem_type)
@@ -1899,15 +1921,20 @@ u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
  * ================================================================== */
 
 #define arm_hle_div(cpu_mode)                                                 \
+  /* 余数必须用「原被除数」算：BIOS/mGBA 都是 r1 = num % den。                 \
+     原实现把 r0 当分母（此时 r0 已被商覆盖）=> 取余数的游戏会永久算错。 */   \
+  rv_emit_rem(reg_temp, reg_r0, reg_r1);                                      \
   rv_emit_div(reg_r0, reg_r0, reg_r1);                                        \
-  rv_emit_rem(reg_r1, reg_r0, reg_r1);                                        \
+  rv_emit_mv(reg_r1, reg_temp);                                               \
   rv_emit_srai(reg_a0, reg_r0, 31);                                           \
   rv_emit_xor(reg_r3, reg_r0, reg_a0);                                        \
   rv_emit_sub(reg_r3, reg_r3, reg_a0)
 
 #define arm_hle_div_arm(cpu_mode)                                             \
+  /* 同理：r1 = 原r1 %% 原r0 */                                                \
+  rv_emit_rem(reg_temp, reg_r1, reg_r0);                                      \
   rv_emit_div(reg_r0, reg_r1, reg_r0);                                        \
-  rv_emit_rem(reg_r1, reg_r1, reg_r0);                                        \
+  rv_emit_mv(reg_r1, reg_temp);                                               \
   rv_emit_srai(reg_a0, reg_r0, 31);                                           \
   rv_emit_xor(reg_r3, reg_r0, reg_a0);                                        \
   rv_emit_sub(reg_r3, reg_r3, reg_a0)

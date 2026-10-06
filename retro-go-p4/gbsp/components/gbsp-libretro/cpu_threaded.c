@@ -291,6 +291,9 @@ typedef struct
     /* 兜底：全量失效 L1 指令缓存 —— 范围失效对"动态映射的 PSRAM exec 区"不可靠。
      * 只动 i-cache：指令行永远不会是脏数据，而正确内容已由上面两步写回 PSRAM/L2。 */
     Cache_Invalidate_All(CACHE_MAP_L1_ICACHE_MASK);
+
+    /* fence.i：RISC-V 取指屏障，保证刚写入的指令对取指路径可见（上游有，本移植版漏了） */
+    __asm__ volatile("fence.i" ::: "memory");
   }
 #else
   /* x86 CPUs have icache consistency checks */
@@ -300,11 +303,13 @@ typedef struct
 void translate_icache_sync() {
     // Cache emitted code can only grow
     if (last_rom_translation_ptr < rom_translation_ptr) {
-        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+        /* 从缓存**起始处**同步（上游同款）：JIT 回填已翻译旧块的跳转出口时，写入落在旧块区间，
+         * 只刷新增区会漏 → CPU 取到陈旧指令 → 游戏状态算错。 */
+        platform_cache_sync(rom_translation_cache, rom_translation_ptr);
         last_rom_translation_ptr = rom_translation_ptr;
     }
     if (last_ram_translation_ptr < ram_translation_ptr) {
-        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
+        platform_cache_sync(ram_translation_cache, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
 }
@@ -360,7 +365,7 @@ void translate_icache_sync() {
         {                                                                     \
           /* MUL rd, rm, rs */                                                \
           arm_multiply(no, no);                                               \
-          cycle_count += 2;  /* variable 1..4, pick 2 as an aprox. */         \
+          /* 对齐解释器：MUL 不额外扣费 */                                      \
         }                                                                     \
       }                                                                       \
       else                                                                    \
@@ -378,7 +383,7 @@ void translate_icache_sync() {
           case 0:                                                             \
             /* MULS rd, rm, rs */                                             \
             arm_multiply(no, yes);                                            \
-            cycle_count += 2;  /* variable 1..4, pick 2 as an aprox. */       \
+            /* 对齐解释器：MUL 不额外扣费 */                                      \
             break;                                                            \
                                                                               \
           case 1:                                                             \
@@ -416,7 +421,7 @@ void translate_icache_sync() {
         {                                                                     \
           /* MLA rd, rm, rs, rn */                                            \
           arm_multiply(yes, no);                                              \
-          cycle_count += 3;  /* variable 2..5, pick 3 as an aprox. */         \
+          /* 对齐解释器：MLA 不额外扣费 */                                      \
         }                                                                     \
       }                                                                       \
       else                                                                    \
@@ -434,7 +439,7 @@ void translate_icache_sync() {
           case 0:                                                             \
             /* MLAS rd, rm, rs, rn */                                         \
             arm_multiply(yes, yes);                                           \
-            cycle_count += 3;  /* variable 2..5, pick 3 as an aprox. */       \
+            /* 对齐解释器：MLA 不额外扣费 */                                      \
             break;                                                            \
                                                                               \
           case 1:                                                             \
@@ -554,7 +559,7 @@ void translate_icache_sync() {
         {                                                                     \
           /* UMULL rd, rm, rs */                                              \
           arm_multiply_long(u64, no, no);                                     \
-          cycle_count += 3;  /* this is an aproximation :P */                 \
+          /* 对齐解释器：UMULL 不额外扣费 */                                    \
         }                                                                     \
       }                                                                       \
       else                                                                    \
@@ -572,7 +577,7 @@ void translate_icache_sync() {
           case 0:                                                             \
             /* UMULLS rdlo, rdhi, rm, rs */                                   \
             arm_multiply_long(u64, no, yes);                                  \
-            cycle_count += 3;  /* this is an aproximation :P */               \
+            /* 对齐解释器：UMULL 不额外扣费 */                                    \
             break;                                                            \
                                                                               \
           case 1:                                                             \
@@ -610,7 +615,7 @@ void translate_icache_sync() {
         {                                                                     \
           /* UMLAL rd, rm, rs */                                              \
           arm_multiply_long(u64_add, yes, no);                                \
-          cycle_count += 3;  /* Between 2 and 5 cycles? */                    \
+          /* 对齐解释器：UMLAL/SMLAL 不额外扣费 */                              \
         }                                                                     \
       }                                                                       \
       else                                                                    \
@@ -628,7 +633,7 @@ void translate_icache_sync() {
           case 0:                                                             \
             /* UMLALS rdlo, rdhi, rm, rs */                                   \
             arm_multiply_long(u64_add, yes, yes);                             \
-            cycle_count += 3;  /* Between 2 and 5 cycles? */                  \
+            /* 对齐解释器：UMLAL/SMLAL 不额外扣费 */                              \
             break;                                                            \
                                                                               \
           case 1:                                                             \
@@ -666,7 +671,7 @@ void translate_icache_sync() {
         {                                                                     \
           /* SMULL rd, rm, rs */                                              \
           arm_multiply_long(s64, no, no);                                     \
-          cycle_count += 2;  /* Between 1 and 4 cycles? */                    \
+          /* 对齐解释器：SMULL 不额外扣费 */                                    \
         }                                                                     \
       }                                                                       \
       else                                                                    \
@@ -684,7 +689,7 @@ void translate_icache_sync() {
           case 0:                                                             \
             /* SMULLS rdlo, rdhi, rm, rs */                                   \
             arm_multiply_long(s64, no, yes);                                  \
-            cycle_count += 2;  /* Between 1 and 4 cycles? */                  \
+            /* 对齐解释器：SMULL 不额外扣费 */                                    \
             break;                                                            \
                                                                               \
           case 1:                                                             \
@@ -722,7 +727,7 @@ void translate_icache_sync() {
         {                                                                     \
           /* SMLAL rd, rm, rs */                                              \
           arm_multiply_long(s64_add, yes, no);                                \
-          cycle_count += 3;  /* Between 2 and 5 cycles? */                    \
+          /* 对齐解释器：UMLAL/SMLAL 不额外扣费 */                              \
         }                                                                     \
       }                                                                       \
       else                                                                    \
@@ -740,7 +745,7 @@ void translate_icache_sync() {
           case 0:                                                             \
             /* SMLALS rdlo, rdhi, rm, rs */                                   \
             arm_multiply_long(s64_add, yes, yes);                             \
-            cycle_count += 3;  /* Between 2 and 5 cycles? */                  \
+            /* 对齐解释器：UMLAL/SMLAL 不额外扣费 */                              \
             break;                                                            \
                                                                               \
           case 1:                                                             \
@@ -1955,7 +1960,7 @@ void translate_icache_sync() {
         case 0x01:                                                            \
           /* MUL rd, rs */                                                    \
           thumb_data_proc(alu_op, muls, reg, rd, rs, rd);                     \
-          cycle_count += 2;  /* Between 1 and 4 extra cycles */               \
+          /* 对齐解释器：Thumb MUL 不额外扣费 */                                \
           break;                                                              \
                                                                               \
         case 0x02:                                                            \
@@ -2660,6 +2665,7 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
                                                                               \
         if (result)                                                           \
           return blkptr;                                                      \
+        bhdr->pc_value = 0xFFFFFFFF;                                          \
       }                                                                       \
       return NULL;                                                            \
     }                                                                         \
@@ -2694,6 +2700,8 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   unsigned i;
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_arm(pc);
+    if (ret == (u8*)(~0))
+      break;
     if (ret) {
       translate_icache_sync();
       return ret;
@@ -2710,6 +2718,8 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
   unsigned i;
   for (i = 0; i < 4; i++) {
     u8 *ret = block_lookup_translate_thumb(pc);
+    if (ret == (u8*)(~0))
+      break;
     if (ret) {
       translate_icache_sync();
       return ret;
@@ -2813,7 +2823,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 #define arm_instruction_width 4
 
 #define arm_base_cycles()                                                     \
-  cycle_count += def_seq_cycles[pc >> 24][1]                                  \
+  cycle_count += ws_cyc_nseq[pc >> 24][0]   /* 对齐解释器取指口径 */                                  \
 
 // For now this just sets a variable that says flags should always be
 // computed.
@@ -2882,7 +2892,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
 #define thumb_instruction_width 2
 
 #define thumb_base_cycles()                                                   \
-  cycle_count += def_seq_cycles[pc >> 24][0]                                  \
+  cycle_count += ws_cyc_nseq[pc >> 24][0]   /* 对齐解释器取指口径 */                                  \
 
 // Here's how this works: each instruction has three different sets of flag
 // attributes, each consisiting of a 4bit mask describing how that instruction
