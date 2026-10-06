@@ -34,6 +34,9 @@ components/retro-go/fonts/*.c components/retro-go/libs/cJSON/*.c \
 components/retro-go/libs/lodepng/*.c components/retro-go/libs/miniz/*.c"
 
 LIBS="$SDL_LIBS -lc++"
+# 额外编译宏 / 产物名（用于宿主上复刻真机几何的 A/B 构建，见 targets/sdl2/config.h）
+EXTRA="${EXTRA_CFLAGS:-}"
+OUT="${OUT:-}"
 
 MODE="${1:-all}"
 
@@ -42,7 +45,7 @@ rm -f build-sdl2/launcher build-sdl2/gbsp build-sdl2/overlay-preview
 
 if [ "$MODE" = "all" ] || [ "$MODE" = "launcher" ]; then
 echo "=== [1/2] 构建 launcher（完整输出，不吞错误）==="
-$CC $COMMON_CFLAGS $RG_SRCS launcher/main/*.c $LIBS -o build-sdl2/launcher
+$CC $COMMON_CFLAGS $RG_SRCS launcher/main/*.c $LIBS -o "${OUT:-build-sdl2/launcher}"
 
 echo "=== launcher 产物 ==="
 ls -l build-sdl2/launcher
@@ -62,11 +65,11 @@ $GBSP_DIR/sound.c $GBSP_DIR/cpu.cpp $GBSP_DIR/video.cpp"
 
 if [ "$MODE" = "all" ] || [ "$MODE" = "gbsp" ]; then
 echo "=== [2/2] 构建 gbsp ==="
-$CC $COMMON_CFLAGS \
+$CC $COMMON_CFLAGS $EXTRA \
   -I$GBSP_DIR -I$GBSP_DIR/libretro/libretro-common/include -Igbsp/main \
   $RG_SRCS gbsp/main/*.c \
   $GBSP_SRCS \
-  $LIBS -o build-sdl2/gbsp
+  $LIBS -o "${OUT:-build-sdl2/gbsp}"
 
 echo "=== gbsp 产物 ==="
 ls -l build-sdl2/gbsp

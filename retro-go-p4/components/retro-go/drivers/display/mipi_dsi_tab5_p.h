@@ -887,6 +887,12 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 #else
         t_o1 = t_x1;
 #endif
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+        /* 诊断：把"这一块真正要推给面板的像素"折进累计哈希（含虚拟按键合成后的结果）。
+         * 判据见 gbsp/main/main.c 的 DIAG_FB：游戏帧变了而这里没变 = 显示层没推。 */
+        rg_display_push_hash = rg_display_push_hash * 31u + rg_hash((void *)tab5_scratch, (size_t)rows * (size_t)w * 2u);
+        rg_display_push_blocks++;
+#endif
         err = tab5_draw(x0, y0, x0 + w, y0 + rows, tab5_scratch);
         /* DMA2D 忙时 IDF 会直接**丢弃**这次绘制（0 超时抢信号量 → ESP_ERR_INVALID_STATE），
          * 我们刚做完的 CPU 转置就白费了，这一帧也只能等下一帧脏区重推 ——
@@ -902,7 +908,13 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
         }
         int64_t t_d1 = esp_timer_get_time();
         if (err != ESP_OK)
+        {
             RG_LOGE("draw failed (err=0x%x) at phys <%d,%d %d,%d>\n", err, x0, y0, x0 + w, y0 + rows);
+            /* 丢块必须让显示层知道：本驱动是竖屏线性映射（逻辑 y == 物理 y），
+             * 所以被丢掉的逻辑行就是 [y0, y0+rows) —— 显示层据此把这几行的校验和退回
+             * "未知"（下一帧重推）。不报的话静态画面会永久定格（见 rg_display.c 注释）。 */
+            rg_display_push_failed(y0, rows);
+        }
         /* 三段分开记账：定位那 0.6~1.0ms/次落在哪一段 */
         tab5_pf_xp_us += (uint64_t)(t_x1 - t_x0);
         tab5_pf_ov_us += (uint64_t)(t_o1 - t_x1);

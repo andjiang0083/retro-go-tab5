@@ -200,7 +200,7 @@ static void retro_loop(void)
     int change_tab = 0;
     int browse_last = -1;
     bool redraw_pending = true;
-#if RG_TOUCH_OVERLAY
+#if RG_OVERLAY_ENABLED
     /* 触摸覆盖层的"内容代际号"：L/R 中间那颗 X/Y ↔ L/R 调换按钮改的是覆盖层内容，
      * 不产生任何按键 —— 只靠下面的 joystick 判断，标签要等到下一次界面切换才更新
      * （真机反馈：点切换后要进出游戏才生效）。这里比一下号，变了就重画一帧。 */
@@ -347,7 +347,7 @@ static void retro_loop(void)
             }
         }
 
-#if RG_TOUCH_OVERLAY
+#if RG_OVERLAY_ENABLED
         /* 覆盖层内容变了（比如刚点了调换按钮）→ 立刻重画。
          * 只置脏行还不够：菜单重绘走的"行校验和"判定在内容没变时是 no-op，
          * 得真的走一遍重绘，那几行才会被重推、覆盖层才会被重新合成。 */
@@ -459,6 +459,30 @@ static void about_handler(rg_gui_option_t *dest)
     *dest++ = (rg_gui_option_t)RG_DIALOG_END;
 }
 
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG && !defined(RG_TARGET_SDL2)
+/* 2026-10-06 临时：无人值守真机测试 —— 启动器直接启动一个 ROM。
+ * 为什么需要：真机上没人点屏幕，而"选 app(gbsp) → 再选 ROM"要两次输入；
+ * 直接 rg_system_switch_app 一步进游戏，之后按键时间轴才有意义。验证完删除。 */
+static char rg_test_boot_rom[RG_PATH_MAX + 1];
+static int rg_test_boot_rom_cb(const rg_scandir_t *entry, void *arg)
+{
+    if (!entry->is_file || !rg_extension_match(entry->basename, "gba"))
+        return RG_SCANDIR_SKIP;
+    if (!rg_test_boot_rom[0])
+        snprintf(rg_test_boot_rom, sizeof(rg_test_boot_rom), "%s", entry->path);
+    return RG_SCANDIR_SKIP;
+}
+static void rg_test_auto_boot_rom(void)
+{
+    const char *cands[] = { RG_BASE_PATH_ROMS "/gba/恶魔城系列（3作）", RG_BASE_PATH_ROMS "/gba" };
+    for (size_t i = 0; i < RG_COUNT(cands) && !rg_test_boot_rom[0]; ++i)
+        rg_storage_scandir(cands[i], rg_test_boot_rom_cb, NULL, RG_SCANDIR_RECURSIVE);
+    RG_LOGW("RG_TEST_BOOTROM: %s\n", rg_test_boot_rom[0] ? rg_test_boot_rom : "(none)");
+    if (rg_test_boot_rom[0])
+        rg_system_switch_app("gbsp", "gba", rg_test_boot_rom, 0);
+}
+#endif
+
 void app_main(void)
 {
 #if defined(RG_SINGLE_APP)
@@ -511,6 +535,10 @@ void app_main(void)
     // stop working. Lowering CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL and manually using rg_alloc to do internal allocs when
     // needed is a better solution, but that would have to be done for every app. This is a good workaround for now.
     heap_caps_malloc_extmem_enable(1024);
+#endif
+
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG && !defined(RG_TARGET_SDL2)
+    rg_test_auto_boot_rom();   /* 测试钩子：直接进游戏，跳过 ROM 选择界面 */
 #endif
 
     retro_loop();

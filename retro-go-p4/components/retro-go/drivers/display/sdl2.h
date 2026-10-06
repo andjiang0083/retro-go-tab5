@@ -50,6 +50,46 @@ static inline uint16_t *lcd_get_buffer(size_t length)
 
 static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
 {
+#if defined(RG_TEST_DROP_PUSH) && RG_TEST_DROP_PUSH > 0
+    /* 宿主专用：模拟真机 DMA2D 忙时 ESP_ERR_INVALID_STATE 丢块（见 rg_display.c 注释）。
+     *   RG_TEST_DROP_PUSH=N    每 N 次推送丢一次
+     *   RG_TEST_DROP_WINDOW=a:b  只在这个墙钟窗口(秒)内丢
+     *   RG_TEST_DROP_ROWS=t:b    只丢与这些面板行相交的块（便于只打"光标所在那一行"）
+     * 丢的时候照样调用 rg_display_push_failed —— 修复在不在，就靠这个 A/B 区分。 */
+    {
+        static int inited, every = 0; static double w0 = -1, w1 = -1; static int r0 = -1, r1 = -1;
+        if (!inited)
+        {
+            inited = 1; every = RG_TEST_DROP_PUSH;
+            const char *e;
+            if ((e = getenv("RG_TEST_DROP_WINDOW")) && strchr(e, ':')) { w0 = atof(e); w1 = atof(strchr(e, ':') + 1); }
+            if ((e = getenv("RG_TEST_DROP_ROWS")) && strchr(e, ':')) { r0 = atoi(e); r1 = atoi(strchr(e, ':') + 1); }
+        }
+        const int rows = (int)(length / win_width);
+        static int n = 0;
+        bool hit = (every > 0) && ((++n % every) == 0);
+        /* ⚠ SDL 的性能计数器是"自开机"的，绝对值不是进程起点 —— 必须减一个基线，
+         * 否则窗口判据永远不成立（第一次就栽在这：窗口形同虚设，A/B 全无差别）。 */
+        static double tb0 = -1;
+        if (hit && w0 >= 0)
+        {
+            double t = rg_system_timer() / 1000000.0;
+            if (tb0 < 0) tb0 = t;
+            t -= tb0;
+            hit = (t >= w0 && t <= w1);
+        }
+        if (hit && r0 >= 0) { hit = !(win_top + rows <= r0 || win_top >= r1); }
+        if (hit && length)
+        {
+            extern void rg_display_push_failed(int top, int lines);
+            static int logged = 0;
+            if (logged < 8) { logged++; RG_LOGW("DROPTEST: 丢弃推送 win_top=%d rows=%d t=%.2f\n", win_top, rows, rg_system_timer() / 1000000.0 - tb0); }
+            rg_display_push_failed(win_top, rows);
+            return;
+        }
+    }
+#endif
+
     int bpp = canvas->format->BytesPerPixel;
     int pitch = canvas->pitch;
     void *pixels = canvas->pixels;
@@ -159,6 +199,74 @@ static void shot_hook(void)
 }
 #endif
 
+#ifdef RG_TARGET_SDL2
+#include "lodepng.h"
+#include <sys/stat.h>
+/* ── 自动化复现钩子：逐帧出图（**只编进宿主构建**）─────────────────────────────
+ * RG_TEST_DUMP="<目录>[:从第几秒][:间隔秒][:最多几张]" —— 到点就把当前画面存成 PNG
+ * （frame_0000.png …）。配合 rg_input.c 的 RG_TEST_KEYS 时间轴，可无人值守复现
+ * "某画面里按键不生效"，然后用数值比对（PIL）判断光标/画面有没有动。*/
+static void dump_hook(void)
+{
+    static bool parsed, enabled;
+    static char dir[400];
+    static float from = 2.0f, every = 0.5f;
+    static int max_frames = 60, index;
+    static float next_at;
+
+    if (!parsed)
+    {
+        parsed = true;
+        next_at = from;
+        const char *env = getenv("RG_TEST_DUMP");
+        if (!env || !*env)
+            return;
+        enabled = true;
+        char buf[512];
+        snprintf(buf, sizeof(buf), "%s", env);
+        char *tok = strtok(buf, ":");
+        if (tok) snprintf(dir, sizeof(dir), "%s", tok);
+        if ((tok = strtok(NULL, ":"))) from = atof(tok);
+        if ((tok = strtok(NULL, ":"))) every = atof(tok);
+        if ((tok = strtok(NULL, ":"))) max_frames = atoi(tok);
+        next_at = from;
+        mkdir(dir, 0755);
+        RG_LOGI("RG_TEST_DUMP: dir='%s' from=%.2fs every=%.2fs max=%d\n", dir, from, every, max_frames);
+    }
+    if (!enabled)
+        return;
+
+    const float now = SDL_GetTicks() / 1000.0f;
+    if (now < next_at || index >= max_frames)
+        return;
+    next_at = now + every;
+
+    SDL_LockSurface(surface);
+    unsigned char *rgb = malloc((size_t)surface->w * surface->h * 3);
+    const uint8_t bpp = surface->format->BytesPerPixel;
+    for (int y = 0; y < surface->h; ++y)
+    {
+        for (int x = 0; x < surface->w; ++x)
+        {
+            uint32_t px = 0;
+            memcpy(&px, (uint8_t *)surface->pixels + y * surface->pitch + x * bpp, bpp);
+            Uint8 r, g, b;
+            SDL_GetRGB(px, surface->format, &r, &g, &b);
+            unsigned char *o = rgb + ((size_t)y * surface->w + x) * 3;
+            o[0] = r; o[1] = g; o[2] = b;
+        }
+    }
+    SDL_UnlockSurface(surface);
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/frame_%04d.png", dir, index);
+    unsigned err = lodepng_encode_file(path, rgb, surface->w, surface->h, LCT_RGB, 8);
+    free(rgb);
+    RG_LOGI("RG_TEST_DUMP: #%d t=%.2fs -> %s (err=%u)\n", index, now, path, err);
+    index++;
+}
+#endif /* RG_TARGET_SDL2 */
+
 static void lcd_sync(void)
 {
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
@@ -170,6 +278,7 @@ static void lcd_sync(void)
     SDL_BlitSurface(canvas, NULL, surface, NULL);
 #endif
     SDL_UpdateWindowSurface(window);
+    dump_hook();
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
     shot_hook();
 #endif

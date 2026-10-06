@@ -18,6 +18,10 @@
  */
 
 #include "common.h"
+#if defined(ESP_PLATFORM)
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#endif
 #include "streams/file_stream.h"
 
 /* Sound */
@@ -642,6 +646,38 @@ u32 function_cc read_eeprom(void)
 }
 
 
+#if defined(ESP_PLATFORM) && defined(RG_GBA_INPUT_TRACE) && RG_GBA_INPUT_TRACE
+/* 仅在 KEYINPUT 的返回值变化时打一次，证明游戏 CPU 的真实内存读值，不刷逐帧日志。 */
+static void trace_gba_keyinput_read(u32 address, u32 value, unsigned width)
+{
+  static u32 last_value[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+  const u32 offset = address & 0x3FF;
+  unsigned slot;
+
+  if (width == 8 && (offset == 0x130 || offset == 0x131))
+    slot = offset - 0x130;
+  else if (width == 16 && offset == 0x130)
+    slot = 2;
+  else if (width == 32 && offset == 0x130)
+    slot = 3;
+  else
+    return;
+
+  if (last_value[slot] == value)
+    return;
+  last_value[slot] = value;
+
+  RG_LOGW("GBA_P1_READ f=%u addr=%03X width=%u value=%08X PC=%08X HALT=%u P1=%04X P1CNT=%04X IF=%04X IE=%04X IME=%04X\n",
+          (unsigned)frame_counter, (unsigned)offset, width, (unsigned)value,
+          (unsigned)reg[REG_PC], (unsigned)reg[CPU_HALT_STATE],
+          (unsigned)read_ioreg(REG_P1), (unsigned)read_ioreg(REG_P1CNT),
+          (unsigned)read_ioreg(REG_IF), (unsigned)read_ioreg(REG_IE),
+          (unsigned)read_ioreg(REG_IME));
+}
+#else
+#define trace_gba_keyinput_read(address, value, width) do { (void)0; } while (0)
+#endif
+
 #define read_memory(type)                                                     \
   switch(address >> 24)                                                       \
   {                                                                           \
@@ -670,6 +706,8 @@ u32 function_cc read_eeprom(void)
     case 0x04:                                                                \
       /* I/O registers */                                                     \
       value = readaddress##type(io_registers, address & 0x3FF);               \
+      if ((address & 0x3FE) == 0x130)                                        \
+        trace_gba_keyinput_read(address, (u32)value, type);                   \
       break;                                                                  \
                                                                               \
     case 0x05:                                                                \
@@ -955,6 +993,31 @@ cpu_alert_type function_cc write_io_register16(u32 address, u32 value)
     case REG_P1:
     case REG_VCOUNT:
       break;  // Do nothing
+
+    /* 探针：游戏设置键盘中断（KEYCNT=0x04000132）。手册语义 bit15=键中断使能、
+     * bit14=0 表示 OR(任意键)/1 表示 AND(全按)；把写进来的原始值打出来，
+     * 就能和 trigger_key() 的判据对上，看是谁读错了极性。 */
+    case REG_P1CNT:
+    {
+#if defined(ESP_PLATFORM) && defined(RG_GBA_INPUT_TRACE) && RG_GBA_INPUT_TRACE
+      static u16 last_device_trace_p1cnt = 0xFFFF;
+#endif
+      RG_TRACE("f=%u WR_P1CNT val=%04X pc=%08X en(bit15)=%u andor(bit14)=%u mask=%03X\n", (unsigned)frame_counter,
+               (unsigned)value, (unsigned)reg[15], (unsigned)((value >> 15) & 1),
+               (unsigned)((value >> 14) & 1), (unsigned)(value & 0x3FF));
+#if defined(ESP_PLATFORM) && defined(RG_GBA_INPUT_TRACE) && RG_GBA_INPUT_TRACE
+      if ((u16)value != last_device_trace_p1cnt)
+      {
+        last_device_trace_p1cnt = (u16)value;
+        RG_LOGW("GBA_P1CNT_WRITE f=%u val=%04X PC=%08X enable=%u andor=%u mask=%03X\n",
+                (unsigned)frame_counter, (unsigned)value, (unsigned)reg[REG_PC],
+                (unsigned)((value >> 15) & 1), (unsigned)((value >> 14) & 1),
+                (unsigned)(value & 0x3FF));
+      }
+#endif
+      write_ioreg(ioreg, value);
+      break;
+    }
 
     case REG_WAITCNT:
       write_ioreg(REG_WAITCNT, value);
@@ -2214,6 +2277,29 @@ void init_gamepak_buffer(void)
   unsigned i;
   // Try to allocate up to 32 blocks of 1MB each
   gamepak_buffer_count = 0;
+#if defined(ESP_PLATFORM)
+  /* 2026-10-06：ROM 缓冲放 PSRAM（等价上游的 gpsp_malloc），且只吃到「PSRAM 余量 - 预留」
+   * 为止，避免把后面要分配的显示/音频内存挤掉。
+   * 目的：让整块 ROM 常驻、尽量不触发换页（性能与余量考虑）。
+   * 注意：这**不是**按键失灵的原因 —— 真因是周期记账口径不一致，见 gbsp-libretro/CMakeLists.txt 顶部。 */
+  {
+    size_t budget = 0;
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    const size_t reserve = 8 * 1024 * 1024;   /* 留给显示/音频/存档等后续分配 */
+    if (free_psram > reserve)
+      budget = free_psram - reserve;
+    RG_LOGI("gamepak buffers: PSRAM free=%uMB budget=%uMB",
+            (unsigned)(free_psram >> 20), (unsigned)(budget >> 20));
+    while (gamepak_buffer_count < ROM_BUFFER_SIZE &&
+           (size_t)gamepak_buffer_count * gamepak_buffer_blocksize < budget)
+    {
+      void *ptr = heap_caps_malloc(gamepak_buffer_blocksize, MALLOC_CAP_SPIRAM);
+      if (!ptr)
+        break;
+      gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
+    }
+  }
+#else
   while (gamepak_buffer_count < ROM_BUFFER_SIZE)
   {
     void *ptr = malloc(gamepak_buffer_blocksize);
@@ -2221,6 +2307,9 @@ void init_gamepak_buffer(void)
       break;
     gamepak_buffers[gamepak_buffer_count++] = (u8*)ptr;
   }
+#endif
+  RG_LOGI("gamepak buffers: got %u x 1MB = %uMB", (unsigned)gamepak_buffer_count,
+          (unsigned)gamepak_buffer_count);
 
   // Initialize the memory map structure
   for (i = 0; i < 1024; i++)

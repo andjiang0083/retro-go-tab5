@@ -3027,6 +3027,18 @@ arm_loop:
 #endif
 
           case 0xF0 ... 0xFF:
+#if defined(RG_GBA_DIAG) && defined(RG_TARGET_SDL2)
+#define SWI_PROBE_NUM ((opcode >> 16) & 0xFF)
+#if defined(RG_GBA_DIAG) && defined(RG_TARGET_SDL2)
+            { /* SWI 普查（仅诊断） */
+              FILE *_sf = fopen("/tmp/diag_host.log", "a");
+              if (_sf) { fprintf(_sf, "SWI_CALL f=%u n=%02X r0=%08X r1=%08X r2=%08X pc=%08X\n",
+                 (unsigned)frame_counter, (unsigned)SWI_PROBE_NUM, (unsigned)reg[0], (unsigned)reg[1],
+                 (unsigned)reg[2], (unsigned)reg[REG_PC]); fclose(_sf); }
+            }
+#endif
+#undef SWI_PROBE_NUM
+#endif
             collapse_flags();
             reg[REG_BUS_VALUE] = 0xe3a02004;  // After SWI, we read bios[0xE4]
             REG_MODE(MODE_SUPERVISOR)[6] = reg[REG_PC] + 4;
@@ -3478,6 +3490,18 @@ thumb_loop:
 
           case 0xDF:
              collapse_flags();
+#if defined(RG_GBA_DIAG) && defined(RG_TARGET_SDL2)
+#define SWI_PROBE_NUM (opcode & 0xFF)
+#if defined(RG_GBA_DIAG) && defined(RG_TARGET_SDL2)
+            { /* SWI 普查（仅诊断） */
+              FILE *_sf = fopen("/tmp/diag_host.log", "a");
+              if (_sf) { fprintf(_sf, "SWI_CALL f=%u n=%02X r0=%08X r1=%08X r2=%08X pc=%08X\n",
+                 (unsigned)frame_counter, (unsigned)SWI_PROBE_NUM, (unsigned)reg[0], (unsigned)reg[1],
+                 (unsigned)reg[2], (unsigned)reg[REG_PC]); fclose(_sf); }
+            }
+#endif
+#undef SWI_PROBE_NUM
+#endif
              REG_MODE(MODE_SUPERVISOR)[6] = reg[REG_PC] + 2;
              REG_SPSR(MODE_SUPERVISOR) = reg[REG_CPSR];
              reg[REG_PC] = 0x00000008;

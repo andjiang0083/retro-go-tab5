@@ -1,0 +1,11 @@
+# retro-go-tab5 — M5Burner 发布清单（发布前由 tools/check_merged.py 校验固件结构）
+# 修改版本时同步改这里；bin 必须是真 merged（bootloader + 分区表 + app）。
+project: retro-go-tab5
+platform_entries:
+  - name: retro-go Tab5
+    device: Tab5
+    category: Games
+    version: "0.4.3"
+    bin: dist/m5burner-0.4.3/retro-go-tab5-0.4.3-merged.bin
+    cover: releases/cover-1280x720-retro-go-tab5-tab5.png
+    project_link: ""

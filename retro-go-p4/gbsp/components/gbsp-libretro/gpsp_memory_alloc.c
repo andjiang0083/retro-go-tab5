@@ -7,6 +7,10 @@
 
 /* reg[64], spsr[6], reg_mode[7][7] are defined in riscv_stub.S
    (or mips_stub.S) with guaranteed contiguous layout for asm offsets */
+/* ⚠ 只在 dynarec 版定义：解释器版（-UHAVE_DYNAREC）由 cpu.cpp 的
+   `#ifndef HAVE_DYNAREC` 块定义同一批全局（EXT_RAM_ATTR 同样落在 PSRAM），
+   两边都定义会 multiple definition。见 CMakeLists 的 RG_GBSP_DYNAREC 开关。 */
+#ifdef HAVE_DYNAREC
 EXT_RAM_BSS_ATTR u8 *memory_map_read[8 * 1024];
 EXT_RAM_BSS_ATTR u16 oam_ram[512];
 EXT_RAM_BSS_ATTR u16 palette_ram[512];
@@ -15,6 +19,7 @@ EXT_RAM_BSS_ATTR u8 ewram[1024 * 256 * 2];
 EXT_RAM_BSS_ATTR u8 iwram[1024 * 32 * 2];
 EXT_RAM_BSS_ATTR u8 vram[1024 * 96];
 EXT_RAM_BSS_ATTR u16 io_registers[512];
+#endif
 
 /* From gba_memory.c — 我们那边已有定义，这里不重复（否则 multiple definition） */
 /* EXT_RAM_BSS_ATTR u8 gamepak_backup[1024 * 128]; */

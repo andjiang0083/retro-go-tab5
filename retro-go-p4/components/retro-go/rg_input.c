@@ -361,14 +361,20 @@ bool rg_input_read_battery_raw(rg_battery_t *out)
  * 实现细节：判据全用整数（tan 值放大 1000 倍 + 平方距离），不引 libm、不上浮点；
  * 几何从 keymap_touch 里算（中心 = 上键与左键的交点），键位表挪了判定跟着走；
  * 那四个矩形条目**保留**（可视层仍用它们画十字与按下高亮）。 */
-#define RG_DPAD_PAD_R        135    /* 可触半径（臂外沿 127 + 8 余量） */
+#define RG_DPAD_PAD_R        170    /* 可触半径。2026-10-03: 135→170。
+                                     * 放大"宽容区"唯一安全的办法就是放大这个圆：圆内任何一点都只出
+                                     * 一颗方向键（矢量函数返回单值），而单纯放大矩形会让相邻臂重叠，
+                                     * 命中循环是 OR 关系 → 重叠就等于串键。
+                                     * 参考 gywan94/tab5-vgbanext 的 vpad（单臂 120×125~240×140，
+                                     * 比我们原来的 84×84 宽 2~5 倍）——它靠"允许重叠"换宽容，代价是
+                                     * 角落必然出斜向；我们靠放大圆换宽容，且不会串键。 */
 #define RG_DPAD_DEAD_R       30     /* 中心死区半径 */
 #define RG_DPAD_DIAG_R       70     /* 斜向还要求推到这么远（贴中心蹭到角不算） */
 #define RG_DPAD_DIAG_R_LEAVE 60     /* 滞回：已斜向时退到这里才掉回单轴 */
-#define RG_DPAD_TAN30_X1000  577    /* tan(30°) */
-#define RG_DPAD_TAN60_X1000  1732   /* tan(60°) */
-#define RG_DPAD_TAN25_X1000  466    /* tan(25°)：滞回后斜区的下边界 */
-#define RG_DPAD_TAN65_X1000  2145   /* tan(65°)：滞回后斜区的上边界 */
+#define RG_DPAD_TAN30_X1000  700    /* tan(35°)：进入斜区的下边界 */
+#define RG_DPAD_TAN60_X1000  1428   /* tan(55°)：进入斜区的上边界 */
+#define RG_DPAD_TAN25_X1000  577    /* tan(30°)：滞回（已在斜区）下边界 */
+#define RG_DPAD_TAN65_X1000  1732   /* tan(60°)：滞回（已在斜区）上边界 */
 
 static struct { int cx, cy; bool ready; } dpad_geom;
 static bool dpad_was_diag;          /* 上一轮是否斜向（滞回状态） */
@@ -437,6 +443,84 @@ static uint32_t rg_dpad_keys_at(int lx, int ly)
  * 手指按着不放时每一轮读点都会命中它，不做边沿就会疯狂来回切。 */
 static bool swap_btn_down = false;
 #endif
+
+#if defined(RG_TARGET_SDL2) || defined(RG_TEST_KEYS_DEVICE)
+/* ── 自动化复现钩子：时间轴脚本注入按键 ────────────────────────────────────────
+ * 宿主：RG_TEST_KEYS 环境变量；真机：编译期 RG_TEST_KEYS_DEVICE（真机没有环境变量，
+ *       而 SD 卡不一定随手可写，所以做成编译期注入 —— 无人值守真机复现用）。
+ * 语法：段用 ';' 分隔，每段 "起秒-止秒:键|键"，键名同 RG_SDL2_SHOT。
+ * 设了它就**替换**键盘/触摸状态（替换而非叠加，才能复现"这一段完全没按"）。
+ * 为什么需要它：这段输入是"给机器自己用"的 —— 只有把按键在真机上按时间轴打进去，
+ * 才能在没人碰屏幕的情况下复现/验证"某个静态画面里按键不生效"这类问题。 */
+static uint32_t rg_test_script_keys(uint32_t state)
+{
+    static bool parsed, enabled;
+    static struct { float t0, t1; uint32_t keys; } segs[512];
+    static int seg_count;
+
+    if (!parsed)
+    {
+        parsed = true;
+#ifdef RG_TARGET_SDL2
+        const char *env = getenv("RG_TEST_KEYS");
+#else
+        const char *env = RG_TEST_KEYS_DEVICE;
+#endif
+        if (!env || !*env)
+            return state;
+        enabled = true;
+        char *buf = strdup(env), *save = NULL;
+        for (char *tok = strtok_r(buf, ";", &save); tok && seg_count < 512; tok = strtok_r(NULL, ";", &save))
+        {
+            char *colon = strchr(tok, ':');
+            if (!colon) continue;
+            *colon++ = 0;
+            float t0 = 0, t1 = 0;
+            if (sscanf(tok, "%f-%f", &t0, &t1) != 2) continue;
+            uint32_t keys = 0;
+            char *ksave = NULL;
+            for (char *k = strtok_r(colon, "|", &ksave); k; k = strtok_r(NULL, "|", &ksave))
+            {
+                if (!strcmp(k, "UP")) keys |= RG_KEY_UP;
+                else if (!strcmp(k, "DOWN")) keys |= RG_KEY_DOWN;
+                else if (!strcmp(k, "LEFT")) keys |= RG_KEY_LEFT;
+                else if (!strcmp(k, "RIGHT")) keys |= RG_KEY_RIGHT;
+                else if (!strcmp(k, "A")) keys |= RG_KEY_A;
+                else if (!strcmp(k, "B")) keys |= RG_KEY_B;
+                else if (!strcmp(k, "X")) keys |= RG_KEY_X;
+                else if (!strcmp(k, "Y")) keys |= RG_KEY_Y;
+                else if (!strcmp(k, "L")) keys |= RG_KEY_L;
+                else if (!strcmp(k, "R")) keys |= RG_KEY_R;
+                else if (!strcmp(k, "START")) keys |= RG_KEY_START;
+                else if (!strcmp(k, "SELECT")) keys |= RG_KEY_SELECT;
+                else if (!strcmp(k, "MENU")) keys |= RG_KEY_MENU;
+                else RG_LOGW("RG_TEST_KEYS: unknown key '%s'\n", k);
+            }
+            segs[seg_count].t0 = t0;
+            segs[seg_count].t1 = t1;
+            segs[seg_count].keys = keys;
+            seg_count++;
+        }
+        free(buf);
+        RG_LOGI("RG_TEST_KEYS: loaded %d segment(s)\n", seg_count);
+    }
+    if (!enabled)
+        return state;
+
+#ifdef RG_TARGET_SDL2
+    const float now = SDL_GetTicks() / 1000.0f;
+#else
+    const float now = (float)(rg_system_timer() / 1000000);  /* µs → s */
+#endif
+    uint32_t out = 0;
+    for (int i = 0; i < seg_count; ++i)
+        if (now >= segs[i].t0 && now < segs[i].t1)
+            out |= segs[i].keys;
+    if ((out || state) && out != state)
+        RG_LOGW("RG_TEST_KEYS: t=%.2f keys=0x%X\n", now, (unsigned)out); /* WARN：输入追踪会把日志级别压到 WARN，INFO 会丢 */
+    return out;
+}
+#endif /* RG_TARGET_SDL2 || RG_TEST_KEYS_DEVICE */
 
 bool rg_input_read_gamepad_raw(uint32_t *out)
 {
@@ -507,6 +591,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         if (keys[mapping->src])
             state |= mapping->key;
     }
+    state = rg_test_script_keys(state);
 #else
 #warning "not implemented"
 #endif
@@ -633,6 +718,56 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                 }
             }
         }
+
+#ifdef RG_TOUCH_TRACE
+        /* 真机触控遥测（诊断）：**每次触屏只在抬手时打一条汇总行**
+         * （first/last/包围盒 + 命中键）。为什么汇总：串口日志每 100ms 就有 FPS/电池/perf
+         * 好几行，逐点打会被冲掉 —— 上一次就是这么丢了 3 下点击的数据。
+         * 用途：分辨"点没命中""命中了但出的键不对""面板坐标和屏幕对不上"三件在屏幕上
+         * 长得一样的事。默认不编。 */
+        {
+            static bool had = false;
+            static int n, fx, fy, lx0, ly0, minx, maxx, miny, maxy;
+            static uint32_t keys_union;
+            if (any_touch)
+            {
+                for (int t = 0; t < count; ++t)
+                {
+                    int lx = 0, ly = 0;
+                    RG_TOUCH_LOGICAL_FROM_PHYS((int)px[t], (int)py[t], lx, ly);
+                    if (!had)
+                    {
+                        n = 0; fx = lx0 = minx = maxx = lx; fy = ly0 = miny = maxy = ly; keys_union = 0; had = true;
+                    }
+                    n++;
+                    lx0 = lx; ly0 = ly;
+                    if (lx < minx) minx = lx;
+                    if (lx > maxx) maxx = lx;
+                    if (ly < miny) miny = ly;
+                    if (ly > maxy) maxy = ly;
+                    keys_union |= state;
+                }
+            }
+            else if (had)
+            {
+                /* 打两遍 + 把日志等级压到 WARN：串口会丢行，而 FPS/电池/perf 那些 INFO/DEBUG
+                 * 行正是把遥测冲掉的原因（上一轮 8 下只活下来 3 行）。重复一份让单次丢行可恢复。 */
+                static int seq = 0;
+                static bool quieted = false;
+                if (!quieted)
+                {
+                    quieted = true;
+                    rg_system_set_log_level(RG_LOG_WARN);
+                }
+                int s = ++seq;
+                for (int rep = 0; rep < 2; ++rep)
+                    RG_LOGW("TOUCH tap #%d: n=%d first=(%d,%d) last=(%d,%d) box=[%d..%d, %d..%d] keys=0x%X vec@first=0x%X\n",
+                            s, n, fx, fy, lx0, ly0, minx, maxx, miny, maxy,
+                            (unsigned)keys_union, (unsigned)rg_dpad_keys_at(fx, fy));
+                had = false;
+            }
+        }
+#endif
     }
 
     /* 抬指 / 这一拍没有任何触点 → 清掉"按住"类状态。
@@ -647,6 +782,12 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         swap_btn_down = false;
         rg_dpad_reset();
     }
+#endif
+
+#ifdef RG_TEST_KEYS_DEVICE
+    /* 真机自动化复现：时间轴脚本**替换**上面所有输入源的结果（无人值守真机测试用）。
+     * 空字符串 = 关闭，无副作用。语法见 rg_test_script_keys() 注释。 */
+    state = rg_test_script_keys(state);
 #endif
 
 #if defined(RG_GAMEPAD_SERIAL_MAP)

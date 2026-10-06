@@ -6,9 +6,15 @@
 #define GPSP_VERSION             "v1.0.0"
 #define GPSP_NETPACKET_VERSION   "gpSP v1.0"
 
-/* Default ROM buffer size in megabytes (this is a maximum value!) */
+/* Default ROM buffer size in megabytes (this is a maximum value!)
+ *
+ * 2026-10-06：原为 2（仅 2MB），8MB 的 ROM 装不进时会被持续换页 ⇒ 改为 32
+ * （对齐上游 HowBoyAdvance：按 PSRAM 上限尽量全装，ROM 常驻则不换页）。
+ * 属性能/余量优化，**不是**按键失灵的原因（真因是周期记账口径不一致，
+ * 见 gbsp-libretro/CMakeLists.txt 顶部）。
+ * 实际上限由下面的 PSRAM 预算动态决定。 */
 #ifndef ROM_BUFFER_SIZE
-#define ROM_BUFFER_SIZE 2
+#define ROM_BUFFER_SIZE 32
 #endif
 
 /* Cache sizes and their config knobs */

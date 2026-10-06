@@ -42,6 +42,41 @@ static int16_t map_viewport_to_source_x[RG_SCREEN_WIDTH + 1];
 static int16_t map_viewport_to_source_y[RG_SCREEN_HEIGHT + 1];
 static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
 
+/* 驱动侧丢块的上报入口（在驱动里被调用）。丢块 = 这一块**没推到面板**，
+ * 而行校验和是在推送之前就写好的 —— 不把校验和退回"未知"，这块就永久定格：
+ *   游戏里每帧内容都变 → 下一帧照样重推 → 看不出来；
+ *   静态画面（存档选择/名字输入/菜单）只有光标那几行变 → 那几行一丢就再也推不出去
+ *   → 用户看到的是"方向键没反应、选不了存档/字母"。
+ * 真机反馈（2026-10-03，恶魔城晓月/月轮/白夜 三作）：存档选择与名字输入画面无法交互，
+ * 就是这么来的。校验和清零 = 强制下一帧重推，与 lcd_init/GUI 重绘的清零约定一致。 */
+uint32_t rg_display_push_drops = 0;      /* 累计丢块次数（诊断用） */
+uint32_t rg_display_push_hash = 0;       /* 累计"推给面板的像素"哈希（诊断：显示层到底推没推新像素） */
+uint32_t rg_display_push_blocks = 0;     /* 累计推送次数（诊断） */
+uint32_t rg_display_dirty_lines = 0;     /* 累计"被判定为变了"的扫描行数（诊断：显示层认没认出变化） */
+uint32_t rg_display_push_redirty = 0;    /* 因丢块被退回重推的行数（诊断用） */
+
+#ifndef RG_DISPLAY_PUSH_REDIRTY
+#define RG_DISPLAY_PUSH_REDIRTY 1
+#endif
+
+void rg_display_push_failed(int top, int lines)
+{
+    if (lines <= 0)
+        return;
+#if !RG_DISPLAY_PUSH_REDIRTY
+    /* 宿主 A/B 用：模拟"没有退回校验和"的旧版本（丢块 = 那几行永久定格）。 */
+    rg_display_push_drops++;
+    return;
+#endif
+    rg_display_push_drops++;
+    const int last = RG_MIN(top + lines, (int)RG_COUNT(screen_line_checksum) - 1);
+    for (int y = RG_MAX(top, 0); y < last; ++y)
+    {
+        screen_line_checksum[y] = 0;
+        rg_display_push_redirty++;
+    }
+}
+
 #define LINE_IS_REPEATED(Y) (map_viewport_to_source_y[(Y)] == map_viewport_to_source_y[(Y) - 1])
 // This is to avoid flooring a number that is approximated to .9999999 and be explicit about it
 #define FLOAT_TO_INT(x) ((int)((x) + 0.1f))
@@ -259,6 +294,9 @@ static inline void write_update(const rg_surface_t *update)
             {
                 screen_line_checksum[draw_top + y] = checksum;
                 need_update = true;
+#if defined(RG_GBA_DIAG) && RG_GBA_DIAG
+                rg_display_dirty_lines++;
+#endif
             }
 
             ++y;
@@ -583,7 +621,22 @@ bool rg_display_sync(bool block)
     /* 2026-09-28 性能盲区仪表：模拟器线程**等显示**的阻塞时间。
      * 驱动侧的 display= 量的是显示任务自己的工作量；这里量的是调用方被拖住多久。
      * 两者相加才是显示对帧时间的真实侵占。 */
-    int64_t pf_t0 = esp_timer_get_time();
+    int64_t pf_t0 = rg_system_timer();
+    /* 丢块体检（2026-10-03）：每 ~10 秒，只在丢块数有变化时报一次。
+     * 有 drops 但 redirty 跟着涨 = 修复在生效（这些行被退回重推，不会定格）；
+     * 修复前同样的 drops 就是"静态画面光标卡死"的直接来源。 */
+    {
+        static uint32_t last_drops = 0;
+        static uint32_t tick = 0;
+        if ((++tick % 600) == 0 && rg_display_push_drops != last_drops)
+        {
+            RG_LOGI("display: drops=%u redirty_rows=%u (每 10s 增量 %u)\n",
+                    (unsigned)rg_display_push_drops, (unsigned)rg_display_push_redirty,
+                    (unsigned)(rg_display_push_drops - last_drops));
+            last_drops = rg_display_push_drops;
+        }
+    }
+
     while (block && rg_task_messages_waiting(display_task_queue))
     {
 #if defined(RG_TARGET_SDL2)
@@ -595,7 +648,7 @@ bool rg_display_sync(bool block)
     {
         static int64_t pf_win = 0, pf_wait = 0;
         static uint32_t pf_calls = 0;
-        int64_t now = esp_timer_get_time();
+        int64_t now = rg_system_timer();
         pf_wait += now - pf_t0;
         pf_calls++;
         if (pf_win == 0) pf_win = now;
