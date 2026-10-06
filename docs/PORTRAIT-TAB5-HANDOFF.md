@@ -352,7 +352,22 @@ P4 两条口径复测。
 - SRAM 电池存档已修（算路径→开机只读回→运行中检测变化写回；**开机阶段绝不碰 SD**）。
 
 ## 六、镜像、包与 GitHub（本次新增的工作流）
-- **当前镜像（v0.4.5，2026-10-06）**：
+- **当前镜像（v0.4.6，2026-10-06 第三轮）**：
+  - 双 app `retro-go_v0.0.1-88-g85825_tab5.img`（2,293,760 B）/ 单 app `…-88-g85825_tab5-single.img`（1,376,256 B）；
+  - 发版物料 `dist/m5burner-0.4.6/`：`retro-go-tab5-0.4.6-merged.bin`
+    （sha256 `7ff5b9ecdd17038785e2a859cd30daca2bc8fcdc883dd21b68f64d0f130daeff`）+
+    `retro-go-tab5-0.4.6-launcher-singleapp.bin`
+    （sha256 `e78ce332c96a836dce63e4a4773c0b67b21eec6bf9168610cbb8ce324d217b25`）+ `.sha256` ×2 + 封面/配图 + 文案；
+  - **已发布**：GitHub Release [v0.4.6](https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.6)（8 个附件，回读 `tag=v0.4.6 draft=false 附件数=8`）；
+    M5Burner `retro-go Tab5` **0.4.6 = PENDING / PUBLIC**（22:17:53，vid `2107475429264072706`；
+    条目总数 39→40 = 只新增一条，无重复提交）；0.4.4/0.4.5 仍 PENDING，0.4.3 仍 PUBLISHED。
+  - **发布门禁（本轮口径）**：`check_merged.py` ⇒ VALID（bootloader@0x2000 / 分区表@0x8000 / app 描述符@0x10020）；
+    与 0.4.5 比**镜像头**（不是逐字节）：bootloader `0x4ff29eda`/3 段、launcher `0x4ff00484`/7 段、
+    gbsp `0x4ff00408`/7 段、spi 均 `(2,79)`，分区表切片 SHA 逐字节一致；
+    bootloader 原始字节仅差 37 B，落在编译时间串（`0x55..0x5b`）与镜像校验和（`0x583f..0x585f`）⇒ 良性。
+    ⚠️ 别在 `0x0` 解析镜像头（P4 会得到 `0xff`，真实头在 `0x2000`）。
+- **历史（v0.4.5，2026-10-06 第二轮）**：双 app `…-87-g2d30c_tab5.img` / 单 app `…-87-g2d30c_tab5-single.img`；
+  物料 `dist/m5burner-0.4.5/`（merged sha256 `f8bd0252…`、单 app `6efcdf38…`）；
   - 双 app（M5Burner / esptool 主产物）：`retro-go-p4/retro-go_v0.0.1-86-gb799a_tab5.img`（2,293,760 B；sha256 `f8bd0252…`）
   - 单 app（M5Launcher 专用）：`retro-go-p4/retro-go_v0.0.1-87-g2d30c_tab5-single.img`（1,376,256 B；sha256 `6efcdf38…`）
   - M5Burner 包：`dist/m5burner-0.4.5/` = merged + 单 app（**均不入库**）+ `.sha256`×2 + 封面/配图 + 5 份文本物料
@@ -365,7 +380,14 @@ P4 两条口径复测。
     （`retro-go-tab5-0.4.5-merged.bin`，2026-10-06T21:02:45+08:00，**仅一条**）；0.4.4 亦 PENDING、0.4.3 仍 PUBLISHED。
   - **发布后自验**：把**上架用的那份 merged**（先 `shasum -c` 校验）整片刷 0x0 进设备，抓启动日志确认可启动
     （见本轮 `/tmp/rel045_boot.log`）。⚠️ 整片刷会抹掉 NVS ⇒ boot config 复位（设备开机进 launcher，属预期）。
-- **历史（v0.4.4，2026-10-06）**：双 app `…-85-g1648f_tab5.img`（2,293,760 B）/ 单 app `…-85-g1648f_tab5-single.img`（1,376,256 B）
+- **封面纪律（2026-10-06 22:15 补记，另一个会话修）**：本版包里的封面**曾印过期版本号** ——
+  `dist/m5burner-0.4.5/cover-320x200.png` 印 `v0.4.2`、`cover-1280x720.png` 印 `v0.4.3`，
+  而包是 0.4.5。已修：`retro-go-tab5-public/tools/make-cover.py` 的版本号绘制改为固定卖点
+  （`ROM 放 SD 卡即玩`，**封面永不印版本号**，否则每发一版都要重出图且旧图必与线上矛盾）；
+  两个 dist 的封面已换成无版本号版，平台待审 0.4.5 的封面也已换成新图
+  （回读 coverId `2107473693807878145`，待审版本改封面立即生效、不走审核）。
+  ⚠️ 仍待办：GitHub Release v0.4.5 的 `cover-320x200.png` 附件还是印 v0.4.2 的旧图（替换需 token，未做）。
+- 历史（v0.4.4，2026-10-06）：双 app `…-85-g1648f_tab5.img`（2,293,760 B）/ 单 app `…-85-g1648f_tab5-single.img`（1,376,256 B）
 - **历史基线（v0.4.3，2026-09-29）**：
   - 双 app：`retro-go-p4/retro-go_v0.0.1-82-g532c3_tab5.img`（2,424,832 B）
   - 单 app：`retro-go-p4/retro-go_v0.0.1-82-g532c3_tab5-single.img`（1,507,328 B）
