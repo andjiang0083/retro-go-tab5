@@ -703,6 +703,37 @@ void applications_init(void)
     // Special app to bootstrap native esp32 binaries from the SD card
     // application("Bootstrap", "apps", "bin elf", "bootstrap", 0);
 
+    /* 【装成"只有菜单"的自解释 · 2026-10-06】
+     * "某个核心算不算已安装"在双 app 形态下是**运行时查分区**（rg_system_have_app）：安装器若只能
+     * 装单个 app 镜像（M5Launcher 只抽取内嵌分区表里的第一个 app），装进来的就只是菜单本身，核心
+     * 分区压根不存在 ⇒ 上面每个 application() 都早退 ⇒ 零标签页：用户只看到空白界面（并且旧代码
+     * 会在主循环空指针崩溃，见 main.c 的零标签页防护）。真机用户反馈"用 Launcher 装完跑不起来"
+     * 就是这一条。这里把原因和可执行动作直接摆到屏幕上，不留哑故障。
+     * 单 app 形态不会出现这种情形（核心编在同一个镜像里），所以那种情况只可能是构建异常。 */
+    if (apps_count == 0)
+    {
+#if defined(RG_SINGLE_APP)
+        RG_LOGE("No application registered although the core is compiled into this image (build problem)!\n");
+        rg_gui_alert("Emulator core not registered",
+                     "这是构建/安装异常：单 app 镜像应自带核心。\n请重新刷写完整镜像。\n\n"
+                     "Build/install problem: a single-app image carries its own core.\n"
+                     "Please reflash the full image.");
+#else
+        RG_LOGE("No emulator core partition found: this is a dual-app build, so the core lives in its\n"
+                "own partition. If it was installed by an installer that only handles a single app\n"
+                "image (e.g. M5Launcher), only the menu got installed.\n");
+        rg_gui_alert("Emulator core missing",
+                     "现在只有菜单，没装上模拟器核心分区。\n"
+                     "若你是用 M5Launcher 装的：请改装「M5Launcher 专用单 app 包」\n"
+                     "（文件名带 launcher-singleapp）。\n"
+                     "M5Burner / esptool 用户不受影响，照旧用完整镜像。\n\n"
+                     "Only the menu was installed - the emulator core partition is missing.\n"
+                     "If you used M5Launcher, install the dedicated single-app package\n"
+                     "(file name contains 'launcher-singleapp').\n"
+                     "M5Burner / esptool users are unaffected - keep using the full image.");
+#endif
+    }
+
     if (!rg_system_get_app()->lowMemoryMode)
         crc_cache_init();
 }
