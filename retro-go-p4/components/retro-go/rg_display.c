@@ -36,6 +36,14 @@ static rg_task_t *display_task_queue;
 static rg_display_counters_t counters;
 static rg_display_config_t config;
 static rg_surface_t *osd;
+/* [PERF-PROBE] 显示任务一帧的实际耗时（微秒），由 display_task 自己写、主循环读。
+ * 主循环那侧的 D 段只量到 rg_display_submit() 的调用（异步塞队列，恒为 0），
+ * 真正的工作量（缩放 + 哈希 + 发送）全在这个任务里，core1 上和 audio 争 CPU。 */
+volatile int32_t rg_display_task_us = 0;
+
+/* [PERF-PROBE] 逐行哈希（partial update）运行时开关 —— 见 rg_display_set_partial_updates()。 */
+static bool partial_updates_enabled = RG_SCREEN_PARTIAL_UPDATES;
+
 static rg_surface_t *border;
 static bool border_foreign;   /* border 指向的是别人（rg_touch_skin.c）持有的内存面板 */
 static rg_display_t display;
@@ -234,7 +242,7 @@ static inline void write_update(const rg_surface_t *update)
     const void *data = update->data + update->offset + (crop_top * stride) + (crop_left * RG_PIXEL_GET_SIZE(format));
     const uint16_t *palette = update->palette;
 
-    const bool partial_update = RG_SCREEN_PARTIAL_UPDATES;
+    const bool partial_update = partial_updates_enabled;
 
     int lines_per_buffer = LCD_BUFFER_LENGTH / draw_width;
     int lines_remaining = draw_height;
@@ -492,6 +500,8 @@ static void display_task(void *arg)
 
     while (rg_task_peek(&msg))
     {
+        const int64_t t_start = rg_system_timer();   /* [PERF-PROBE] */
+
         // Received a shutdown request!
         if (msg.type == RG_TASK_MSG_STOP)
             break;
@@ -515,6 +525,8 @@ static void display_task(void *arg)
         rg_task_receive(&msg);
 
         lcd_sync();
+
+        rg_display_task_us = (int32_t)(rg_system_timer() - t_start);   /* [PERF-PROBE] */
     }
 }
 
@@ -524,6 +536,25 @@ void rg_display_force_redraw(void)
     // memset(screen_line_checksum, 0, sizeof(screen_line_checksum));
     rg_system_event(RG_EVENT_REDRAW, NULL);
     rg_display_sync(true);
+}
+
+/* [PERF-PROBE] 开关"逐行哈希"（partial update）。
+ *
+ * 为什么 SNES 要关掉：partial update 靠每行算一次校验和来判断这行有没有变 ——
+ * 一行 512 像素 = 1024 字节，480 行 = **491KB/帧** 的 SuperFastHash。而 SNES 每帧
+ * 画面几乎全变，校验和的结果永远是"变了"，这约 3.4ms/帧**全部白算**；更要命的是
+ * 它跑在 core1 的 display_task 里，直接和 snes_audio 抢时间（真机实测 display 任务
+ * 一帧 11.8ms，其中哈希约占 3.4ms）。
+ *
+ * 关掉 = 每行都推。对"每帧全变"的 SNES 来说推送量本来就一样，省下的纯粹是哈希；
+ * 代价是静态画面（游戏内菜单/存档界面）不再享受"跳过未变行"的优惠，但那些场景
+ * 负载低，踩不到 core1 的上限。**画面输出逐像素不变。**
+ *
+ * 刻意不去改 config.h 里的 RG_SCREEN_PARTIAL_UPDATES：rg_display.c 是公共组件，
+ * 那个宏一改会连带影响 GB/GBA/PCE 等所有核心。 */
+void rg_display_set_partial_updates(bool on)
+{
+    partial_updates_enabled = on;
 }
 
 const rg_display_t *rg_display_get_info(void)

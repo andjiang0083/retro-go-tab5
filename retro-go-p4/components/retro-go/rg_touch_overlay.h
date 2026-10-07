@@ -163,10 +163,22 @@ rg_key_t rg_overlay_map_key(rg_key_t position_key);
  * partialFPS + fullFPS（"真正显示出去的帧率"），与日志 FPS:(跳过+部分+完整) 的后两项同口径。
  * 传负值 = 不显示。直绘，不走按键掩码。 */
 /* 屏幕帧率数字（开发调试用）：
-   发布版关闭，保持画面干净。需要看帧率时把 0 改成 1 重新编译即可。 */
-#define RG_OVERLAY_SHOW_FPS 0
+   发布版关闭，保持画面干净。需要看帧率时把 0 改成 1 重新编译即可。
+
+   [PERF-PROBE 2026-10-07] 性能测量期临时置 1 —— 同时打开第二行"核心每帧耗时"。
+   探针文档见 main_snes.c 顶部注释；测完把这里和 rg_overlay_set_core_ms() 一起撤掉。 */
+#define RG_OVERLAY_SHOW_FPS 1
+
+/* [PERF-PROBE] 分层计时文本的行数（line 0..3，画在屏幕顶部视口内） */
+#define RG_OVERLAY_PROBE_LINES 4
 
 void rg_overlay_set_fps(int value);
+
+/* [PERF-PROBE 2026-10-07] 分层计时文本通道（测量专用，见 main_snes.c 顶部说明）。
+ * line 0..2 各占一行；**任何一行非空就整组接管显示**，帧率数字让位
+ * （否则两套文本会叠在同一个位置）。
+ * 传 NULL / 空串 = 清空该行。测完随 RG_OVERLAY_SHOW_FPS 一起撤。 */
+void rg_overlay_set_probe_line(int line, const char *text);
 
 /* ---------------------------------------------------------------- 电量圆灯
  * 用户规格：START 正上方居中、**实心小圆**（不要光晕/渐变 —— 光晕在大屏上易显塑料感）。

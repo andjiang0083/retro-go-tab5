@@ -1407,12 +1407,46 @@ void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
  * 实现：复用本模块已加载的 8x8 点阵**逐像素直绘**，不走按键掩码 —— 数字每秒都在变，
  *       为它反复重建掩码没意义；面积仅 3 位 × scale4 = 96×32 = 3072 px，代价可忽略。
  * 颜色：纯白 + 黑色投影（先投影、后正文），任何游戏画面上都看得清。 */
-#define RG_FPS_TEXT_CX 360      /* 逻辑坐标：控制区顶部正中（L(50~230) 与 R(490~670) 肩键之间的空白带）*/
-#define RG_FPS_TEXT_CY 500      /* ⚠ 竖屏口径：y<480 是游戏画面，数字只能落在控制区（走查 P2-11） */
+#define RG_FPS_TEXT_CX 360      /* 逻辑坐标：屏幕水平正中 */
+/* ⚠ [PERF-PROBE 2026-10-07] 竖屏下原值 500（控制区）。改成 16 移进**游戏视口内**：
+ *   叠加层是"块被推送时才合成"的，而视口外的控制区不在 write_update 的脏行循环里
+ *   （那只覆盖 0..479），放那里必须靠整屏重铺才会刷新 —— 实测就是"数字定住不动"。
+ *   视口内 + 每秒置脏 (0,80)，数字才会跟着脏区实打实刷新。
+ *   代价：压住游戏画面顶部一条（测量期专用，发行版请改回 500 或直接关掉本显示）。 */
+#define RG_FPS_TEXT_CY 16
 #define RG_FPS_SCALE   4
+/* [PERF-PROBE] 第二行（探针文本）与第一行的行距 = 一个字形高 */
+#define RG_PROBE_LINE_H (8 * RG_FPS_SCALE)
 
 static int fps_value = -1;
 static char fps_text[8] = "";
+
+/* [PERF-PROBE] 分层计时文本（line 0..2 各一行） */
+static char probe_text[RG_OVERLAY_PROBE_LINES][24];
+
+void rg_overlay_set_probe_line(int line, const char *text)
+{
+#if !RG_OVERLAY_SHOW_FPS
+    (void)line; (void)text;
+    return;
+#endif
+
+    if (line < 0 || line >= RG_OVERLAY_PROBE_LINES)
+        return;
+    if (!text)
+        text = "";
+    if (strncmp(probe_text[line], text, sizeof(probe_text[line]) - 1) == 0)
+        return;                       /* 同内容不重排 */
+    snprintf(probe_text[line], sizeof(probe_text[line]), "%s", text);
+}
+
+static bool probe_any_active(void)
+{
+    for (int i = 0; i < RG_OVERLAY_PROBE_LINES; ++i)
+        if (probe_text[i][0])
+            return true;
+    return false;
+}
 
 void rg_overlay_set_fps(int value)
 {
@@ -1437,10 +1471,10 @@ void rg_overlay_set_fps(int value)
 
 /* 按 cw90 映射把 fps_text 直绘进 buf：逻辑 (lx,ly) -> 物理 (phys_w-1-ly, lx)。
  * 与 blit_one 用同一套映射；这里逐像素换算，不用第二份旋转位图。 */
-static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
-                          int lx0, int ly0, const uint16_t color)
+static void draw_glyph_text(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
+                            int lx0, int ly0, const char *text, const uint16_t color)
 {
-    const int n = (int)strlen(fps_text);
+    const int n = (int)strlen(text);
     (void)phys_w;   /* 竖屏线性映射下不再需要物理宽度换算（见下） */
     /* ⚠ 竖屏线性映射：逻辑 (lx,ly) == 物理 (px,py)。
      * 老代码这里是 cw90 的反向换算（px = phys_w - ly0 - ...）—— 那是横屏时代的写法，
@@ -1466,11 +1500,44 @@ static void draw_fps_text(uint16_t *buf, int stride, int rx, int ry, int rw, int
             const int ch = gx >> 3, col = gx & 7;
             if (ch >= n)
                 continue;
-            const uint8_t *gl = glyphs[(uint8_t)fps_text[ch]];
+            const uint8_t *gl = glyphs[(uint8_t)text[ch]];
             if (gl[gy] & (0x80 >> col))                /* 字模 MSB = 最左列 */
                 buf[(size_t)(py - ry) * stride + (px - rx)] = color;
         }
     }
+}
+
+/* [PERF-PROBE] 定宽擦除 —— 数字位数变化（123→99）会留残影，这是本项目踩过的老坑
+ * （"新旧数字叠在一起"）。定宽格式解决不了（前导空格不书写），必须显式擦除。 */
+#define RG_TEXT_PAD_CHARS 12
+
+static void fill_rect_clipped(uint16_t *buf, int stride, int rx, int ry, int rw, int rh,
+                              int x0, int y0, int x1, int y1, uint16_t color)
+{
+    const int cx0 = imax(x0, rx), cx1 = imin(x1, rx + rw);
+    const int cy0 = imax(y0, ry), cy1 = imin(y1, ry + rh);
+    for (int py = cy0; py < cy1; ++py)
+        for (int px = cx0; px < cx1; ++px)
+            buf[(size_t)(py - ry) * stride + (px - rx)] = color;
+}
+
+static void blit_text_line(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w,
+                           const char *text, int cy)
+{
+    if (!text[0])
+        return;
+    const int n = (int)strlen(text);
+    const int lx = RG_FPS_TEXT_CX - n * 8 * RG_FPS_SCALE / 2;
+    const int ly = cy - 8 * RG_FPS_SCALE / 2;
+    const int pad_lx = RG_FPS_TEXT_CX - RG_TEXT_PAD_CHARS * 8 * RG_FPS_SCALE / 2;
+    const int pad_w = RG_TEXT_PAD_CHARS * 8 * RG_FPS_SCALE;
+
+    /* 先擦（给黑色投影留 4px 边距），后写：投影 + 正文 */
+    fill_rect_clipped(buf, stride, rx, ry, rw, rh,
+                      pad_lx - 4, ly - 4, pad_lx + pad_w + 4, ly + 8 * RG_FPS_SCALE + 4,
+                      c565(0, 0, 0));
+    draw_glyph_text(buf, stride, rx, ry, rw, rh, phys_w, lx + 2, ly + 2, text, c565(0, 0, 0));
+    draw_glyph_text(buf, stride, rx, ry, rw, rh, phys_w, lx, ly, text, c565(255, 255, 255));
 }
 
 static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
@@ -1480,13 +1547,19 @@ static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
     return;
 #endif
 
-    if (fps_value < 0 || !fps_text[0])
+    /* [PERF-PROBE] 探针行优先：任一行为空则整组不接管，帧率数字照常显示。
+     * 有内容时帧率数字让位 —— 两套文本位置重叠，同时画会互相盖。 */
+    if (probe_any_active())
+    {
+        for (int i = 0; i < RG_OVERLAY_PROBE_LINES; ++i)
+            if (probe_text[i][0])
+                blit_text_line(buf, stride, rx, ry, rw, rh, phys_w, probe_text[i],
+                               RG_FPS_TEXT_CY + i * RG_PROBE_LINE_H);
         return;
-    const int n = (int)strlen(fps_text);
-    const int lx = RG_FPS_TEXT_CX - n * 8 * RG_FPS_SCALE / 2;
-    const int ly = RG_FPS_TEXT_CY - 8 * RG_FPS_SCALE / 2;
-    draw_fps_text(buf, stride, rx, ry, rw, rh, phys_w, lx + 2, ly + 2, c565(0, 0, 0));      /* 投影 */
-    draw_fps_text(buf, stride, rx, ry, rw, rh, phys_w, lx, ly, c565(255, 255, 255));        /* 正文 */
+    }
+    /* 普通调试：只显示帧率数字（rg_system.c 每秒推） */
+    if (fps_value >= 0)
+        blit_text_line(buf, stride, rx, ry, rw, rh, phys_w, fps_text, RG_FPS_TEXT_CY);
 }
 
 /* ---------------------------------------------------------------- 电量圆灯

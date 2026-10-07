@@ -12,7 +12,9 @@ extern void rg_display_invalidate_lines(int top, int count);
  * 置 1 → 把 frameskip 钉死在 0（模拟器每帧都渲染 = 60fps），自动跳帧策略整段让位。
  * 用途：测"关掉跳帧"时的真实开销。默认关，是因为它会让慢游戏失去自动降帧保护。
  * 判读方法见 Auto frameskip 那段注释。 */
-#define RG_PERF_PIN_FRAMESKIP 0
+#define RG_PERF_PIN_FRAMESKIP 1   /* [PERF-PROBE 2026-10-07] 测量期置 1：每帧都渲染，
+                                   * 否则跳帧会顺带跳过 PPU 渲染，把 core ms 测小。
+                                   * 测完改回 0（发行行为）。 */
 
 #include <sys/time.h>
 #include <stdarg.h>
@@ -356,10 +358,13 @@ static void update_statistics(void)
             /* 屏幕上实时显示"真正显示出去的帧率"（完整帧 + 部分帧），画在 L/R 肩键之间。
              * 用同一份 statistics，保证 screen 上的读数与日志 FPS:(跳过+部分+完整) 完全同口径。 */
             rg_overlay_set_fps((int)roundf(statistics.partialFPS + statistics.fullFPS));
-            /* 数字变了，把它所在的逻辑行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
+            /* 数字变了，把它所在的行置脏 —— 否则它只在脏区恰好覆盖时才会重画，
              * 真机表现为"屏幕上的帧率不刷新，点开 menu 才更新"。
-             * 44 / 32 对应 rg_touch_overlay.c 里数字的纵向范围（中心 y=60、高 8x4=32px）。 */
-            rg_display_invalidate_lines(44, 32);
+             * ⚠ [PERF-PROBE 2026-10-07] 原来是 (44, 32) —— 那是**横屏时代**的行号
+             *   （当时数字画在逻辑 y=60）。竖屏分支把数字位置移进视口内（y=16 起、
+             *   两行共 80px），这里必须跟着改，否则置脏的行压根不包含数字所在行
+             *   → 数字定住不动、只靠整屏重铺偶尔更新。回归发行版时随 RG_OVERLAY_SHOW_FPS 一起还原。 */
+            rg_display_invalidate_lines(0, 112);
 #endif
         }
         else
@@ -767,6 +772,12 @@ rg_task_t *rg_task_create_ex(const char *name, void (*taskFunc)(void *arg), void
     task->func = taskFunc;
     task->arg = arg;
     task->handle = 0;
+    /* [PERF-PROBE 关联修复] 原来漏了这一行：queueLen 参数被接收却从未写进结构体，
+     * 于是 task_wrapper 里 xQueueCreate(task->queueLen > 0 ? task->queueLen : 1, ...)
+     * 永远取到 0 → 所有任务的队列深度恒为 1，rg_task_create_ex 形同虚设。
+     * 影响：主循环往 audio_task 塞消息时，队列一满就得等任务从 submit 里回来收，
+     * 白吃 core0 时间（实测 A 段均值 6ms），帧时间被顶到 17.6ms > 16.67ms。 */
+    task->queueLen = queueLen;
     strncpy(task->name, name, 15);
 
 #if defined(ESP_PLATFORM)

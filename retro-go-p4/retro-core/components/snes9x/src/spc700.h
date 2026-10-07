@@ -64,11 +64,15 @@ typedef struct
 
 void APUExecute(void);
 
+/* [PERF-PROBE] APU 模拟开关，定义在 snes9x/src/cpuexec.c（与 skip_ppu 同处）。
+ * 非 0 时整个 APU_EXECUTE 空转 —— 用来量 SPC700+DSP 在帧时间里占多少。 */
+extern int snes_probe_skip_apu;
+
 #define APU_EXECUTE1() \
 APUExecute();
 
 #define APU_EXECUTE() \
-if (IAPU.APUExecuting) \
+if (IAPU.APUExecuting && !snes_probe_skip_apu) \
     while (APU.Cycles <= CPU.Cycles) \
       APUExecute();
 

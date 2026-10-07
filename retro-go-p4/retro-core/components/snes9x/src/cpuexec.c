@@ -9,6 +9,19 @@
 #include "apu.h"
 #include "dma.h"
 
+/* [PERF-PROBE] 逐行 PPU 渲染开关（探针用，定义在这里给整个 retro-core 用）。
+ * main_snes.c 的 "Perf probe" 菜单项会改写它；非 0 = 跳过 RenderLine，
+ * 用来量"PPU 逐行渲染"这一块在帧时间里占多少。
+ * ⚠ 跳过渲染会让游戏画面错乱（HDMA/IRQ 依赖渲染时序），这是**测量专用**行为。 */
+int snes_probe_skip_ppu = 0;
+
+/* [PERF-PROBE] APU（SPC700+DSP）模拟开关。非 0 = 整个 APU_EXECUTE 空转，
+ * 用来量"APU 模拟"这一块在帧时间里占多少。被 spc700.h 的 APU_EXECUTE 宏检查
+ * （那里 extern 声明，不走 apu.h，免得动 include 路径）。
+ * 注意：旧代码只关 apu_enabled 是**测不出 APU 成本的** —— 那只跳过混音和 I2S 提交
+ * （还都在 core1），core0 上的 SPC700 一直在跑。 */
+int snes_probe_skip_apu = 0;
+
 
 void S9xMainLoop()
 {
@@ -174,7 +187,11 @@ void S9xDoHBlankProcessing()
          S9xStartScreenRefresh();
       }
       if (CPU.V_Counter >= FIRST_VISIBLE_LINE && CPU.V_Counter < PPU.ScreenHeight + FIRST_VISIBLE_LINE)
-         RenderLine(CPU.V_Counter - FIRST_VISIBLE_LINE);
+      {
+         /* [PERF-PROBE] 非 0 = 跳过逐行渲染（见本文件顶部 snes_probe_skip_ppu） */
+         if (!snes_probe_skip_ppu)
+            RenderLine(CPU.V_Counter - FIRST_VISIBLE_LINE);
+      }
 #ifndef USE_BLARGG_APU
       if (APU.TimerEnabled [2])
       {
