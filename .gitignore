@@ -48,3 +48,5 @@ __pycache__/
 
 # NOTE: vendor/managed_components/ is intentionally tracked — the project's CMake
 # lists it in EXTRA_COMPONENT_DIRS, so a clean clone must contain it to build.
+partitions.csv
+partitions.bin

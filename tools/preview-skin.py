@@ -36,7 +36,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_DIR = ROOT / "docs/skin-candidates"
+OUT_DIR = ROOT / "docs/archive/skin-candidates"
 BASELINE_DIR = OUT_DIR / "approved-2026-10-07"     # 用户确认过的那一版（回归基线）
 PTO_PATH = ROOT / "tools/preview-touch-overlay.py"
 SKIN_C_PATH = ROOT / "retro-go-p4/components/retro-go/rg_touch_skin.c"
@@ -608,7 +608,7 @@ def main():
             out.paste(im, (x, gap))
             x += im.width + gap
         out.save(OUT_DIR / "sheet_3consoles.png")
-        print("   wrote docs/skin-candidates/sheet_3consoles.png  ← 三屏窗口对照")
+        print("   wrote docs/archive/skin-candidates/sheet_3consoles.png  ← 三屏窗口对照")
 
     if args.check:
         print("\n=== 回归门禁：与已确认稿（approved-2026-10-07）逐像素比对 ===")

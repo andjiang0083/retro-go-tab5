@@ -213,7 +213,9 @@ vendor/                 vendored third-party components required to build
   m5stack_tab5/         M5Stack Tab5 BSP (vendored copy)
   esp_lcd_st7121/       panel driver
 tools/                  build / flash / serial-log helper scripts
-docs/                   porting notes (Chinese) + touch layout diagram
+docs/                   porting reference docs (Chinese) + touch layout diagram
+docs/archive/           process docs kept for the record (one-night logs, handoffs, code reviews,
+                        skin candidates) — see docs/archive/README.md for what is there and why
 ```
 
 ### What is upstream and what is this port
@@ -235,6 +237,12 @@ it is also the only list you need to walk when following upstream updates.
 The development journal for this port — board bring-up findings, hardware facts that were verified the hard way
 ("do not retry these"), display-architecture notes, and the debugging order — lives in
 [docs/TAB5-PORT-STATUS.md](docs/TAB5-PORT-STATUS.md) (written in Chinese).
+
+Process material that has served its purpose — the portrait handoff, the display-bandwidth night log, the SNES
+performance session, the v0.4.1 code walk-through and the skin candidates — is kept under
+[docs/archive/](docs/archive/README.md) with an index saying what each file is; the originals are also pasted into
+the release notes, so nothing is lost by archiving. `docs/` itself keeps only documents that still describe the
+current state.
 
 ## Contributing
 

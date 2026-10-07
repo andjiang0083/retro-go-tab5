@@ -68,7 +68,7 @@ python3 tools/preview-touch-overlay.py --swap     # 调换态（含自反性断�
   `touch overlay: X/Y <-> L/R swapped = N (gen M)`、
   点调换时 `touch overlay: swap variants built: 4/4 key alts, switch btn alt=1`。
 
-## 6. 已知坑（详见 `docs/PORTRAIT-TAB5-HANDOFF.md` 与 `~/esp32/ESP32-经验沉淀.md`）
+## 6. 已知坑（详见 `docs/archive/PORTRAIT-TAB5-HANDOFF.md` 与 `~/esp32/ESP32-经验沉淀.md`）
 
 - **不在输入任务里调 `rg_display_force_redraw()`**：它会同步派发 `RG_EVENT_REDRAW`
   → 启动器 `gui_redraw()` 在输入线程里重画 → 抢 `gui.surface` → 花屏（§122）。

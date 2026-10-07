@@ -284,7 +284,7 @@ if (screen_line_checksum[draw_top + y] != checksum)
 - `rg_display.c`：队列深度参数加了完整注释（默认仍为安全的 1）
 - `tools/sim_display_pipeline.py`：显示流水线仿真（新增）
 - `tools/bench_transpose.c`：转置访存基准（新增）
-- `docs/NIGHT-2026-09-25-DISPLAY.md`：本文（完整证据链与结论）
+- `docs/archive/NIGHT-2026-09-25-DISPLAY.md`：本文（完整证据链与结论）
 
 **镜像**（`dist/`）：
 - `p2.6.4-ppa-revert.img` —— 已验证可跑的**回退基线**

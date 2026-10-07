@@ -36,7 +36,7 @@
 | 触摸布局 | `targets/tab5p/touch_layout.h` | `targets/tab5/touch_layout.h` |
 | 构建 | `python3 rg_tool.py --target tab5p ...` | `--target tab5` |
 | 产物镜像 | `retro-go_v0.0.1_tab5p.img` | `retro-go_v0.7-*_tab5.img` |
-| 文档 | `docs/PORTRAIT-*.md` | `docs/NIGHT-*.md` |
+| 文档 | `docs/archive/PORTRAIT-*.md` | `docs/archive/NIGHT-*.md` |
 | M5Burner | 独立条目（另行起名，从 0.0.1） | `retro-go Tab5`（0.3） |
 
 **原则：竖屏的任何改动都不得修改横屏 target 引用的文件。** 共享代码若必须改，

@@ -1,0 +1,463 @@
+# 原始数据 · P2-2 A/B 中的 B 组（变化行开关 ON）
+# 采集时间: 2026-10-08 00:57~01:12 (CST)，测量窗约 202 秒
+# 固件: 同上，唯一差别 = rg_display.c 的 RG_DISPLAY_DIRTY_ROWS_DEFAULT 1
+# ROM : /sd/roms/gba/恶魔城系列（3作）/恶魔城_晓月之圆舞曲.gba
+# 开关自证: 日志里有 `rg_display_dirty_rows_on: display: 只提交变化行 = 开（编译期默认 1，SD 开关 无）`
+# 格式同 display-path-A-raw.txt
+[0m[33m[warn] app_main: DIAG_FB f=1 game=F4EB239B push=CE65FB1E n=41 drops=0 dirty=0
+[0m[info] tab5_perf_report: PERF: display=177.49ms/10084ms (transpose=177.46 submit=0.03) blocks=42 [xpose=14.32 ovl=146.18 draw=16.85] rows=31.3 max=48
+[0m[33m[warn] app_main: DIAG_FB f=61 game=00352972 push=B4FAAD39 n=192 drops=0 dirty=4008
+[info] tab5_perf_report: PERF: display=145.30ms/1239ms (transpose=145.16 submit=0.13) blocks=151 [xpose=55.72 ovl=23.93 draw=65.07] rows=31.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=121 game=00352972 push=7CC70527 n=194 drops=0 dirty=4040
+[info] tab5_perf_report: PERF: display=2.42ms/1834ms (transpose=2.42 submit=0.00) blocks=4 [xpose=0.83 ovl=0.19 draw=1.36] rows=19.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=181 game=E6B43C5B push=FDE9DAF7 n=211 drops=0 dirty=4552
+[info] tab5_perf_report: PERF: display=220.21ms/1008ms (transpose=220.01 submit=0.20) blocks=257 [xpose=99.01 ovl=6.09 draw=114.04] rows=31.7 max=84
+[0m[33m[warn] app_main: DIAG_FB f=241 game=BE60B5F7 push=0866A7E0 n=543 drops=0 dirty=15079
+[0m[info] tab5_perf_report: PERF: display=166.24ms/1017ms (transpose=166.07 submit=0.17) blocks=195 [xpose=75.98 ovl=3.11 draw=86.31] rows=31.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=301 game=42881788 push=5894C2B4 n=783 drops=0 dirty=22486
+[info] tab5_perf_report: PERF: display=138.26ms/1040ms (transpose=138.12 submit=0.14) blocks=165 [xpose=63.53 ovl=2.83 draw=71.14] rows=30.1 max=32
+[info] tab5_perf_report: PERF: display=104.56ms/1046ms (transpose=104.45 submit=0.11) blocks=135 [xpose=46.41 ovl=2.18 draw=55.34] rows=28.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=361 game=66442D91 push=E99F12F8 n=963 drops=0 dirty=27667
+[0m[0m[info] tab5_perf_report: PERF: display=87.05ms/1000ms (transpose=86.95 submit=0.09) blocks=120 [xpose=39.16 ovl=1.85 draw=45.51] rows=26.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=421 game=B57BC342 push=FCD4FCA2 n=1134 drops=0 dirty=32146
+[info] tab5_perf_report: PERF: display=123.22ms/1075ms (transpose=123.09 submit=0.12) blocks=157 [xpose=50.11 ovl=4.69 draw=67.72] rows=220.7 max=84
+[0m[33m[warn] app_main: DIAG_FB f=481 game=DEB56E55 push=B6AA1EDC n=1304 drops=0 dirty=36829
+[0m[info] tab5_perf_report: PERF: display=157.87ms/1053ms (transpose=157.75 submit=0.12) blocks=158 [xpose=65.73 ovl=2.89 draw=88.38] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=541 game=17AAF72B push=61E72706 n=1461 drops=0 dirty=41416
+[0m[info] tab5_perf_report: PERF: display=132.01ms/1028ms (transpose=131.88 submit=0.12) blocks=155 [xpose=61.12 ovl=2.54 draw=67.56] rows=29.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=601 game=CF07909E push=205B7D68 n=1614 drops=0 dirty=45967
+[0m[info] tab5_perf_report: PERF: display=125.60ms/1013ms (transpose=125.48 submit=0.12) blocks=151 [xpose=57.09 ovl=2.54 draw=65.26] rows=29.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=661 game=FD3B5E7A push=E60BD15E n=1764 drops=0 dirty=50368
+[0m[info] tab5_perf_report: PERF: display=120.16ms/1010ms (transpose=120.04 submit=0.12) blocks=150 [xpose=54.63 ovl=2.39 draw=62.48] rows=28.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=721 game=9BF4D9C3 push=FEE483C8 n=1919 drops=0 dirty=54649
+[0m[info] tab5_perf_report: PERF: display=133.83ms/1051ms (transpose=133.69 submit=0.13) blocks=170 [xpose=60.66 ovl=2.69 draw=69.68] rows=27.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=781 game=400488E7 push=4EE33AE7 n=2085 drops=0 dirty=59236
+[0m[info] tab5_perf_report: PERF: display=118.64ms/1011ms (transpose=118.52 submit=0.11) blocks=155 [xpose=51.46 ovl=4.98 draw=61.44] rows=26.3 max=84
+[0m[33m[warn] app_main: DIAG_FB f=841 game=58DCCDB6 push=D5CEDB06 n=2242 drops=0 dirty=63279
+[0m[info] tab5_perf_report: PERF: display=126.80ms/1017ms (transpose=126.68 submit=0.11) blocks=150 [xpose=52.36 ovl=2.55 draw=71.12] rows=26.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=901 game=4AD3B378 push=67511255 n=2403 drops=0 dirty=67425
+[0m[info] tab5_perf_report: PERF: display=124.28ms/1003ms (transpose=124.14 submit=0.13) blocks=170 [xpose=55.45 ovl=3.20 draw=64.81] rows=25.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=961 game=7DE12312 push=48C9C4B4 n=2564 drops=0 dirty=71768
+[0m[info] tab5_perf_report: PERF: display=117.49ms/1019ms (transpose=117.37 submit=0.12) blocks=160 [xpose=52.72 ovl=2.71 draw=61.38] rows=25.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1021 game=C26F87A5 push=9FD1DBD9 n=2739 drops=0 dirty=76253
+[0m[info] tab5_perf_report: PERF: display=158.75ms/1023ms (transpose=158.59 submit=0.15) blocks=187 [xpose=66.74 ovl=3.20 draw=87.87] rows=27.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1081 game=46D964DB push=B40F51EF n=2923 drops=0 dirty=81512
+[0m[info] tab5_perf_report: PERF: display=162.35ms/1005ms (transpose=162.21 submit=0.14) blocks=182 [xpose=70.94 ovl=3.09 draw=87.42] rows=30.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1141 game=F716AC7B push=FD7C7B28 n=3108 drops=0 dirty=87104
+[0m[info] tab5_perf_report: PERF: display=180.41ms/1017ms (transpose=180.25 submit=0.16) blocks=201 [xpose=65.49 ovl=5.58 draw=108.45] rows=26.0 max=84
+[0m[33m[warn] app_main: DIAG_FB f=1201 game=E6FAA995 push=F6DC93D1 n=3318 drops=0 dirty=91937
+[0m[info] tab5_perf_report: PERF: display=139.56ms/1010ms (transpose=139.38 submit=0.17) blocks=212 [xpose=56.01 ovl=3.08 draw=79.54] rows=21.2 max=32
+[0m[0m[33m[warn] app_main: DIAG_FB f=1261 game=39C7A88C push=AF7EF9F3 n=3526 drops=0 dirty=96227
+[0m[info] tab5_perf_report: PERF: display=135.85ms/1048ms (transpose=135.65 submit=0.19) blocks=237 [xpose=58.13 ovl=3.62 draw=73.12] rows=20.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1321 game=AE417444 push=D8B30437 n=3777 drops=0 dirty=101234
+[0m[info] tab5_perf_report: PERF: display=168.58ms/1018ms (transpose=168.39 submit=0.18) blocks=245 [xpose=67.02 ovl=3.83 draw=96.63] rows=21.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1381 game=C73C4079 push=FFE89433 n=3986 drops=0 dirty=105569
+[0m[info] tab5_perf_report: PERF: display=84.68ms/1016ms (transpose=84.56 submit=0.12) blocks=165 [xpose=36.09 ovl=2.78 draw=45.12] rows=18.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1441 game=EB6A34BE push=7F70DFD5 n=4150 drops=0 dirty=108644
+[0m[info] tab5_perf_report: PERF: display=139.34ms/1062ms (transpose=139.18 submit=0.15) blocks=194 [xpose=48.13 ovl=3.18 draw=87.20] rows=18.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1501 game=3BDF0A58 push=619B8B95 n=4376 drops=0 dirty=112496
+[0m[info] tab5_perf_report: PERF: display=143.61ms/1011ms (transpose=143.41 submit=0.20) blocks=255 [xpose=51.35 ovl=8.38 draw=82.83] rows=16.4 max=84
+[0m[33m[warn] app_main: DIAG_FB f=1561 game=456CE86F push=CFC87097 n=4615 drops=0 dirty=116810
+[0m[info] tab5_perf_report: PERF: display=171.88ms/1098ms (transpose=171.68 submit=0.19) blocks=238 [xpose=61.37 ovl=3.49 draw=106.02] rows=20.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1621 game=48EFCE52 push=6BA4AFDB n=4803 drops=0 dirty=120880
+[0m[info] tab5_perf_report: PERF: display=172.45ms/1002ms (transpose=172.21 submit=0.23) blocks=295 [xpose=71.78 ovl=4.05 draw=95.43] rows=20.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1681 game=50FF42D9 push=CD1B2C76 n=5204 drops=0 dirty=129055
+[0m[info] tab5_perf_report: PERF: display=295.58ms/1010ms (transpose=295.20 submit=0.37) blocks=492 [xpose=125.93 ovl=6.67 draw=161.12] rows=20.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1741 game=B36D5B3A push=974F4E19 n=5717 drops=0 dirty=139395
+[0m[info] tab5_perf_report: PERF: display=332.35ms/1002ms (transpose=332.00 submit=0.35) blocks=481 [xpose=123.57 ovl=6.27 draw=200.73] rows=20.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1801 game=D45F3C3E push=A37B7EB8 n=6218 drops=0 dirty=149338
+[0m[info] tab5_perf_report: PERF: display=235.58ms/1013ms (transpose=235.25 submit=0.33) blocks=428 [xpose=91.50 ovl=5.85 draw=136.62] rows=18.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1861 game=2DA93AF4 push=38C9502E n=6564 drops=0 dirty=155257
+[0m[info] tab5_perf_report: PERF: display=185.23ms/1010ms (transpose=184.94 submit=0.28) blocks=345 [xpose=78.22 ovl=7.37 draw=98.19] rows=18.5 max=84
+[0m[33m[warn] app_main: DIAG_FB f=1921 game=C17F00EC push=7069B900 n=6959 drops=0 dirty=162528
+[0m[info] tab5_perf_report: PERF: display=254.23ms/1085ms (transpose=253.89 submit=0.34) blocks=431 [xpose=99.65 ovl=6.18 draw=146.67] rows=18.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=1981 game=AE6949D0 push=3B252018 n=7290 drops=0 dirty=168906
+[0m[info] tab5_perf_report: PERF: display=85.75ms/1008ms (transpose=85.62 submit=0.12) blocks=154 [xpose=37.57 ovl=2.13 draw=45.42] rows=20.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2041 game=B6059BCE push=B70D71EE n=7480 drops=0 dirty=172500
+[0m[info] tab5_perf_report: PERF: display=137.96ms/1001ms (transpose=137.25 submit=0.71) blocks=241 [xpose=55.35 ovl=3.25 draw=77.89] rows=19.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2101 game=7F9B5A98 push=1E70E15F n=7711 drops=0 dirty=177506
+[0m[info] tab5_perf_report: PERF: display=251.50ms/1112ms (transpose=251.25 submit=0.24) blocks=308 [xpose=106.80 ovl=4.46 draw=138.99] rows=29.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2161 game=DCA3ED08 push=387304E2 n=7967 drops=0 dirty=185407
+[0m[info] tab5_perf_report: PERF: display=130.06ms/1010ms (transpose=129.95 submit=0.11) blocks=150 [xpose=56.09 ovl=4.96 draw=68.27] rows=28.1 max=84
+[0m[33m[warn] app_main: DIAG_FB f=2221 game=659319AF push=FEBCAA26 n=8105 drops=0 dirty=189304
+[0m[info] tab5_perf_report: PERF: display=268.51ms/1000ms (transpose=268.25 submit=0.25) blocks=320 [xpose=122.08 ovl=7.50 draw=137.64] rows=31.6 max=84
+[0m[33m[warn] app_main: DIAG_FB f=2281 game=C63A113D push=4489DD76 n=8452 drops=0 dirty=200236
+[0m[info] tab5_perf_report: PERF: display=205.43ms/1003ms (transpose=205.23 submit=0.19) blocks=256 [xpose=94.44 ovl=3.76 draw=106.16] rows=29.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2341 game=C42357C4 push=9F1A6B2E n=8727 drops=0 dirty=208245
+[0m[info] tab5_perf_report: PERF: display=196.46ms/1010ms (transpose=196.23 submit=0.23) blocks=279 [xpose=89.38 ovl=4.04 draw=101.85] rows=25.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2401 game=853232F7 push=0CA625E2 n=9010 drops=0 dirty=214889
+[0m[info] tab5_perf_report: PERF: display=256.19ms/1000ms (transpose=255.87 submit=0.32) blocks=418 [xpose=102.78 ovl=5.53 draw=146.32] rows=19.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2461 game=620CB32E push=1B182C4E n=9426 drops=0 dirty=223128
+[0m[info] tab5_perf_report: PERF: display=292.53ms/1003ms (transpose=292.17 submit=0.35) blocks=446 [xpose=124.68 ovl=6.07 draw=160.01] rows=22.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2521 game=52036948 push=305FB90B n=9907 drops=0 dirty=234069
+[0m[info] tab5_perf_report: PERF: display=384.66ms/1000ms (transpose=384.27 submit=0.38) blocks=507 [xpose=155.54 ovl=9.25 draw=217.79] rows=24.9 max=84
+[0m[33m[warn] app_main: DIAG_FB f=2581 game=F837BEBC push=74111DF9 n=10410 drops=0 dirty=247296
+[0m[info] tab5_perf_report: PERF: display=334.16ms/1002ms (transpose=333.83 submit=0.33) blocks=423 [xpose=151.86 ovl=8.91 draw=171.63] rows=28.5 max=84
+[0m[33m[warn] app_main: DIAG_FB f=2641 game=9810C73A push=4930FF99 n=10832 drops=0 dirty=259239
+[0m[info] tab5_perf_report: PERF: display=326.36ms/1000ms (transpose=326.00 submit=0.35) blocks=449 [xpose=146.69 ovl=6.72 draw=171.08] rows=26.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2701 game=35A34C6C push=B6DEBAA4 n=11279 drops=0 dirty=270889
+[0m[info] tab5_perf_report: PERF: display=336.19ms/1010ms (transpose=335.88 submit=0.30) blocks=412 [xpose=141.21 ovl=6.50 draw=186.68] rows=27.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2761 game=CA5EA118 push=D87F1884 n=11702 drops=0 dirty=282720
+[0m[info] tab5_perf_report: PERF: display=283.80ms/1026ms (transpose=283.52 submit=0.28) blocks=361 [xpose=127.75 ovl=6.16 draw=148.20] rows=27.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2821 game=8592172E push=B47558D5 n=12045 drops=0 dirty=291894
+[info] tab5_perf_report: PERF: display=247.46ms/1001ms (transpose=247.19 submit=0.27) blocks=352 [xpose=109.92 ovl=5.65 draw=130.28] rows=25.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=2881 game=012ECF99 push=0ABCF76E n=12400 drops=0 dirty=300872
+[0m[info] tab5_perf_report: PERF: display=272.79ms/1000ms (transpose=272.50 submit=0.29) blocks=358 [xpose=113.69 ovl=8.66 draw=148.88] rows=25.4 max=84
+[0m[33m[warn] app_main: DIAG_FB f=2941 game=2D7F2390 push=9612B4C7 n=12804 drops=0 dirty=311991
+[0m[info] tab5_perf_report: PERF: display=225.07ms/1002ms (transpose=224.86 submit=0.20) blocks=267 [xpose=104.03 ovl=6.57 draw=113.33] rows=29.9 max=84
+[0m[33m[warn] app_main: DIAG_FB f=3001 game=7C6CBC5E push=0445A983 n=13014 drops=0 dirty=317250
+[0m[info] tab5_perf_report: PERF: display=137.44ms/1009ms (transpose=137.27 submit=0.17) blocks=220 [xpose=53.33 ovl=3.21 draw=79.99] rows=19.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3061 game=D2B3F4BB push=E74903A4 n=13253 drops=0 dirty=322032
+[0m[info] tab5_perf_report: PERF: display=230.08ms/1018ms (transpose=229.80 submit=0.27) blocks=354 [xpose=98.76 ovl=5.27 draw=124.65] rows=23.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3121 game=C54708FF push=3035A062 n=13644 drops=0 dirty=331374
+[0m[info] tab5_perf_report: PERF: display=326.08ms/1010ms (transpose=325.72 submit=0.36) blocks=463 [xpose=131.63 ovl=7.32 draw=185.24] rows=23.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3181 game=8984F86E push=6CE48198 n=14094 drops=0 dirty=341551
+[0m[info] tab5_perf_report: PERF: display=301.69ms/1039ms (transpose=301.38 submit=0.31) blocks=392 [xpose=102.02 ovl=5.79 draw=192.21] rows=20.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3241 game=6E4021A9 push=5EB88825 n=14511 drops=0 dirty=349640
+[info] tab5_perf_report: PERF: display=257.17ms/1005ms (transpose=256.82 submit=0.34) blocks=443 [xpose=90.64 ovl=8.54 draw=156.24] rows=16.5 max=84
+[0m[33m[warn] app_main: DIAG_FB f=3301 game=42C2E3F4 push=9C6FB280 n=14907 drops=0 dirty=356165
+[0m[info] tab5_perf_report: PERF: display=220.52ms/1002ms (transpose=220.18 submit=0.34) blocks=419 [xpose=88.38 ovl=6.04 draw=123.80] rows=17.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3361 game=40163AFF push=04F17C7B n=15363 drops=0 dirty=364727
+[0m[info] tab5_perf_report: PERF: display=141.54ms/1000ms (transpose=141.36 submit=0.18) blocks=230 [xpose=55.73 ovl=4.02 draw=80.85] rows=20.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3421 game=BD4FD1BA push=9544C03D n=15528 drops=0 dirty=367817
+[0m[info] tab5_perf_report: PERF: display=97.53ms/1052ms (transpose=97.39 submit=0.13) blocks=191 [xpose=41.89 ovl=2.71 draw=52.19] rows=17.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3481 game=C0896E59 push=F774069A n=15693 drops=0 dirty=370816
+[0m[info] tab5_perf_report: PERF: display=149.20ms/1008ms (transpose=149.01 submit=0.18) blocks=227 [xpose=51.81 ovl=3.40 draw=93.06] rows=18.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3541 game=EFC8657A push=DF9EDF12 n=16008 drops=0 dirty=378100
+[0m[info] tab5_perf_report: PERF: display=225.47ms/1000ms (transpose=225.27 submit=0.20) blocks=274 [xpose=101.50 ovl=4.15 draw=118.73] rows=30.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3601 game=BF73E5AF push=5EAE907C n=16184 drops=0 dirty=383363
+[0m[info] tab5_perf_report: PERF: display=118.56ms/1010ms (transpose=118.44 submit=0.12) blocks=160 [xpose=50.24 ovl=5.82 draw=61.71] rows=26.2 max=84
+[0m[33m[warn] app_main: DIAG_FB f=3661 game=CA3FEB7F push=3B30A0A2 n=16346 drops=0 dirty=387571
+[0m[info] tab5_perf_report: PERF: display=116.75ms/1000ms (transpose=116.64 submit=0.11) blocks=152 [xpose=51.52 ovl=2.70 draw=61.83] rows=29.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3721 game=DA91B878 push=F344E02D n=16564 drops=0 dirty=394056
+[0m[info] tab5_perf_report: PERF: display=258.02ms/1009ms (transpose=257.77 submit=0.24) blocks=314 [xpose=117.92 ovl=4.98 draw=133.76] rows=29.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3781 game=8D6E6320 push=8684840B n=16889 drops=0 dirty=403704
+[info] tab5_perf_report: PERF: display=290.32ms/1000ms (transpose=290.06 submit=0.26) blocks=350 [xpose=127.35 ovl=5.70 draw=155.76] rows=29.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3841 game=99F8D377 push=5328B5CB n=17218 drops=0 dirty=413072
+[0m[info] tab5_perf_report: PERF: display=268.71ms/1005ms (transpose=268.45 submit=0.26) blocks=338 [xpose=121.09 ovl=5.36 draw=140.80] rows=27.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3901 game=4BEBE8B4 push=D412620A n=17606 drops=0 dirty=423695
+[0m[info] tab5_perf_report: PERF: display=299.88ms/1000ms (transpose=299.58 submit=0.30) blocks=391 [xpose=128.15 ovl=6.48 draw=163.53] rows=26.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=3961 game=2E475481 push=E3189FF4 n=17997 drops=0 dirty=434003
+[0m[info] tab5_perf_report: PERF: display=312.12ms/1000ms (transpose=311.79 submit=0.32) blocks=402 [xpose=134.29 ovl=9.89 draw=166.05] rows=26.9 max=84
+[0m[33m[warn] app_main: DIAG_FB f=4021 game=C77D1483 push=6022B640 n=18432 drops=0 dirty=445863
+[info] tab5_perf_report: PERF: display=333.83ms/1000ms (transpose=333.48 submit=0.34) blocks=433 [xpose=141.69 ovl=6.89 draw=183.38] rows=26.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4081 game=978A7C04 push=88F81E6A n=18859 drops=0 dirty=457068
+[0m[info] tab5_perf_report: PERF: display=300.59ms/1006ms (transpose=300.27 submit=0.32) blocks=409 [xpose=130.44 ovl=6.50 draw=161.52] rows=26.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4141 game=512F521A push=E6AC20E6 n=19286 drops=0 dirty=467904
+[0m[info] tab5_perf_report: PERF: display=305.75ms/1000ms (transpose=305.41 submit=0.34) blocks=428 [xpose=129.44 ovl=6.70 draw=167.79] rows=24.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4201 game=26BC69D1 push=E256DD96 n=19720 drops=0 dirty=478976
+[0m[info] tab5_perf_report: PERF: display=321.19ms/1000ms (transpose=320.84 submit=0.34) blocks=439 [xpose=137.25 ovl=6.70 draw=175.37] rows=25.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4261 game=569758D9 push=55EE3AFB n=20175 drops=0 dirty=490186
+[0m[info] tab5_perf_report: PERF: display=304.67ms/1008ms (transpose=304.34 submit=0.33) blocks=420 [xpose=133.35 ovl=7.36 draw=162.11] rows=25.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4321 game=39E88665 push=A78C1552 n=20593 drops=0 dirty=500999
+[0m[info] tab5_perf_report: PERF: display=299.51ms/1000ms (transpose=299.18 submit=0.32) blocks=410 [xpose=129.81 ovl=11.09 draw=156.81] rows=26.0 max=84
+[0m[33m[warn] app_main: DIAG_FB f=4381 game=3CF1D85A push=D1C45564 n=21018 drops=0 dirty=512071
+[0m[info] tab5_perf_report: PERF: display=321.92ms/1007ms (transpose=321.58 submit=0.33) blocks=435 [xpose=144.88 ovl=6.95 draw=168.23] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4441 game=8759DBA0 push=4F5BC79F n=21468 drops=0 dirty=524050
+[0m[info] tab5_perf_report: PERF: display=340.48ms/1000ms (transpose=340.12 submit=0.36) blocks=447 [xpose=149.10 ovl=6.92 draw=182.53] rows=26.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4501 game=8B531953 push=422550D1 n=21893 drops=0 dirty=535453
+[0m[info] tab5_perf_report: PERF: display=295.76ms/1000ms (transpose=295.45 submit=0.31) blocks=406 [xpose=129.24 ovl=6.52 draw=157.67] rows=26.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4561 game=39679E8A push=D3E5BB20 n=22322 drops=0 dirty=546915
+[0m[info] tab5_perf_report: PERF: display=335.10ms/1000ms (transpose=334.76 submit=0.34) blocks=432 [xpose=150.48 ovl=6.78 draw=175.96] rows=28.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4621 game=E633C26E push=0B320557 n=22715 drops=0 dirty=558396
+[info] tab5_perf_report: PERF: display=279.78ms/1000ms (transpose=279.50 submit=0.28) blocks=361 [xpose=126.65 ovl=5.43 draw=146.20] rows=28.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4681 game=00BD5B71 push=28572976 n=23095 drops=0 dirty=569273
+[info] tab5_perf_report: PERF: display=316.26ms/1018ms (transpose=315.95 submit=0.31) blocks=406 [xpose=141.33 ovl=8.98 draw=164.27] rows=28.2 max=84
+[0m[33m[warn] app_main: DIAG_FB f=4741 game=BA2BC8AC push=AD7110AF n=23466 drops=0 dirty=579735
+[0m[info] tab5_perf_report: PERF: display=310.88ms/1012ms (transpose=310.56 submit=0.32) blocks=397 [xpose=134.73 ovl=8.10 draw=166.38] rows=27.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4801 game=AE767978 push=11B5417B n=23889 drops=0 dirty=591512
+[info] tab5_perf_report: PERF: display=320.96ms/1000ms (transpose=320.65 submit=0.30) blocks=400 [xpose=150.20 ovl=5.90 draw=163.20] rows=28.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4861 game=3CC9B3C7 push=BD1071E9 n=24276 drops=0 dirty=602711
+[info] tab5_perf_report: PERF: display=304.69ms/1001ms (transpose=304.40 submit=0.28) blocks=374 [xpose=133.12 ovl=5.43 draw=164.65] rows=29.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4921 game=189D6F1E push=771BC8C0 n=24658 drops=0 dirty=613978
+[0m[info] tab5_perf_report: PERF: display=299.88ms/1000ms (transpose=299.59 submit=0.28) blocks=382 [xpose=136.29 ovl=5.90 draw=156.09] rows=28.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=4981 game=6A3CD800 push=9FCE01C8 n=25081 drops=0 dirty=626122
+[0m[info] tab5_perf_report: PERF: display=317.06ms/1000ms (transpose=316.74 submit=0.31) blocks=402 [xpose=141.94 ovl=5.73 draw=167.79] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5041 game=DB9E86C7 push=4D35577A n=25479 drops=0 dirty=637749
+[0m[info] tab5_perf_report: PERF: display=266.42ms/1000ms (transpose=266.16 submit=0.26) blocks=329 [xpose=117.89 ovl=10.68 draw=136.47] rows=28.9 max=84
+[0m[33m[warn] app_main: DIAG_FB f=5101 game=7F874B72 push=68BC6DF9 n=25825 drops=0 dirty=648558
+[0m[info] tab5_perf_report: PERF: display=312.26ms/1000ms (transpose=311.97 submit=0.29) blocks=364 [xpose=138.41 ovl=5.36 draw=167.10] rows=31.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5161 game=0068BB5E push=704FB15C n=26196 drops=0 dirty=658922
+[info] tab5_perf_report: PERF: display=284.69ms/1000ms (transpose=284.38 submit=0.31) blocks=396 [xpose=127.74 ovl=5.49 draw=150.08] rows=24.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5221 game=C946A85D push=A3154B7B n=26530 drops=0 dirty=666910
+[0m[info] tab5_perf_report: PERF: display=249.31ms/1005ms (transpose=249.07 submit=0.23) blocks=306 [xpose=95.67 ovl=4.38 draw=148.14] rows=25.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5281 game=B59C2D97 push=76FDD7BC n=26916 drops=0 dirty=675879
+[0m[info] tab5_perf_report: PERF: display=287.58ms/1009ms (transpose=287.29 submit=0.29) blocks=367 [xpose=97.12 ovl=5.09 draw=183.99] rows=21.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5341 game=B9999CB8 push=1109179C n=27322 drops=0 dirty=685523
+[0m[info] tab5_perf_report: PERF: display=347.99ms/1000ms (transpose=347.64 submit=0.35) blocks=443 [xpose=138.77 ovl=6.43 draw=201.00] rows=25.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5401 game=FD25ED03 push=ABC37E62 n=27822 drops=0 dirty=698284
+[info] tab5_perf_report: PERF: display=416.35ms/1000ms (transpose=415.96 submit=0.38) blocks=503 [xpose=166.30 ovl=12.22 draw=235.37] rows=26.3 max=84
+[0m[33m[warn] app_main: DIAG_FB f=5461 game=2F48F6DB push=EBFFBD32 n=28260 drops=0 dirty=711025
+[0m[info] tab5_perf_report: PERF: display=352.41ms/1000ms (transpose=352.08 submit=0.32) blocks=427 [xpose=153.56 ovl=6.53 draw=190.20] rows=28.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5521 game=6DBE3B46 push=2C4E23BE n=28690 drops=0 dirty=722817
+[0m[info] tab5_perf_report: PERF: display=324.65ms/1001ms (transpose=324.32 submit=0.33) blocks=423 [xpose=138.98 ovl=6.54 draw=177.34] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5581 game=B486641D push=54D4A25A n=29132 drops=0 dirty=734476
+[0m[info] tab5_perf_report: PERF: display=361.38ms/1010ms (transpose=361.03 submit=0.35) blocks=437 [xpose=155.05 ovl=6.94 draw=197.53] rows=26.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5641 game=E8C54A98 push=B46CD0A6 n=29497 drops=0 dirty=744573
+[0m[info] tab5_perf_report: PERF: display=258.61ms/1000ms (transpose=258.34 submit=0.26) blocks=333 [xpose=116.57 ovl=5.74 draw=134.81] rows=27.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5701 game=98AC6AA1 push=63C60EB7 n=29830 drops=0 dirty=753227
+[0m[info] tab5_perf_report: PERF: display=248.46ms/1000ms (transpose=248.19 submit=0.26) blocks=329 [xpose=106.96 ovl=5.35 draw=134.08] rows=26.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5761 game=EB3E7AF5 push=AE2B876C n=30215 drops=0 dirty=763196
+[0m[info] tab5_perf_report: PERF: display=325.34ms/1015ms (transpose=325.02 submit=0.31) blocks=409 [xpose=138.62 ovl=11.23 draw=173.68] rows=27.1 max=84
+[0m[33m[warn] app_main: DIAG_FB f=5821 game=2EF3A116 push=CAD017A6 n=30496 drops=0 dirty=770711
+[0m[info] tab5_perf_report: PERF: display=147.53ms/1001ms (transpose=147.36 submit=0.17) blocks=229 [xpose=64.64 ovl=3.34 draw=78.67] rows=23.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5881 game=AC4CCF35 push=4F5BFD6B n=30755 drops=0 dirty=775585
+[0m[info] tab5_perf_report: PERF: display=145.13ms/1026ms (transpose=144.93 submit=0.20) blocks=251 [xpose=55.69 ovl=3.45 draw=84.97] rows=18.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=5941 game=6B553DDE push=1F535BD9 n=31102 drops=0 dirty=783589
+[0m[info] tab5_perf_report: PERF: display=364.35ms/1000ms (transpose=364.04 submit=0.31) blocks=407 [xpose=122.78 ovl=7.02 draw=232.96] rows=24.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6001 game=81DAA3AA push=F04EC2CD n=31579 drops=0 dirty=794296
+[0m[info] tab5_perf_report: PERF: display=353.09ms/1015ms (transpose=352.74 submit=0.34) blocks=443 [xpose=116.13 ovl=6.54 draw=228.70] rows=21.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6061 game=33B4898F push=B69251DB n=32006 drops=0 dirty=802851
+[0m[info] tab5_perf_report: PERF: display=303.79ms/1039ms (transpose=303.43 submit=0.35) blocks=463 [xpose=108.56 ovl=6.64 draw=186.82] rows=19.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6121 game=CEF1D71A push=6CD2BAC1 n=32486 drops=0 dirty=810279
+[0m[info] tab5_perf_report: PERF: display=246.86ms/1017ms (transpose=246.47 submit=0.38) blocks=476 [xpose=94.44 ovl=9.30 draw=141.31] rows=15.4 max=84
+[0m[33m[warn] app_main: DIAG_FB f=6181 game=C12F53C1 push=06CB7C8A n=32846 drops=0 dirty=817308
+[0m[info] tab5_perf_report: PERF: display=235.58ms/1003ms (transpose=235.29 submit=0.29) blocks=367 [xpose=91.50 ovl=5.49 draw=137.08] rows=20.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6241 game=62B30479 push=B6055A6D n=33110 drops=0 dirty=822767
+[0m[info] tab5_perf_report: PERF: display=138.05ms/1034ms (transpose=137.90 submit=0.14) blocks=190 [xpose=49.27 ovl=2.89 draw=85.10] rows=21.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6301 game=EC48780D push=51E9CC37 n=33277 drops=0 dirty=826209
+[0m[info] tab5_perf_report: PERF: display=115.46ms/1045ms (transpose=115.30 submit=0.15) blocks=189 [xpose=52.20 ovl=2.99 draw=59.46] rows=20.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6361 game=909FA0C7 push=81E0BB17 n=33520 drops=0 dirty=831316
+[0m[info] tab5_perf_report: PERF: display=226.07ms/1012ms (transpose=225.80 submit=0.27) blocks=324 [xpose=95.54 ovl=4.85 draw=124.35] rows=24.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6421 game=DCA3ED08 push=0C7A78B9 n=33755 drops=0 dirty=838386
+[info] tab5_perf_report: PERF: display=118.03ms/1001ms (transpose=117.90 submit=0.12) blocks=147 [xpose=53.45 ovl=2.41 draw=61.53] rows=29.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6481 game=7ED36686 push=B65691D1 n=33926 drops=0 dirty=842890
+[0m[info] tab5_perf_report: PERF: display=132.13ms/1036ms (transpose=131.99 submit=0.13) blocks=177 [xpose=58.82 ovl=5.59 draw=66.87] rows=26.2 max=84
+[0m[33m[warn] app_main: DIAG_FB f=6541 game=A12810FC push=D06E6F44 n=34114 drops=0 dirty=848350
+[0m[info] tab5_perf_report: PERF: display=192.39ms/1000ms (transpose=192.20 submit=0.19) blocks=245 [xpose=87.93 ovl=3.83 draw=99.58] rows=29.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6601 game=6817D8A0 push=79AD41C8 n=34432 drops=0 dirty=857706
+[0m[info] tab5_perf_report: PERF: display=257.55ms/1009ms (transpose=257.30 submit=0.24) blocks=321 [xpose=117.55 ovl=5.38 draw=133.16] rows=28.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6661 game=9A0F8E3E push=5E7B6706 n=34769 drops=0 dirty=867423
+[0m[info] tab5_perf_report: PERF: display=288.83ms/1000ms (transpose=288.56 submit=0.27) blocks=337 [xpose=117.27 ovl=5.18 draw=164.97] rows=29.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6721 game=1B8B809A push=122281CD n=35145 drops=0 dirty=877700
+[0m[info] tab5_perf_report: PERF: display=288.11ms/1001ms (transpose=287.82 submit=0.29) blocks=374 [xpose=123.22 ovl=6.27 draw=156.96] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6781 game=1D468AE6 push=3A11AE87 n=35548 drops=0 dirty=888508
+[info] tab5_perf_report: PERF: display=316.49ms/1006ms (transpose=316.16 submit=0.32) blocks=406 [xpose=134.52 ovl=6.83 draw=173.34] rows=26.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6841 game=1F9B56F8 push=6AC16E16 n=35972 drops=0 dirty=899879
+[0m[info] tab5_perf_report: PERF: display=330.03ms/1006ms (transpose=329.69 submit=0.34) blocks=433 [xpose=142.11 ovl=9.32 draw=176.48] rows=27.0 max=84
+[0m[33m[warn] app_main: DIAG_FB f=6901 game=74DFBEBD push=53E320FF n=36403 drops=0 dirty=911297
+[0m[info] tab5_perf_report: PERF: display=318.50ms/1000ms (transpose=318.19 submit=0.31) blocks=413 [xpose=131.64 ovl=7.47 draw=177.60] rows=26.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=6961 game=23908F2E push=A1193AB7 n=36824 drops=0 dirty=922264
+[0m[info] tab5_perf_report: PERF: display=304.58ms/1006ms (transpose=304.23 submit=0.35) blocks=431 [xpose=132.97 ovl=7.10 draw=162.62] rows=25.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7021 game=8A865D23 push=FF8371C6 n=37261 drops=0 dirty=932991
+[0m[info] tab5_perf_report: PERF: display=329.34ms/1000ms (transpose=328.98 submit=0.36) blocks=451 [xpose=144.71 ovl=6.92 draw=175.72] rows=25.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7081 game=8B3308C7 push=51DD061D n=37714 drops=0 dirty=944524
+[0m[info] tab5_perf_report: PERF: display=309.07ms/1001ms (transpose=308.73 submit=0.34) blocks=437 [xpose=128.29 ovl=7.70 draw=171.26] rows=24.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7141 game=76F29345 push=AC4ADFB2 n=38128 drops=0 dirty=954919
+[0m[info] tab5_perf_report: PERF: display=293.06ms/1017ms (transpose=292.76 submit=0.30) blocks=404 [xpose=126.79 ovl=6.40 draw=158.17] rows=25.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7201 game=33EDE72B push=652D973C n=38545 drops=0 dirty=965831
+[0m[info] tab5_perf_report: PERF: display=310.88ms/1001ms (transpose=310.57 submit=0.30) blocks=416 [xpose=131.89 ovl=11.15 draw=166.07] rows=26.1 max=84
+[0m[33m[warn] app_main: DIAG_FB f=7261 game=C1925DB9 push=1BB01FA7 n=38998 drops=0 dirty=977871
+[info] tab5_perf_report: PERF: display=341.35ms/1001ms (transpose=341.02 submit=0.33) blocks=434 [xpose=140.42 ovl=6.77 draw=192.35] rows=26.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7321 game=AD0CBA58 push=13AB491E n=39394 drops=0 dirty=988946
+[0m[info] tab5_perf_report: PERF: display=319.12ms/1021ms (transpose=318.83 submit=0.28) blocks=374 [xpose=132.21 ovl=6.69 draw=178.00] rows=28.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7381 game=C107A3F6 push=8C4A10DB n=39729 drops=0 dirty=998618
+[0m[info] tab5_perf_report: PERF: display=271.12ms/1004ms (transpose=270.84 submit=0.27) blocks=344 [xpose=124.30 ovl=5.44 draw=139.90] rows=29.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7441 game=598A8321 push=F2A4EFEB n=40057 drops=0 dirty=1008489
+[0m[info] tab5_perf_report: PERF: display=270.49ms/1010ms (transpose=270.22 submit=0.26) blocks=333 [xpose=125.37 ovl=5.17 draw=138.53] rows=30.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7501 game=41D314E3 push=06587159 n=40388 drops=0 dirty=1018091
+[0m[info] tab5_perf_report: PERF: display=247.50ms/1000ms (transpose=247.24 submit=0.25) blocks=312 [xpose=111.16 ovl=4.88 draw=130.12] rows=29.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7561 game=CB4B8016 push=848571F1 n=40680 drops=0 dirty=1026641
+[0m[info] tab5_perf_report: PERF: display=241.01ms/1000ms (transpose=240.78 submit=0.22) blocks=298 [xpose=110.10 ovl=6.84 draw=122.78] rows=29.1 max=84
+[0m[33m[warn] app_main: DIAG_FB f=7621 game=79DCFBB5 push=2B81AF8D n=41013 drops=0 dirty=1036142
+[0m[info] tab5_perf_report: PERF: display=278.34ms/1001ms (transpose=278.06 submit=0.28) blocks=352 [xpose=128.99 ovl=5.90 draw=141.93] rows=28.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7681 game=ED8C927F push=B6A24E46 n=41381 drops=0 dirty=1047095
+[0m[info] tab5_perf_report: PERF: display=264.35ms/1004ms (transpose=264.07 submit=0.27) blocks=328 [xpose=119.54 ovl=5.08 draw=138.33] rows=29.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7741 game=21E881A9 push=48513D15 n=41694 drops=0 dirty=1056641
+[0m[info] tab5_perf_report: PERF: display=271.66ms/1002ms (transpose=271.39 submit=0.27) blocks=331 [xpose=124.35 ovl=5.17 draw=140.79] rows=30.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7801 game=48E507D2 push=A45EA2D4 n=42028 drops=0 dirty=1066660
+[0m[info] tab5_perf_report: PERF: display=291.05ms/1011ms (transpose=290.77 submit=0.27) blocks=360 [xpose=133.00 ovl=5.60 draw=150.95] rows=29.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7861 game=817201BC push=E9299F91 n=42387 drops=0 dirty=1077329
+[info] tab5_perf_report: PERF: display=277.95ms/1000ms (transpose=277.70 submit=0.25) blocks=351 [xpose=123.69 ovl=5.47 draw=147.31] rows=29.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=7921 game=04C7DBE0 push=2603F6FB n=42712 drops=0 dirty=1087268
+[0m[info] tab5_perf_report: PERF: display=294.93ms/1000ms (transpose=294.65 submit=0.27) blocks=335 [xpose=134.59 ovl=9.48 draw=149.54] rows=31.2 max=84
+[0m[33m[warn] app_main: DIAG_FB f=7981 game=213A43B2 push=71CA915C n=43040 drops=0 dirty=1096507
+[0m[info] tab5_perf_report: PERF: display=230.84ms/1001ms (transpose=230.60 submit=0.24) blocks=312 [xpose=103.08 ovl=4.96 draw=121.55] rows=27.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8041 game=ABB5BA37 push=79E396A9 n=43361 drops=0 dirty=1105300
+[0m[info] tab5_perf_report: PERF: display=234.02ms/1000ms (transpose=233.77 submit=0.25) blocks=316 [xpose=108.80 ovl=4.40 draw=119.53] rows=26.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8101 game=AABFDF7C push=F035B1E4 n=43705 drops=0 dirty=1113829
+[0m[info] tab5_perf_report: PERF: display=246.11ms/1000ms (transpose=245.83 submit=0.27) blocks=355 [xpose=101.84 ovl=4.88 draw=138.02] rows=23.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8161 game=1A792306 push=06E561B3 n=44172 drops=0 dirty=1122781
+[0m[info] tab5_perf_report: PERF: display=326.75ms/1006ms (transpose=326.38 submit=0.37) blocks=484 [xpose=123.43 ovl=6.34 draw=195.24] rows=20.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8221 game=714354C8 push=06216AC7 n=44638 drops=0 dirty=1135426
+[0m[info] tab5_perf_report: PERF: display=381.67ms/1000ms (transpose=381.31 submit=0.36) blocks=466 [xpose=158.08 ovl=7.17 draw=214.49] rows=27.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8281 game=6893D94B push=7821A157 n=45083 drops=0 dirty=1148338
+[info] tab5_perf_report: PERF: display=353.27ms/1000ms (transpose=352.94 submit=0.33) blocks=426 [xpose=159.17 ovl=11.00 draw=181.34] rows=29.5 max=84
+[0m[33m[warn] app_main: DIAG_FB f=8341 game=D67A52E9 push=EF195CE3 n=45524 drops=0 dirty=1160394
+[info] tab5_perf_report: PERF: display=381.54ms/1008ms (transpose=381.20 submit=0.33) blocks=427 [xpose=152.16 ovl=6.70 draw=220.89] rows=27.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8401 game=FCC64041 push=72DDE156 n=45942 drops=0 dirty=1171440
+[0m[info] tab5_perf_report: PERF: display=312.93ms/1011ms (transpose=312.58 submit=0.34) blocks=425 [xpose=139.46 ovl=6.56 draw=165.14] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8461 game=B13B94DE push=AAFD1E16 n=46326 drops=0 dirty=1182727
+[info] tab5_perf_report: PERF: display=314.73ms/1001ms (transpose=314.43 submit=0.30) blocks=369 [xpose=136.26 ovl=6.14 draw=170.39] rows=29.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8521 game=8B3AAC3E push=EA650F89 n=46650 drops=0 dirty=1191350
+[0m[info] tab5_perf_report: PERF: display=230.73ms/1000ms (transpose=230.49 submit=0.24) blocks=316 [xpose=104.31 ovl=5.15 draw=119.83] rows=25.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8581 game=4DAF4146 push=E7FF79FD n=46991 drops=0 dirty=1200205
+[0m[info] tab5_perf_report: PERF: display=252.09ms/1000ms (transpose=251.84 submit=0.25) blocks=328 [xpose=112.20 ovl=5.48 draw=132.95] rows=26.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8641 game=A573646E push=1D5C70D4 n=47366 drops=0 dirty=1211133
+[0m[0m[info] tab5_perf_report: PERF: display=298.33ms/1014ms (transpose=298.05 submit=0.28) blocks=374 [xpose=134.37 ovl=10.85 draw=151.54] rows=28.7 max=84
+[info] tab5_perf_report: PERF: display=110.94ms/1000ms (transpose=110.81 submit=0.13) blocks=169 [xpose=41.54 ovl=2.42 draw=66.30] rows=20.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8701 game=41586DA0 push=2482D1B6 n=47552 drops=0 dirty=1214786
+[0m[info] tab5_perf_report: PERF: display=213.50ms/1000ms (transpose=213.26 submit=0.23) blocks=290 [xpose=67.88 ovl=3.92 draw=140.64] rows=19.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8761 game=FA1C6FB0 push=0D43658B n=47917 drops=0 dirty=1222076
+[0m[info] tab5_perf_report: PERF: display=404.07ms/1001ms (transpose=403.72 submit=0.34) blocks=450 [xpose=138.58 ovl=6.65 draw=256.97] rows=24.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8821 game=51BE5851 push=EC0B2515 n=48341 drops=0 dirty=1232792
+[0m[info] tab5_perf_report: PERF: display=285.64ms/1031ms (transpose=285.31 submit=0.33) blocks=419 [xpose=112.64 ovl=6.02 draw=165.34] rows=22.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8881 game=464BABD2 push=6AA4B9DB n=48759 drops=0 dirty=1241837
+[0m[info] tab5_perf_report: PERF: display=266.44ms/1003ms (transpose=266.09 submit=0.35) blocks=457 [xpose=101.50 ovl=6.36 draw=156.80] rows=18.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=8941 game=5D25D1DE push=0A63B2E3 n=49217 drops=0 dirty=1250228
+[0m[info] tab5_perf_report: PERF: display=227.02ms/1033ms (transpose=226.70 submit=0.31) blocks=434 [xpose=94.22 ovl=8.30 draw=122.83] rows=15.7 max=84
+[0m[33m[warn] app_main: DIAG_FB f=9001 game=883BF852 push=03370302 n=49616 drops=0 dirty=1256354
+[0m[info] tab5_perf_report: PERF: display=204.91ms/1018ms (transpose=204.64 submit=0.27) blocks=355 [xpose=91.50 ovl=5.17 draw=106.79] rows=20.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9061 game=5FBE0AAB push=CDF5E67E n=49971 drops=0 dirty=1263602
+[0m[33m[warn] app_main: DIAG_FB f=9121 game=D1DFD87E push=CAD96D04 n=50125 drops=0 dirty=1266730
+[info] tab5_perf_report: PERF: display=105.18ms/1091ms (transpose=105.05 submit=0.13) blocks=170 [xpose=41.91 ovl=2.55 draw=59.98] rows=20.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9181 game=02585B88 push=D17E98AD n=50351 drops=0 dirty=1270860
+[info] tab5_perf_report: PERF: display=139.77ms/1015ms (transpose=139.58 submit=0.19) blocks=226 [xpose=50.54 ovl=3.38 draw=84.90] rows=18.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9241 game=659319AF push=8F2C2559 n=50674 drops=0 dirty=1279923
+[0m[info] tab5_perf_report: PERF: display=245.79ms/1191ms (transpose=245.56 submit=0.23) blocks=323 [xpose=113.12 ovl=4.71 draw=126.76] rows=28.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9301 game=3F789F33 push=443C763E n=50785 drops=0 dirty=1283078
+[0m[info] tab5_perf_report: PERF: display=143.86ms/1009ms (transpose=143.73 submit=0.12) blocks=152 [xpose=52.54 ovl=5.15 draw=85.38] rows=27.8 max=84
+[0m[33m[warn] app_main: DIAG_FB f=9361 game=E842854A push=AAEBBE34 n=50953 drops=0 dirty=1287637
+[info] tab5_perf_report: PERF: display=120.97ms/1001ms (transpose=120.84 submit=0.13) blocks=161 [xpose=54.59 ovl=2.93 draw=62.71] rows=27.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9421 game=7F3656F3 push=741F780C n=51199 drops=0 dirty=1294939
+[0m[info] tab5_perf_report: PERF: display=235.91ms/1000ms (transpose=235.68 submit=0.22) blocks=283 [xpose=109.24 ovl=4.72 draw=120.67] rows=30.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9481 game=88E8F681 push=EB92BC0C n=51509 drops=0 dirty=1304376
+[0m[info] tab5_perf_report: PERF: display=261.17ms/1000ms (transpose=260.93 submit=0.24) blocks=303 [xpose=115.58 ovl=7.62 draw=136.64] rows=30.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9541 game=5651DEE5 push=11C5D7B5 n=51818 drops=0 dirty=1313471
+[info] tab5_perf_report: PERF: display=251.40ms/1033ms (transpose=251.16 submit=0.23) blocks=307 [xpose=117.65 ovl=4.92 draw=127.49] rows=29.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9601 game=9A49034B push=2A46CC75 n=52129 drops=0 dirty=1322711
+[0m[info] tab5_perf_report: PERF: display=278.06ms/1025ms (transpose=277.79 submit=0.26) blocks=339 [xpose=118.66 ovl=6.12 draw=151.71] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9661 game=99EDD91C push=224E9AF2 n=52454 drops=0 dirty=1332247
+[info] tab5_perf_report: PERF: display=268.54ms/1000ms (transpose=268.27 submit=0.27) blocks=323 [xpose=120.08 ovl=7.67 draw=139.34] rows=29.3 max=84
+[0m[33m[warn] app_main: DIAG_FB f=9721 game=E5877FB7 push=8A8D9997 n=52793 drops=0 dirty=1342225
+[info] tab5_perf_report: PERF: display=293.83ms/1002ms (transpose=293.55 submit=0.28) blocks=347 [xpose=125.72 ovl=6.32 draw=160.21] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9781 game=8C4598D3 push=47AD8976 n=53131 drops=0 dirty=1351830
+[0m[info] tab5_perf_report: PERF: display=308.01ms/1000ms (transpose=307.75 submit=0.25) blocks=338 [xpose=121.44 ovl=5.66 draw=179.35] rows=28.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9841 game=574FC17B push=13C26181 n=53471 drops=0 dirty=1361523
+[info] tab5_perf_report: PERF: display=266.10ms/1000ms (transpose=265.84 submit=0.25) blocks=336 [xpose=125.21 ovl=5.85 draw=133.54] rows=27.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9901 game=3C6079D5 push=F6DB5718 n=53807 drops=0 dirty=1370702
+[0m[info] tab5_perf_report: PERF: display=268.37ms/1000ms (transpose=268.11 submit=0.25) blocks=331 [xpose=121.17 ovl=5.72 draw=139.94] rows=27.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=9961 game=981AB511 push=DAF73338 n=54123 drops=0 dirty=1379332
+[0m[info] tab5_perf_report: PERF: display=249.01ms/1001ms (transpose=248.77 submit=0.24) blocks=304 [xpose=98.55 ovl=8.51 draw=140.57] rows=26.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10021 game=67715AAF push=FD77AB4F n=54468 drops=0 dirty=1388445
+[info] tab5_perf_report: PERF: display=302.24ms/1005ms (transpose=301.95 submit=0.28) blocks=380 [xpose=129.70 ovl=10.64 draw=160.25] rows=26.7 max=84
+[0m[33m[warn] app_main: DIAG_FB f=10081 game=702B1B19 push=97685EB0 n=54900 drops=0 dirty=1399995
+[0m[info] tab5_perf_report: PERF: display=341.62ms/1009ms (transpose=341.27 submit=0.35) blocks=450 [xpose=149.82 ovl=7.21 draw=182.69] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10141 game=9E65C71A push=D97D2AEF n=55372 drops=0 dirty=1412675
+[info] tab5_perf_report: PERF: display=325.23ms/1004ms (transpose=324.88 submit=0.34) blocks=420 [xpose=141.57 ovl=7.56 draw=174.21] rows=26.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10201 game=424F68F9 push=7DC24258 n=55784 drops=0 dirty=1423261
+[0m[info] tab5_perf_report: PERF: display=302.43ms/1001ms (transpose=302.10 submit=0.32) blocks=418 [xpose=131.80 ovl=6.66 draw=162.18] rows=26.1 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10261 game=628756D6 push=7364B609 n=56203 drops=0 dirty=1435281
+[0m[info] tab5_perf_report: PERF: display=326.50ms/1025ms (transpose=326.16 submit=0.34) blocks=416 [xpose=147.55 ovl=6.26 draw=170.90] rows=28.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10321 game=CD1E2DF8 push=A19F2B2B n=56576 drops=0 dirty=1446006
+[0m[info] tab5_perf_report: PERF: display=294.04ms/1008ms (transpose=293.76 submit=0.27) blocks=374 [xpose=131.07 ovl=5.42 draw=156.10] rows=28.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10381 game=FC06E9AE push=782CB5E5 n=56970 drops=0 dirty=1457180
+[info] tab5_perf_report: PERF: display=294.90ms/1013ms (transpose=294.61 submit=0.29) blocks=375 [xpose=132.09 ovl=8.86 draw=152.39] rows=28.3 max=84
+[0m[33m[warn] app_main: DIAG_FB f=10441 game=A809334D push=303512E1 n=57373 drops=0 dirty=1468438
+[0m[info] tab5_perf_report: PERF: display=320.44ms/1000ms (transpose=320.11 submit=0.33) blocks=418 [xpose=141.94 ovl=6.29 draw=170.50] rows=27.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10501 game=77D266D6 push=D3800268 n=57779 drops=0 dirty=1479951
+[0m[info] tab5_perf_report: PERF: display=316.04ms/1000ms (transpose=315.70 submit=0.33) blocks=406 [xpose=142.00 ovl=6.04 draw=166.35] rows=28.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10561 game=B1829450 push=6ADDE924 n=58113 drops=0 dirty=1489674
+[info] tab5_perf_report: PERF: display=267.57ms/1000ms (transpose=267.34 submit=0.22) blocks=298 [xpose=110.18 ovl=4.90 draw=151.14] rows=29.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10621 game=EC3A35CC push=D8494B1B n=58430 drops=0 dirty=1499042
+[info] tab5_perf_report: PERF: display=261.24ms/1000ms (transpose=260.98 submit=0.25) blocks=324 [xpose=114.59 ovl=5.25 draw=140.00] rows=29.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10681 game=E0F1DD74 push=ED960352 n=58754 drops=0 dirty=1508722
+[0m[info] tab5_perf_report: PERF: display=266.22ms/1000ms (transpose=265.96 submit=0.26) blocks=327 [xpose=118.86 ovl=5.64 draw=140.30] rows=29.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10741 game=659319AF push=C1CDC292 n=59025 drops=0 dirty=1516762
+[0m[info] tab5_perf_report: PERF: display=211.71ms/1000ms (transpose=211.52 submit=0.19) blocks=250 [xpose=89.40 ovl=9.10 draw=112.13] rows=29.7 max=84
+[0m[33m[warn] app_main: DIAG_FB f=10801 game=033EC66E push=EDD3E13B n=59357 drops=0 dirty=1527229
+[0m[info] tab5_perf_report: PERF: display=271.78ms/1005ms (transpose=271.53 submit=0.25) blocks=318 [xpose=121.13 ovl=4.75 draw=144.57] rows=31.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10861 game=70F69711 push=9E18ACAB n=59633 drops=0 dirty=1534639
+[0m[info] tab5_perf_report: PERF: display=219.77ms/1032ms (transpose=219.54 submit=0.23) blocks=291 [xpose=95.01 ovl=4.14 draw=119.44] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10921 game=BD66CAC3 push=36B31FD2 n=59889 drops=0 dirty=1541082
+[0m[info] tab5_perf_report: PERF: display=191.39ms/1003ms (transpose=191.17 submit=0.22) blocks=273 [xpose=83.58 ovl=3.88 draw=102.78] rows=25.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=10981 game=006B76D7 push=F24C16D4 n=60211 drops=0 dirty=1548989
+[0m[info] tab5_perf_report: PERF: display=210.65ms/1000ms (transpose=210.39 submit=0.25) blocks=321 [xpose=91.85 ovl=4.49 draw=113.04] rows=23.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11041 game=094C33C5 push=409C11B4 n=60666 drops=0 dirty=1559961
+[0m[info] tab5_perf_report: PERF: display=364.59ms/1009ms (transpose=363.95 submit=0.63) blocks=484 [xpose=152.05 ovl=7.40 draw=202.90] rows=24.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11101 game=6FCB4946 push=102E6BE4 n=61172 drops=0 dirty=1573092
+[info] tab5_perf_report: PERF: display=415.13ms/1000ms (transpose=414.74 submit=0.38) blocks=512 [xpose=174.99 ovl=12.15 draw=225.86] rows=26.8 max=84
+[0m[33m[warn] app_main: DIAG_FB f=11161 game=AB88E694 push=007F17EB n=61614 drops=0 dirty=1585554
+[0m[info] tab5_perf_report: PERF: display=363.30ms/1006ms (transpose=362.98 submit=0.32) blocks=430 [xpose=155.49 ovl=7.30 draw=198.74] rows=28.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11221 game=B70FBAEC push=6C3978DD n=62038 drops=0 dirty=1596960
+[0m[info] tab5_perf_report: PERF: display=345.11ms/1001ms (transpose=344.79 submit=0.32) blocks=424 [xpose=141.46 ovl=6.78 draw=194.54] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11281 game=BADABAA5 push=B06FC2D9 n=62477 drops=0 dirty=1608909
+[0m[info] tab5_perf_report: PERF: display=332.29ms/1000ms (transpose=331.94 submit=0.35) blocks=429 [xpose=150.14 ovl=6.83 draw=173.50] rows=27.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11341 game=20B2E930 push=B2F17D69 n=62805 drops=0 dirty=1618067
+[0m[info] tab5_perf_report: PERF: display=245.73ms/1011ms (transpose=245.49 submit=0.24) blocks=313 [xpose=113.19 ovl=5.40 draw=125.72] rows=27.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11401 game=EB1AC574 push=35D2626A n=63135 drops=0 dirty=1626823
+[0m[info] tab5_perf_report: PERF: display=258.06ms/1001ms (transpose=257.79 submit=0.27) blocks=328 [xpose=109.50 ovl=5.68 draw=141.38] rows=26.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11461 game=0528CD71 push=87392E41 n=63521 drops=0 dirty=1637098
+[0m[info] tab5_perf_report: PERF: display=331.63ms/1000ms (transpose=331.30 submit=0.32) blocks=401 [xpose=138.62 ovl=14.12 draw=177.08] rows=27.5 max=84
+[0m[33m[warn] app_main: DIAG_FB f=11521 game=32712393 push=8D456D8B n=63788 drops=0 dirty=1644196
+[0m[info] tab5_perf_report: PERF: display=151.54ms/1023ms (transpose=151.38 submit=0.15) blocks=212 [xpose=68.38 ovl=3.24 draw=78.99] rows=25.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11581 game=C7019E53 push=487EC46B n=64005 drops=0 dirty=1648428
+[0m[info] tab5_perf_report: PERF: display=164.53ms/1017ms (transpose=164.33 submit=0.19) blocks=232 [xpose=56.37 ovl=3.37 draw=103.82] rows=19.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11641 game=3DFB0ABD push=81FABA6B n=64416 drops=0 dirty=1657808
+[0m[info] tab5_perf_report: PERF: display=294.77ms/1000ms (transpose=294.44 submit=0.32) blocks=445 [xpose=125.78 ovl=6.21 draw=161.08] rows=23.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11701 game=6C28F785 push=29EED0C8 n=64863 drops=0 dirty=1667513
+[0m[info] tab5_perf_report: PERF: display=322.08ms/1014ms (transpose=321.73 submit=0.34) blocks=450 [xpose=118.89 ovl=6.50 draw=194.85] rows=21.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11761 game=E69C1A4B push=10A30A32 n=65292 drops=0 dirty=1675382
+[0m[info] tab5_perf_report: PERF: display=254.45ms/1009ms (transpose=254.11 submit=0.34) blocks=435 [xpose=91.70 ovl=6.10 draw=155.00] rows=17.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11821 game=67FEC6F6 push=4A7FD188 n=65745 drops=0 dirty=1682608
+[0m[info] tab5_perf_report: PERF: display=236.47ms/1010ms (transpose=236.11 submit=0.35) blocks=443 [xpose=92.54 ovl=8.38 draw=133.27] rows=16.4 max=84
+[0m[33m[warn] app_main: DIAG_FB f=11881 game=77DB4C58 push=E265A12E n=66114 drops=0 dirty=1690171
+[0m[info] tab5_perf_report: PERF: display=225.10ms/1033ms (transpose=224.80 submit=0.29) blocks=385 [xpose=95.98 ovl=6.22 draw=121.31] rows=20.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=11941 game=588029C9 push=6CBDC0F6 n=66278 drops=0 dirty=1693572
+[0m[info] tab5_perf_report: PERF: display=87.49ms/1134ms (transpose=87.38 submit=0.11) blocks=148 [xpose=38.27 ovl=2.30 draw=46.30] rows=21.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12001 game=01602DAC push=34021096 n=66467 drops=0 dirty=1697243
+[0m[info] tab5_perf_report: PERF: display=135.97ms/1000ms (transpose=135.81 submit=0.16) blocks=213 [xpose=49.36 ovl=3.18 draw=82.59] rows=17.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12061 game=A60B9E04 push=EBF86D40 n=66737 drops=0 dirty=1703018
+[0m[info] tab5_perf_report: PERF: display=245.05ms/1012ms (transpose=244.78 submit=0.27) blocks=333 [xpose=108.94 ovl=5.12 draw=129.65] rows=26.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12121 game=59FCB7B0 push=2FF62D8E n=66953 drops=0 dirty=1709635
+[0m[info] tab5_perf_report: PERF: display=93.73ms/1021ms (transpose=93.64 submit=0.09) blocks=119 [xpose=40.98 ovl=2.90 draw=49.31] rows=29.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12181 game=C83F5EF0 push=9795C90B n=67135 drops=0 dirty=1714059
+[0m[info] tab5_perf_report: PERF: display=142.87ms/1001ms (transpose=142.72 submit=0.14) blocks=183 [xpose=54.76 ovl=9.17 draw=78.11] rows=25.2 max=84
+[0m[33m[warn] app_main: DIAG_FB f=12241 game=2AFDBBCE push=84374AC2 n=67326 drops=0 dirty=1719701
+[0m[info] tab5_perf_report: PERF: display=195.82ms/1015ms (transpose=195.64 submit=0.18) blocks=246 [xpose=87.55 ovl=4.01 draw=103.17] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12301 game=6817D8A0 push=9CA8FE7C n=67652 drops=0 dirty=1729336
+[0m[info] tab5_perf_report: PERF: display=269.71ms/1000ms (transpose=269.46 submit=0.25) blocks=336 [xpose=122.26 ovl=5.50 draw=140.48] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12361 game=9A0F8E3E push=18A8584E n=67992 drops=0 dirty=1739082
+[0m[info] tab5_perf_report: PERF: display=289.10ms/1000ms (transpose=288.84 submit=0.26) blocks=326 [xpose=114.32 ovl=5.07 draw=168.30] rows=28.8 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12421 game=E50A25E0 push=7EDABBA4 n=68368 drops=0 dirty=1749317
+[0m[info] tab5_perf_report: PERF: display=282.10ms/1000ms (transpose=281.80 submit=0.30) blocks=369 [xpose=120.40 ovl=6.28 draw=153.83] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12481 game=03FE3FFE push=8F86BF8E n=68765 drops=0 dirty=1759837
+[info] tab5_perf_report: PERF: display=298.91ms/1008ms (transpose=298.60 submit=0.30) blocks=400 [xpose=131.30 ovl=6.62 draw=159.24] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12541 game=28C28315 push=1A72FA4F n=69193 drops=0 dirty=1771389
+[0m[info] tab5_perf_report: PERF: display=325.23ms/1003ms (transpose=324.88 submit=0.35) blocks=433 [xpose=143.48 ovl=9.36 draw=170.48] rows=27.0 max=84
+[0m[33m[warn] app_main: DIAG_FB f=12601 game=9CB90FC2 push=3F3218FF n=69632 drops=0 dirty=1783200
+[0m[info] tab5_perf_report: PERF: display=304.46ms/1005ms (transpose=304.14 submit=0.31) blocks=415 [xpose=131.24 ovl=6.80 draw=164.46] rows=26.0 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12661 game=0E7A7928 push=B457A6D2 n=70038 drops=0 dirty=1793486
+[0m[info] tab5_perf_report: PERF: display=303.60ms/1000ms (transpose=303.26 submit=0.34) blocks=431 [xpose=135.61 ovl=6.69 draw=159.37] rows=25.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12721 game=038D2054 push=92316078 n=70489 drops=0 dirty=1804810
+[info] tab5_perf_report: PERF: display=324.65ms/1000ms (transpose=324.29 submit=0.36) blocks=453 [xpose=143.54 ovl=7.05 draw=172.05] rows=25.5 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12781 game=19297D31 push=FC14FFB3 n=70944 drops=0 dirty=1816212
+[0m[info] tab5_perf_report: PERF: display=313.40ms/1000ms (transpose=313.05 submit=0.34) blocks=441 [xpose=135.66 ovl=6.84 draw=169.04] rows=24.3 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12841 game=0A972A7B push=41EA88E9 n=71348 drops=0 dirty=1826529
+[0m[info] tab5_perf_report: PERF: display=302.87ms/1000ms (transpose=302.54 submit=0.33) blocks=405 [xpose=134.17 ovl=6.27 draw=160.70] rows=26.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=12901 game=00EB0435 push=0E848181 n=71764 drops=0 dirty=1837307
+[0m[info] tab5_perf_report: PERF: display=305.74ms/1014ms (transpose=305.42 submit=0.32) blocks=411 [xpose=128.92 ovl=11.50 draw=163.56] rows=25.6 max=84
+[0m[33m[warn] app_main: DIAG_FB f=12961 game=079D3F2E push=AB20B5A5 n=72225 drops=0 dirty=1849726
+[info] tab5_perf_report: PERF: display=368.93ms/1002ms (transpose=368.55 submit=0.38) blocks=473 [xpose=157.24 ovl=7.30 draw=202.35] rows=26.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13021 game=BBD57B6D push=F69DE017 n=72645 drops=0 dirty=1860834
+[info] tab5_perf_report: PERF: display=304.02ms/1004ms (transpose=303.71 submit=0.31) blocks=398 [xpose=128.66 ovl=6.35 draw=167.33] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13081 game=9A01541D push=78544A04 n=73084 drops=0 dirty=1872485
+[0m[info] tab5_perf_report: PERF: display=312.41ms/1000ms (transpose=312.07 submit=0.34) blocks=428 [xpose=140.50 ovl=6.84 draw=163.27] rows=26.7 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13141 game=9E4B7928 push=8C256B0C n=73466 drops=0 dirty=1883654
+[info] tab5_perf_report: PERF: display=305.31ms/1001ms (transpose=305.01 submit=0.29) blocks=384 [xpose=139.05 ovl=5.37 draw=159.33] rows=29.2 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13201 game=63B0BC93 push=DE77ED92 n=73876 drops=0 dirty=1895254
+[0m[info] tab5_perf_report: PERF: display=286.11ms/1001ms (transpose=285.83 submit=0.27) blocks=366 [xpose=130.07 ovl=5.88 draw=148.68] rows=28.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13261 game=D6E912A2 push=71A0010C n=74231 drops=0 dirty=1905352
+[0m[info] tab5_perf_report: PERF: display=290.39ms/1000ms (transpose=290.09 submit=0.30) blocks=377 [xpose=131.25 ovl=7.74 draw=149.87] rows=28.4 max=84
+[0m[33m[warn] app_main: DIAG_FB f=13321 game=7FB74D85 push=FDFF5278 n=74660 drops=0 dirty=1917233
+[0m[info] tab5_perf_report: PERF: display=324.62ms/1000ms (transpose=324.30 submit=0.32) blocks=416 [xpose=142.15 ovl=6.25 draw=174.43] rows=27.6 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13381 game=6E209F13 push=ACFB33D3 n=75070 drops=0 dirty=1929100
+[0m[info] tab5_perf_report: PERF: display=306.73ms/1008ms (transpose=306.43 submit=0.30) blocks=386 [xpose=133.25 ovl=5.60 draw=166.29] rows=28.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13441 game=5A5BBF1E push=5A7534D4 n=75430 drops=0 dirty=1939757
+[info] tab5_perf_report: PERF: display=289.89ms/1030ms (transpose=289.62 submit=0.27) blocks=360 [xpose=133.04 ovl=5.42 draw=149.96] rows=29.5 max=32
+[info] tab5_perf_report: PERF: display=315.73ms/1004ms (transpose=315.41 submit=0.31) blocks=405 [xpose=142.09 ovl=5.88 draw=166.17] rows=28.9 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13501 game=AECA7F5C push=3AAF7FB5 n=75839 drops=0 dirty=1951626
+[0m[info] tab5_perf_report: PERF: display=291.45ms/1000ms (transpose=291.17 submit=0.28) blocks=364 [xpose=134.28 ovl=5.51 draw=150.15] rows=29.4 max=32
+[0m[33m[warn] app_main: DIAG_FB f=13561 game=BA3BDD28 push=F0F1C831 n=76202 drops=0 dirty=1962293
+[0m[info] tab5_perf_report: PERF: display=303.12ms/1000ms (transpose=302.85 submit=0.26) blocks=356 [xpose=133.79 ovl=10.18 draw=157.74] rows=31.1 max=84
+[0m[33m[warn] app_main: DIAG_FB f=13621 game=112B12A5 push=522593F7 n=76568 drops=0 dirty=1973668

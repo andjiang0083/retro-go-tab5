@@ -1,5 +1,10 @@
+⚠【内部产物 · 非项目文档】本文件是**内部自动化会话的提示词**（写给 agent 的开场指令），
+  不是给使用者看的文档。2026-10-07 随过程性文档一起归档到 docs/archive/，保留是因为
+  它是那条流程的唯一记录；请不要在项目文档里引用它，也不要把它的内容当作项目说明。
+  归档说明见 docs/archive/README.md。
+
 继续做 Tab5 竖屏 retro-go 的工作。项目在 ~/esp32/retro-go-tab5（分支 portrait），
-先读 docs/PORTRAIT-TAB5-HANDOFF.md（完整交接：当前状态、构建/刷机命令、纪律、待办、已知坑）。
+先读 docs/archive/PORTRAIT-TAB5-HANDOFF.md（完整交接：当前状态、构建/刷机命令、纪律、待办、已知坑）。
 
 当前状态（2026-09-29 深夜）：**v0.4.3 代码完成、两种形态都真机验证通过、发布物料与仓库 README 齐备，
 等用户本人发布**（M5Burner Publish + GitHub）。

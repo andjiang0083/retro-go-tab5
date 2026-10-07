@@ -148,7 +148,7 @@ dynarec 在**块边界**结算周期/中断、解释器按**每条指令**结算
 ### 上一轮（v0.4.1/0.4.2 时期，保留备查）
 - **v0.4.1 已发布**：M5Burner 0.4.1 由用户本人发布；GitHub Release v0.4.1 含 merged bin / sha256 / 封面 / 说明。
 - 本地源码 HEAD = **`558cf51`**（代码改动在 `67ff82a`，`558cf51` 是之后的文档/存证图收尾）：
-  v0.4.1 之后的**全项目代码走查处置**，报告见 `docs/CODE-REVIEW-v0.4.1.md`
+  v0.4.1 之后的**全项目代码走查处置**，报告见 `docs/archive/CODE-REVIEW-v0.4.1.md`
   （P1×4 全修 + P2×20 处理 19 项，仅"两份显示驱动是否合并"留待决策）。
 - 最新构建**并已刷真机**的镜像：`retro-go_v0.0.1-49-g558cf_tab5.img`（2,490,368B，树干净、名字带 HEAD hash）
   —— 回读 launcher/gbsp 段 hash 一致、设备分区表与镜像逐字节一致；运行日志里已出现新代码的
@@ -252,7 +252,7 @@ python3 tools/make-cover.py --hero docs/screenshot-portrait.png
 
 **一句话：10fps → 57.8fps，瓶颈已量化到一行代码，最后 518µs 未攻。**
 
-- 完整记录：**`docs/SNES-PERF-SESSION-2026-10-07.md`**（起点/终点、测量体系、因果链、未走的路、恢复方法）
+- 完整记录：**`docs/archive/SNES-PERF-SESSION-2026-10-07.md`**（起点/终点、测量体系、因果链、未走的路、恢复方法）
 - 工作固化：分支 `perf-probe/snes-2026-10-07`（`27df21e`）+ 仓库外备份 `~/esp32/snes-perf-backup/snes-perf-probe-2026-10-07.patch`
 - **设备已刷回发行版 v0.4.7**（`dist/m5burner-0.4.7/retro-go-tab5-0.4.7-merged.bin`），探针日志命中 0 次
 
@@ -498,7 +498,7 @@ P4 两条口径复测。
    且**写 NVS 要在 early-return 之前**，否则确认时"已是这套"会被跳过、表现成选了不生效。
 
 **验证工具**：
-- 回归门禁 `python3 tools/preview-skin.py --check`（与 `docs/skin-candidates/approved-2026-10-06/`
+- 回归门禁 `python3 tools/preview-skin.py --check`（与 `docs/archive/skin-candidates/approved-2026-10-06/`
   逐像素比 + **归因**：差异必须全落在面板几何边缘带 ±2px 内，跑出带外即失败）
 - 刷机+抓日志一条龙 `sh tools/flash-tab5.sh <merged.bin> [秒数]`（串口独占，BOD 复位当重启重试）
 - 构建双形态 `sh tools/build-tab5-skin.sh [single-app]`

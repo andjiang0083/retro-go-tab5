@@ -5,7 +5,7 @@
 > - **已结案**：PPA（六轮真机全部 `err=0x102`）；完整 E2 双缓冲（推演证明"部分更新"下不可达）
 > - **下一步**：修校验和空洞 bug → 直写帧缓冲 + 精确 msync（目标：砍掉 `draw=` 3~5.6ms/帧，跨过 16.7ms 预算）
 > - **上游已问**：https://github.com/Layer812/R8T5/issues/1 （R8T5 的 PPA 配置）
-> - 详见 `docs/NIGHT-2026-09-25-DISPLAY.md` 第八/九/十节
+> - 详见 `docs/archive/NIGHT-2026-09-25-DISPLAY.md` 第八/九/十节
 
 > **这是一份开发日志，不是当前状态说明。**
 > 当前功能状态请看 [README.md](../README.md)，待办请看 [ROADMAP.md](../ROADMAP.md)。

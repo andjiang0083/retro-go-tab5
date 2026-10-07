@@ -283,7 +283,7 @@ static void load_glyphs(void)
          * 否则会出现"图上文字镜像/乱码"那类故障（2026-09-29 已踩过一次）。
          * ⚠ 历史：这里曾写成 (((w*h)-1)/8)+1（按位紧凑）。当前字库 191 个字形全是
          * 8x8，两种算法恰好等价才没出事；一旦混入 width<8 的字形，后续字形会整体错位。
-         * 走查 P1-2，见 docs/CODE-REVIEW-v0.4.1.md。 */
+         * 走查 P1-2，见 docs/archive/CODE-REVIEW-v0.4.1.md。 */
         const size_t nbytes = g->height;
         if (g->code < 128 && g->width == 8 && g->height == 8)
             for (int y = 0; y < 8; ++y)
