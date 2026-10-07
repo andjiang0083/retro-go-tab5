@@ -13,6 +13,13 @@ Everything here was learned the hard way on a real Tab5. Follow it in order and 
 > **Make sure your ESP-IDF install is complete.** A common failure mode is having a second, partially-installed IDF on the
 > machine whose `export.sh` silently picks a different (broken) Python environment. If the build fails in ways that make no sense,
 > verify `IDF_PATH` and `which python3` after sourcing.
+>
+> Two concrete forms observed in practice:
+> - An IDF installed by eim (ESP-IDF Installation Manager) defines `idf.py` only as a shell **alias** in its activation
+>   script, so it is not on `PATH` and `rg_tool.py` fails with `No such file or directory: 'idf.py'`. Use
+>   `. $IDF_PATH/export.sh` instead.
+> - If that venv's `python3.x` is a **dangling symlink** (pointing at an interpreter that has since been removed),
+>   `idf.py` fails with `No module named 'click'`. Use the complete IDF install, or recreate that venv.
 
 ## 1. Export ESP-IDF
 
@@ -41,20 +48,27 @@ Worse: **an incremental build hides this.** If `rg_network.c.obj` is still up to
 appears later when something forces a full rebuild (a fresh clone, a different toolchain path, a clean). If you see a big
 `[19/39] ... [33/39]`-style recompile in the log, you are doing a full build and any latent config error will surface.
 
-Expected output — a merged image plus both apps:
+Expected output — a merged image plus both apps (both live under `retro-go-p4/`):
 
 ```
-retro-go-p4/build/tab5-retro-go.img        # flash this
+retro-go-p4/retro-go_<version>_tab5.img    # flash this; <version> looks like v0.4.7-4-g086bd
 retro-go-p4/launcher/build/launcher.bin
 retro-go-p4/gbsp/build/gbsp.bin
 ```
 
+- `rg_tool.py` composes the image name itself: `<project>_<version>_<target>.img` (lowercased); with `--single-app`
+  it becomes `..._tab5-single.img`. **Do not copy a fixed filename** — it changes with the version; find the newest with
+  `ls -1t retro-go-p4/retro-go_*_tab5.img`.
+- `<version>` comes from `git describe --tags --abbrev=5 --dirty --always` (override via the `PROJECT_VER` env var).
+  ⚠ In a shallow clone (`git clone --depth 1`) there are no tags and the version degrades to a bare commit hash.
+
 ## 3. Flash
 
 ```bash
+IMG=$(ls -1t retro-go-p4/retro-go_*_tab5.img | head -1)   # newest merged image
 python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \
   write-flash --flash-mode dio --flash-size 16MB --flash-freq 80m \
-  --force 0x0 retro-go-p4/build/tab5-retro-go.img
+  --force 0x0 "$IMG"
 ```
 
 - `--flash-mode dio` and the merged image at `0x0` are both required; a wrong flash mode produces a board that boots to a blank screen.
@@ -73,7 +87,36 @@ Do not trust the absence of errors. Check:
 
 1. the real exit code of the build command,
 2. the artifact **mtime and size** (`ls -l launcher/build/launcher.bin gbsp/build/gbsp.bin`),
-3. that a symbol you added is present: `riscv32-esp-elf-nm gbsp/build/gbsp.elf | grep <your_symbol>`.
+3. that a symbol you added is present: `riscv32-esp-elf-nm gbsp/build/gbsp.elf | grep <your_symbol>`;
+4. the merged image's **structure anchors** — a successful build does not mean a correct image; the file must be
+   bootloader + partition table + app in one:
+
+   ```bash
+   IMG=$(ls -1t retro-go-p4/retro-go_*_tab5.img | head -1)
+   od -An -tx1 -j8192  -N1 "$IMG"   # expect e9          -> bootloader image magic
+   od -An -tx1 -j32768 -N2 "$IMG"   # expect aa 50       -> partition table magic 0x50AA
+   od -An -tx1 -j65568 -N4 "$IMG"   # expect 32 54 cd ab -> app descriptor magic
+   ```
+
+   (CI runs the same assertions — see below.)
+
+## CI (GitHub Actions)
+
+`.github/workflows/build.yml` runs a **full build from a clean clone** on every push / PR to `main`, and answers
+exactly two questions:
+
+1. does it build (`--no-networking`, full build — an incremental build hides config errors);
+2. is the artifact a **real merged image**: the three structure anchors plus a 512 KB floor, with `*/dependencies.lock`
+   left untouched.
+
+On that second point: the build writes the current IDF version into `dependencies.lock`, so "this file was not modified"
+means "CI's IDF is the same version the repo records" — a free environment-consistency gate.
+
+It does **not** verify frame rate, display path, crashes or timing — none of that is verifiable without hardware
+(watch the screen / read `/crash.log` off the SD card). It also does not need network to fetch components (`vendor/` is vendored).
+
+**To confirm the gate really goes red**: on a branch, break one `.c` on purpose (e.g. reference an undeclared identifier)
+and open a PR — CI must fail on the compile error.
 
 ## Partition layout constraint
 
@@ -119,3 +162,4 @@ layer (bus/PSRAM arbitration) — power cycle and treat it as a hardware-level h
 | `retro-go-p4/gbsp/` | GBA app: main loop, savestates, the RISC-V dynarec backend |
 | `vendor/m5stack_tab5/` | vendored Tab5 BSP (required; not fetched from the registry) |
 | `tools/` | helper scripts: build, flash, serial log, backup |
+| `.github/workflows/build.yml` | CI gate: clean-clone full build + merged-image structure anchors + IDF version consistency |

@@ -13,6 +13,12 @@
 > **确认你的 ESP-IDF 安装是完整的。** 一个常见故障是机器上还有第二份"半装"的 IDF，
 > 它的 `export.sh` 会悄悄选到另一个（坏掉的）Python 环境。如果构建以完全说不通的方式失败，
 > 先确认 `IDF_PATH` 与 `which python3`。
+>
+> 实测到的两种具体形态：
+> - eim（ESP-IDF Installation Manager）装的 IDF，其激活脚本只把 `idf.py` 定义成 shell **alias**，它不在 `PATH` 里
+>   —— 于是 `rg_tool.py` 直接报 `No such file or directory: 'idf.py'`。改用 `. $IDF_PATH/export.sh`。
+> - 如果那个 venv 里的 `python3.x` 是**断链**（指向已被卸掉的解释器），`idf.py` 会报 `No module named 'click'`。
+>   换用完整的那份 IDF，或重装该 venv。
 
 ## 1. 导出 ESP-IDF
 
@@ -41,20 +47,26 @@ esp_wifi.h:311: error: 'CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM' undeclared
 错误只在后来被迫全量重编时才冒出来（全新克隆、换了工具链路径、clean 之后）。
 日志里出现 `[19/39] … [33/39]` 这种大面积重编，就说明你在做全量构建，潜伏的配置错误会一起暴露。
 
-预期产物 —— 一个合并镜像 + 两个 app：
+预期产物 —— 一个合并镜像 + 两个 app（都在 `retro-go-p4/` 下）：
 
 ```
-retro-go-p4/build/tab5-retro-go.img        # 刷这个
+retro-go-p4/retro-go_<版本>_tab5.img       # 刷这个；<版本> 形如 v0.4.7-4-g086bd
 retro-go-p4/launcher/build/launcher.bin
 retro-go-p4/gbsp/build/gbsp.bin
 ```
 
+- 合并镜像的文件名由 `rg_tool.py` 自己拼：`<项目名>_<版本>_<目标>.img`（小写）；加 `--single-app` 时是 `..._tab5-single.img`。
+  **不要照抄某个固定文件名**，它随版本变 —— 用 `ls -1t retro-go-p4/retro-go_*_tab5.img` 找最新的那个。
+- `<版本>` 来自 `git describe --tags --abbrev=5 --dirty --always`（可用环境变量 `PROJECT_VER` 覆盖）。
+  ⚠ 浅克隆（`git clone --depth 1`）里没有 tag，版本号会退化成裸 commit hash。
+
 ## 3. 刷机
 
 ```bash
+IMG=$(ls -1t retro-go-p4/retro-go_*_tab5.img | head -1)   # 找最新构建出的合并镜像
 python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \
   write-flash --flash-mode dio --flash-size 16MB --flash-freq 80m \
-  --force 0x0 retro-go-p4/build/tab5-retro-go.img
+  --force 0x0 "$IMG"
 ```
 
 - `--flash-mode dio` 与"从 `0x0` 写合并镜像"两者都是必需的；刷错 flash 模式会得到一块开机黑屏的板子。
@@ -73,7 +85,32 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 1. 构建命令的真实退出码；
 2. 产物的 **mtime 与大小**（`ls -l launcher/build/launcher.bin gbsp/build/gbsp.bin`）；
-3. 你新加的符号在不在：`riscv32-esp-elf-nm gbsp/build/gbsp.elf | grep <你的符号>`。
+3. 你新加的符号在不在：`riscv32-esp-elf-nm gbsp/build/gbsp.elf | grep <你的符号>`；
+4. 合并镜像的**结构锚点** —— 构建成功不等于镜像正确，它必须是 bootloader + 分区表 + app 三合一：
+
+   ```bash
+   IMG=$(ls -1t retro-go-p4/retro-go_*_tab5.img | head -1)
+   od -An -tx1 -j8192  -N1 "$IMG"   # 期望 e9          → bootloader 镜像魔数
+   od -An -tx1 -j32768 -N2 "$IMG"   # 期望 aa 50       → 分区表魔数 0x50AA
+   od -An -tx1 -j65568 -N4 "$IMG"   # 期望 32 54 cd ab → app 描述符魔数
+   ```
+
+   （CI 里跑的是同一套断言，见下节。）
+
+## CI（GitHub Actions）
+
+`.github/workflows/build.yml` 在 push / PR 到 `main` 时跑一次**干净克隆的全量构建**，只回答两个问题：
+
+1. 能不能构建（`--no-networking`，全量 —— 增量构建会掩盖配置错误）；
+2. 产物是不是**真的合并镜像**：三个结构锚点 + 512KB 下限，且 `*/dependencies.lock` 没被改写。
+
+关于第 2 条里的 `dependencies.lock`：构建会把它记录里的 `idf.version` 写成当前 IDF 的版本，
+所以「这个文件没被动过」==「CI 用的 IDF 与仓库记录的是同一个版本」—— 这是顺带白捡的环境一致性门禁。
+
+它**不能**验证帧率、显示通路、崩溃、时序 —— 没有硬件无从验证（看屏幕 / 读 SD 卡 `/crash.log`）。
+它也不需要联网装组件（`vendor/` 已入库）。
+
+**要确认门禁真的会红**：开一个分支故意改坏一个 `.c`（比如引一个不存在的标识符）提 PR，CI 必须红在编译错误上。
 
 ## 分区布局约束
 
@@ -118,3 +155,4 @@ retro-go 在 app 死亡时会把 `/crash.log` 写到 SD 卡根目录。有意义
 | `retro-go-p4/gbsp/` | GBA app：主循环、存档、RISC-V dynarec 后端 |
 | `vendor/m5stack_tab5/` | 内置的 Tab5 BSP（构建必需，不从组件仓库拉） |
 | `tools/` | 辅助脚本：构建、刷机、抓串口日志、备份 |
+| `.github/workflows/build.yml` | CI 门禁：干净克隆全量构建 + 合并镜像结构锚点 + IDF 版本一致性 |
