@@ -61,25 +61,39 @@ bool rg_touch_skin_label_color(int skin_idx, uint16_t *out);
 
 /* 机型铭牌文案（按核心的 configNs：gba/gb/gbc/nes/...）+ 该机型的点缀色。
  * 找不到时退回通用值（"RETRO-GO" + 琥珀），不返回 NULL。 */
-/* 该机型的控制区**有没有肩键那一行** —— GB/GBC 是单机时代的掌机，没有 L/R。
- * "X/Y↔L/R 调换"那颗按钮也只在有肩键时才有意义，所以它跟这一行同生共死。 */
-/* 这个机型有没有 L/R 肩键。**白名单**：只有 GBA 与 SNES 的手柄有 L/R（GB/GBC/NES/GG/SMS/
- * COL/PCE/Lynx/GW 都没有 —— 尤其 GG 常被误认成有肩键，它其实只有 START + 1/2 两键）。
- * ⚠ 用白名单而不是"列出没有的"：机型会越加越多，漏一个就多出一行死键；白名单只会漏"新的有肩键机型"，
- *   那台机器一进来就会明显发现少了一行（好过静默多两颗按不出反应的键）。 */
+/* 这个机型有没有 L/R 肩键 —— 判据来自**核心的真实映射**（gbsp/main/main.c 与
+ * retro-core/main/main_*.c 里 grep RG_KEY_*）：**只有 GBA 用 RG_KEY_L / RG_KEY_R**。
+ * ⚠ SNES 也在这个"没有"里：retro-go 的 snes 核心没映射 X/Y/L/R（物理手柄上有，软件没接），
+ *   所以"R/L 调换"这颗按钮对它是空转 —— 用户 2026-10-07 定：**R/L 调换是 GBA 专用**。 */
 static inline bool rg_touch_has_shoulders(const char *console_id)
 {
     if (!console_id || !*console_id)
         return true;    /* 认不出的机型：给全功能，宁可多显示也别把键藏了 */
-    return strcmp(console_id, "gba") == 0 || strcmp(console_id, "snes") == 0;
+    return strcmp(console_id, "gba") == 0;
 }
 
 /* 这个键在该机型下**不存在**：隐藏 = 不绘制、不命中、不进分区框。
  * ⚠ 只影响"可视与命中"；键位表（targets/tab5/touch_layout.h）本身不动 —— 它仍是坐标的单一真源，
- *   真机上要挪按键就改那张表，别在这里挪。 */
+ *   真机上要挪按键就改那张表，别在这里挪。
+ *
+ * 判据同样来自核心映射（2026-10-07 全量勘察）：
+ *   · L/R —— 只有 GBA 用（见上）。
+ *   · X/Y —— 只有 GBA 核心会读；但 **GB/GBC/NES 借它们做连发 A/B**
+ *     （rg_input_apply_turbo 在 input 层合成，核心不必认识 X/Y 也能用）→ 这三台要显示。
+ *   · SNES/SMS/GG/COL/PCE/GW/Lynx 一律只用到 方向 + A/B + SELECT/START，
+ *     所以它们的动作区只剩 A/B 两颗（A/B 位置**不动**，保持跨机型手感一致）。 */
 static inline bool rg_touch_key_hidden(const char *console_id, rg_key_t key)
 {
-    return !rg_touch_has_shoulders(console_id) && (key == RG_KEY_L || key == RG_KEY_R);
+    if (!console_id || !*console_id)
+        return false;   /* 认不出：全给 */
+    const bool is_gba    = strcmp(console_id, "gba") == 0;
+    const bool has_turbo = is_gba || strcmp(console_id, "gb") == 0 ||
+                           strcmp(console_id, "gbc") == 0 || strcmp(console_id, "nes") == 0;
+    if (key == RG_KEY_L || key == RG_KEY_R)
+        return !is_gba;
+    if (key == RG_KEY_X || key == RG_KEY_Y)
+        return !has_turbo;
+    return false;
 }
 
 const char *rg_touch_skin_badge(const char *console_id);
