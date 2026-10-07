@@ -1190,3 +1190,31 @@ int rg_input_read_keyboard(const rg_keyboard_layout_t *map)
 
     return -1;
 }
+
+/* ── X/Y = A/B 的连发（turbo）────────────────────────────────────────────────
+ * 谁用：GB/GBC/NES 三个核心（见各自 main_*.c 的调用点）。
+ * 为什么是它们：这三台机器没有肩键、也没有第 3/4 个动作键，触摸屏上的 X/Y 本来空着
+ * （核心的按键映射里根本不读 X/Y）。借它们做"按住即连发"是复古掌机的惯例。
+ * 映射：**Y = 连发 A，X = 连发 B**（用户 2026-10-07 定）。
+ * 节奏：每 RG_TURBO_PERIOD 帧翻转一次"这轮出不出手"，一个完整周期 = 2×5 = 10 帧
+ * （60fps → 每秒 12 次，用户选的中速）。改速率只改 RG_TURBO_PERIOD。
+ *
+ * ⚠ 本函数**有帧状态**，每个核心只应有一个调用点（放主循环里、每帧调一次）。
+ * ⚠ 原始键位不动：X/Y 本身照旧上报（只是"多"合成了一个 A/B），所以上层拿到的掩码里
+ *   X/Y 仍然在 —— 菜单/热键那些按 RG_KEY_X 判断的地方不受影响。
+ * ⚠ SNES 的 X/Y 是真按键，那里的主循环**不要**调用本函数。 */
+uint32_t rg_input_apply_turbo(uint32_t keys)
+{
+    static uint32_t frame;
+    frame++;
+
+    /* 处在"松手"的那半个周期：原样返回（X/Y 这半程不合成 A/B，形成断续触发） */
+    if ((frame / RG_TURBO_PERIOD) & 1u)
+        return keys;
+
+    if (keys & RG_KEY_Y)
+        keys |= RG_KEY_A;
+    if (keys & RG_KEY_X)
+        keys |= RG_KEY_B;
+    return keys;
+}

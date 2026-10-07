@@ -63,11 +63,13 @@ bool rg_touch_skin_label_color(int skin_idx, uint16_t *out);
  * 找不到时退回通用值（"RETRO-GO" + 琥珀），不返回 NULL。 */
 /* 该机型的控制区**有没有肩键那一行** —— GB/GBC 是单机时代的掌机，没有 L/R。
  * "X/Y↔L/R 调换"那颗按钮也只在有肩键时才有意义，所以它跟这一行同生共死。 */
+/* 这个机型有没有 L/R 肩键。GB/GBC/NES 都是单机时代的掌机/主机（SNES 才有肩键）。 */
 static inline bool rg_touch_has_shoulders(const char *console_id)
 {
     if (!console_id || !*console_id)
         return true;    /* 认不出的机型：给全功能，宁可多显示也别把键藏了 */
-    return strcmp(console_id, "gb") != 0 && strcmp(console_id, "gbc") != 0;
+    return strcmp(console_id, "gb") != 0 && strcmp(console_id, "gbc") != 0 &&
+           strcmp(console_id, "nes") != 0;
 }
 
 /* 这个键在该机型下**不存在**：隐藏 = 不绘制、不命中、不进分区框。

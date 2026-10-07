@@ -317,7 +317,9 @@ void gbc_main(void)
 
     while (true)
     {
-        joystick = rg_input_read_gamepad();
+        /* ⚠ 连发（turbo）：GB 没有肩键也没有 X/Y 键，触摸屏上的 X/Y 借来做"按住连发 A/B"
+         *   （Y=连发A、X=连发B）。SNES 那种真有 X/Y 的机型不要加这一步。见 rg_input.h。 */
+        joystick = rg_input_apply_turbo(rg_input_read_gamepad());
 
         if (joystick & (RG_KEY_MENU|RG_KEY_OPTION))
         {
