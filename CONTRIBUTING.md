@@ -12,12 +12,29 @@ contributions are the ones that can be verified on a real Tab5.
 - **Improve docs** — screenshots, a build walkthrough for Windows/Linux, translations.
 - **Port another core** (NES, SNES, Genesis, ...) — the retro-go tree already carries them; they need a target wiring pass.
 
+## Where your change lives (read this first)
+
+This GitHub repository is the **published mirror**: `retro-go-p4/`, `vendor/`, `docs/`, `tools/` and `publish.yaml` are
+mirrored wholesale from the maintainer's development tree. Contributions therefore fall into two classes:
+
+- **Safe to edit right here, mergeable as-is** (excluded from the mirror — this repo is their only home): `README*`,
+  `BUILDING*`, `CONTRIBUTING*`, `ROADMAP*`, `CHANGELOG*`, `CREDITS.md`, `LICENSE`, `CODE_OF_CONDUCT.md`, `.github/`.
+  Doc fixes, translations, screenshots and build walkthroughs all belong here.
+- **Source code and `docs/`**: PRs are reviewed here, then the maintainer applies them back into the development tree
+  and the next sync brings them to `main`. Two rules follow: **one change per PR**, and **do not touch version numbers,
+  artifact names or anything under `dist/`** — those are decided by the release process (bin, cover and platform
+  fields are a matched set per release).
+- **746 of the 841 files under `retro-go-p4/` are verbatim upstream code** (see
+  [docs/UPSTREAM-DIVERGENCE.md](docs/UPSTREAM-DIVERGENCE.md)). Open an issue before modifying an upstream file, and prefer
+  changes that stay inside the Tab5 target directory over patches to framework core.
+
 ## House rules (they come from real failures, not taste)
 
 1. **One visible change per flash.** Flash it, look at the screen, then continue. Multiple changes per flash make a regression
    impossible to attribute.
-2. **No serial-console debug loops.** Opening the USB-CDC port resets the device (see BUILDING.md). Verify visually, or read
-   `/crash.log` from the SD card.
+2. **No serial-console debug loops.** Opening the USB-CDC port for *interactive* debugging resets the device (see BUILDING.md).
+   Verify visually, or read `/crash.log` from the SD card. A one-shot "reset, then capture N seconds" read (the DTR/RTS
+   sequence in `tools/log-tab5.sh`) is fine — it is an existing tool, not an interactive console.
 3. **Anything touching the display path or PSRAM bandwidth ships behind a runtime switch** — an opt-in file on the SD card, read
    at startup. A bad experiment must be rollback-able without reflashing. This is not optional: on this board, display-path
    changes can wedge the panel in a way that only a power cycle fixes.
