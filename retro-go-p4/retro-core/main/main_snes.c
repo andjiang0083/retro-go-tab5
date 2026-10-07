@@ -18,6 +18,25 @@ typedef struct
 } keymap_t;
 
 static const keymap_t KEYMAPS[] = {
+	/* "Full" —— 触摸屏（Tab5）专用：**每个 SNES 键都用它自己的键**。
+	 * 上游那三套（Type A/B/C）是给"物理按键不够"的小设备做的重排：X/Y 借给 START/SELECT、
+	 * L/R 变成 B/A+菜单 的组合键、Type C 干脆把 X/Y/L/R 置 0 禁用。
+	 * 我们的触摸屏有 START/SELECT，也有独立的 L/R 行，所以直接用真键（用户 2026-10-07 定）。
+	 * ⚠ 必须是**第一套**：keymap_id 默认 0，否则新用户默认仍落在重排版上。 */
+	{"Full", {
+		{SNES_A_MASK, RG_KEY_A, 0},
+		{SNES_B_MASK, RG_KEY_B, 0},
+		{SNES_X_MASK, RG_KEY_X, 0},
+		{SNES_Y_MASK, RG_KEY_Y, 0},
+		{SNES_TL_MASK, RG_KEY_L, 0},
+		{SNES_TR_MASK, RG_KEY_R, 0},
+		{SNES_START_MASK, RG_KEY_START, 0},
+		{SNES_SELECT_MASK, RG_KEY_SELECT, 0},
+		{SNES_UP_MASK, RG_KEY_UP, 0},
+		{SNES_DOWN_MASK, RG_KEY_DOWN, 0},
+		{SNES_LEFT_MASK, RG_KEY_LEFT, 0},
+		{SNES_RIGHT_MASK, RG_KEY_RIGHT, 0},
+	}},
 	{"Type A", {
 		{SNES_A_MASK, RG_KEY_A, 0},
 		{SNES_B_MASK, RG_KEY_B, 0},

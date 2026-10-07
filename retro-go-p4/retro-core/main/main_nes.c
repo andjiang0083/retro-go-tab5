@@ -261,7 +261,9 @@ void nes_main(void)
 
     while (true)
     {
-        uint32_t joystick = rg_input_read_gamepad();
+        /* ⚠ 连发（turbo）：NES 没有肩键也没有 X/Y 键，触摸屏上的 X/Y 借来做"按住连发 A/B"
+         *   （Y=连发A、X=连发B）。见 rg_input.h。 */
+        uint32_t joystick = rg_input_apply_turbo(rg_input_read_gamepad());
 
         if (joystick & (RG_KEY_MENU|RG_KEY_OPTION))
         {

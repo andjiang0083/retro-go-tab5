@@ -56,6 +56,7 @@
 #define RG_TOUCH_SETTING_VISIBLE "TouchButtons"
 #define RG_TOUCH_SETTING_ALPHA   "TouchOpacity"
 #define RG_TOUCH_SETTING_SWAP    "TouchSwapYX"    /* X/Y ↔ L/R 调换开关（持久化） */
+#define RG_TOUCH_SETTING_SKIN    "TouchSkin"      /* 皮肤索引（4 套可切，表在 rg_touch_skin.c） */
 
 extern const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT];
 
@@ -97,6 +98,26 @@ void rg_overlay_get_toggle_rect(int *x, int *y, int *w, int *h);
 void rg_overlay_get_swap_rect(int *x, int *y, int *w, int *h);
 bool rg_overlay_get_swap(void);
 void rg_overlay_set_swap(bool on);
+
+/* ---------------------------------------------------------------- 皮肤（4 套可切）
+ * 皮肤 = 控制区面板（分区色块/细线/凹槽/机型铭牌）+ 每键配色。表与面板生成在
+ * rg_touch_skin.c（**唯一真源**，PC 预览工具解析同一个文件）。
+ * 切换**不重建掩码**：掩码里只有"覆盖率 + 角色"，颜色来自每键的 pal[] ——
+ * 所以换皮肤只是重算调色板 + 原地重画面板（约 30ms 一次整屏重推），不卡。 */
+int  rg_overlay_skin_count(void);
+int  rg_overlay_get_skin(void);
+void rg_overlay_set_skin(int idx);          /* 落定：立刻生效 + 存 NVS；面板同步重画 */
+void rg_overlay_preview_skin(int idx);       /* 试穿：立刻生效但**不存 NVS**（菜单预览/回退用） */
+const char *rg_overlay_skin_name(int idx);  /* 菜单显示用（ASCII） */
+const char *rg_overlay_skin_short_name(int idx);
+/* 把当前皮肤的面板底图交给显示层（幂等）。
+ * 调用点：建层末尾 / 换皮肤 / 用户改了 Border 设置之后。
+ * 用户手选了 Border 图时它会被忽略 —— 用户的选择优先。 */
+void rg_overlay_refresh_panel(void);
+
+/* 供皮肤面板生成器取 8x8 字形（同一个字库、同一份加载结果；未支持返回 NULL）。
+ * 见 rg_touch_skin.c 的 panel_text() —— 铭牌文字就是这么画的。 */
+const uint8_t *rg_overlay_glyph_rows(int code);
 
 /* 每次调换 +1。给"菜单/启动器"这类**事件驱动重绘**的界面用：
  * 它们只在收到按键时才重画，而调换不产生任何按键 —— 拿这个号比一下就知道
@@ -160,7 +181,8 @@ void rg_overlay_set_fps(int value);
  *   rg_batt_led_refresh_needed() / _get_band() / _draw() 直接写面板帧缓冲并做局部
  *   cache 写回（见 mipi_dsi_tab5_p.h 里 tab5_batt_led_refresh 的注释与实测教训）。 */
 bool rg_batt_led_refresh_needed(void);                          /* 样子变了才 true（含闪烁相位） */
-void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1);   /* 逻辑坐标整行带，行号已按 4 取整 */
+void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1);   /* 逻辑坐标整行带（跟随灯位，行号按 4 取整） */
+uint16_t rg_batt_led_band_bg(void);                              /* 擦条带的背景色 = 当前皮肤面板底色 */
 void rg_batt_led_draw(uint16_t *buf, int stride);                /* 线性映射（物理=逻辑）直绘 */
 
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */

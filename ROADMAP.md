@@ -5,6 +5,9 @@
 Roughly ordered. Items are sized so a newcomer can pick one up. **Comment on the issue (or open one) before starting**, so
 work does not collide.
 
+*Updated for v0.4.7 — the port now covers 11 consoles, four touch skins and per-console controls.
+Items that shipped are gone from this list; see [CHANGELOG.md](CHANGELOG.md).*
+
 ## Display path — push fewer bytes (highest value)
 
 Logical speed is already full speed (59-60 fps), but only ~15 frames/sec are actually pushed to the panel.
@@ -25,25 +28,24 @@ Related, lower priority:
 - [ ] Re-evaluate PPA/DMA2D hardware scaling **with throttling** (small chunks only, never a full-screen burst). The naive version
       is known to wedge the DSI — see the notes in BUILDING.md.
 
-## Hardware features
+## Emulation — depth over breadth
 
-- [ ] **Battery gauge** — the Tab5 has an INA226; the status log currently prints `BATT:0`. Wire it into the launcher status bar
-      and the in-game overlay.
-- [ ] **Backlight control** — expose brightness in the options menu (the LEDC backlight is already initialised).
+Eleven consoles are wired up (GBA, GB, GBC, NES, SNES, SMS, Game Gear, ColecoVision, PC Engine, Lynx, Game & Watch).
+The next wins are in quality, not in adding more:
 
-## Emulation
-
-- [ ] **Port another core** — NES (nofrendo) is the smallest step; SNES (snes9x) and Genesis (gwenesis) are in the tree already.
-      Each needs a target wiring pass: display geometry, input mapping, audio rate, savestate paths.
+- [ ] **Per-console accuracy pass** — play a set of known-demanding titles per core and record what breaks. Some cores
+      (e.g. SNES) have never had their speed measured on this board; publish the numbers.
 - [ ] Frame-skip policy: expose the auto-frameskip threshold as a setting instead of a compile-time constant.
 - [ ] Per-ROM settings persistence (scale, frameskip, audio volume).
+- [ ] Port another core from upstream retro-go (MD / MSX / ...) — each needs a target wiring pass: display geometry,
+      input mapping, audio rate, savestate paths. Follow the per-console controls rule: map **what the real controller has**.
 
 ## Launcher / UX
 
-- [ ] Screenshots and a short capture in the README (nothing sells a port like seeing it run).
 - [ ] Cover art and metadata polish (the SD-card layout already has a `romart` folder).
 - [ ] Favourites / recently played.
 - [ ] A settings screen that persists across reboots.
+- [ ] **Backlight control** — expose brightness in the options menu (the LEDC backlight is already initialised).
 
 ## Build & CI
 

@@ -37,6 +37,7 @@ static rg_display_counters_t counters;
 static rg_display_config_t config;
 static rg_surface_t *osd;
 static rg_surface_t *border;
+static bool border_foreign;   /* border 指向的是别人（rg_touch_skin.c）持有的内存面板 */
 static rg_display_t display;
 static int16_t map_viewport_to_source_x[RG_SCREEN_WIDTH + 1];
 static int16_t map_viewport_to_source_y[RG_SCREEN_HEIGHT + 1];
@@ -392,8 +393,32 @@ static void update_viewport_scaling(void)
     }
     else if (config.scaling == RG_DISPLAY_SCALING_ZOOM)
     {
-        new_width = FLOAT_TO_INT(src_width * config.custom_zoom);
-        new_height = FLOAT_TO_INT(src_height * config.custom_zoom);
+        /* 规则：**尽量取最大的整数放大倍数**，唯一约束是放得下。两道闸：
+         *   ① 宽度不超逻辑屏宽（720）—— 超了会被居中成负 left（切边），宁可小一点。
+         *   ② 高度不超 RG_DISPLAY_MAX_WINDOW_HEIGHT（620 = 物理屏 1280 − 控制区 660）——
+         *      画面下面必须留得下触摸按键。
+         * 于是各机型的倍数是算出来的：GB/GBC 4x(640x576)、GBA 3x(720x480)、NES 2x(512x480)。
+         * ⚠ 别拿"逻辑屏高"当高度上限：那是 480（GBA 满宽画面的高度），控制区长在物理屏
+         *   1280 上，用 480 去算会把 GB 4x 一路砍到 1x。
+         * ⚠ custom_zoom（默认 4.0 = Tab5 上限）只作为**上限的进一步收紧**，用户调小才生效。 */
+#ifndef RG_DISPLAY_MAX_WINDOW_HEIGHT
+#define RG_DISPLAY_MAX_WINDOW_HEIGHT screen_height   /* 未定义的 target = 沿用逻辑屏高 */
+#endif
+        const int max_zoom_w = screen_width / src_width;
+        const int max_zoom_h = RG_DISPLAY_MAX_WINDOW_HEIGHT / src_height;
+        int max_zoom = RG_MIN(max_zoom_w, max_zoom_h);
+        if (max_zoom < 1)
+            max_zoom = 1;
+        int zoom = FLOAT_TO_INT(config.custom_zoom);
+        if (zoom > max_zoom)
+            zoom = max_zoom;
+        if (zoom < 1)
+            zoom = 1;
+        new_width = src_width * zoom;
+        new_height = src_height * zoom;
+        RG_LOGI("display: zoom source %dx%d requested x%g → x%d (%dx%d), max x%d, ctrl left %d\n",
+                src_width, src_height, config.custom_zoom, zoom, new_width, new_height,
+                max_zoom, RG_SCREEN_HEIGHT - new_height);
     }
 
     // Everything works better when we use even dimensions!
@@ -401,7 +426,11 @@ static void update_viewport_scaling(void)
     new_height &= ~1;
 
     display.viewport.left = (screen_width - new_width) / 2;
-    display.viewport.top = (screen_height - new_height) / 2;
+    /* 太高就**贴顶**：Tab5 的游戏区只有 480 高（见 targets/tab5/config.h 的
+     * RG_SCREEN_VISIBLE_AREA），GB 4x = 576 高会算出 top = (480-576)/2 = **-48**
+     * （负值 → 画面顶部被切）。贴顶后画面占 y 0..576，控制区从 576 起。
+     * GBA(480)/NES(480) 本来就不超 → 结果为 0，与改前完全相同。 */
+    display.viewport.top = RG_MAX(0, (screen_height - new_height) / 2);
     display.viewport.width = new_width;
     display.viewport.height = new_height;
 
@@ -415,9 +444,12 @@ static void update_viewport_scaling(void)
 
     memset(screen_line_checksum, 0, sizeof(screen_line_checksum));
 
-    for (int x = 0; x < screen_width; ++x)
+    /* 映射表按**视口**填（不是可见区）：视口可能比可见区还高（GB 4x = 576 > 480），
+     * 只填到 screen_height 的话，480..575 那些行会残留上一次的映射（画面下半截拉错）。
+     * 数组本身按 RG_SCREEN_WIDTH/HEIGHT 分配，容量足够。 */
+    for (int x = 0; x < display.viewport.width; ++x)
         map_viewport_to_source_x[x] = FLOAT_TO_INT(x * display.viewport.step_x);
-    for (int y = 0; y < screen_height; ++y)
+    for (int y = 0; y < display.viewport.height; ++y)
         map_viewport_to_source_y[y] = FLOAT_TO_INT(y * display.viewport.step_y);
 
     RG_LOGI("%dx%d@%.3f => %dx%d@%.3f left:%d top:%d step_x:%.2f step_y:%.2f", src_width, src_height,
@@ -429,7 +461,12 @@ static bool load_border_file(const char *filename)
 {
     RG_LOGI("Loading border file: %s", filename ?: "(none)");
 
-    free(border), border = NULL;
+    /* 内存面板（皮肤底图）不归我们分配：只脱手，别 free —— 所有权在 rg_touch_skin.c，
+     * free 掉会让那边的 panel 变成野指针（下次换皮肤原地重画就踩空）。 */
+    if (border && !border_foreign)
+        free(border);
+    border = NULL;
+    border_foreign = false;
     display.changed = true;
 
     if (filename && (border = rg_surface_load_image_file(filename, 0)))
@@ -594,6 +631,42 @@ char *rg_display_get_border(void)
     return rg_settings_get_string(NS_APP, SETTING_BORDER, NULL);
 }
 
+/* 内存面板当边框用（皮肤底图）：surface **由调用方持有**，本模块只借指针，永不 free。
+ * 为什么复用 border 这条路：脏条带重建（画面外围的重绘）本来就从 border 取背景 ——
+ * 面板接进来，"控制区底图"这件事一行新机制都不用加。
+ * ⚠ 只在用户没手选 Border 图时生效（用户的选择优先）。 */
+void rg_display_set_border_surface(rg_surface_t *surface)
+{
+    if (config.border_file)
+    {
+        RG_LOGI("display: 用户已选边框图 (%s)，内存面板不接管\n", config.border_file);
+        return;
+    }
+    /* 尺寸校验：面板是**物理全屏**底图（Tab5 竖屏 720x1280），而 rg_display_get_width/height
+     * 报的是**逻辑视口**（Tab5 上游戏视口只有 720x480）——拿后者做"必须相等"会把面板全拒掉
+     * （真机日志："内存面板尺寸不符（720x1280，应为 720x480），忽略"）。
+     * 改成"**必须盖住逻辑视口**"：够大才可能当底图，小了确实该拒。 */
+    if (!surface || surface->width < rg_display_get_width() || surface->height < rg_display_get_height())
+    {
+        RG_LOGW("display: 内存面板尺寸不足（%dx%d，逻辑视口需 %dx%d），忽略\n",
+                surface ? surface->width : 0, surface ? surface->height : 0,
+                rg_display_get_width(), rg_display_get_height());
+        return;
+    }
+
+    border = surface;
+    border_foreign = true;
+    display.changed = true;     /* 整屏重推一次：面板内容变了 */
+    RG_LOGI("display: 内存面板接管边框底图 (%dx%d)\n", surface->width, surface->height);
+}
+
+/* 面板内容已**原地**改过（换皮肤/换机型）：让显示任务把整张边框重铺一遍。
+ * 走 display.changed 这条现成通路 —— 视口不覆盖整屏时会整张重写（GBA 竖屏正是如此）。 */
+void rg_display_border_refresh(void)
+{
+    display.changed = true;
+}
+
 void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 {
     const int64_t time_start = rg_system_timer();
@@ -681,8 +754,14 @@ void rg_display_write_rect(int left, int top, int width, int height, int stride,
     stride = RG_MAX(stride, width * 2);
 
     // Clipping
-    width = RG_MIN(width, display.screen.width - left);
-    height = RG_MIN(height, display.screen.height - top);
+    /* ⚠ 基准是**物理屏**（real_*），不是逻辑视口（width/height）：
+     *   Tab5 竖屏上逻辑视口只有 720x480，而控制区条带（物理 y 480..1280）和边框图**都在它之外**。
+     *   用逻辑尺寸裁，`height = MIN(h, 480 - 480) = 0` → 一个像素都不写。
+     *   真机症状极具迷惑性：面板装上了、日志条条都对，控制区永远纯黑，只有"整帧发送"时才见按键变化
+     *   （覆盖层是驱动合成进物理帧缓冲的，不经过这里）。2026-10-07 定位。
+     *   screen_line_checksum[] 是按 real_height 开的，所以这里用 real 不会越界。 */
+    width = RG_MIN(width, display.screen.real_width - left);
+    height = RG_MIN(height, display.screen.real_height - top);
 
     // This can happen when left or top is out of bound
     if (width < 0 || height < 0)
@@ -696,8 +775,9 @@ void rg_display_write_rect(int left, int top, int width, int height, int stride,
 
     // This isn't really necessary but it makes sense to invalidate
     // the lines we're about to overwrite...
-    for (size_t y = 0; y < height; ++y)
-        screen_line_checksum[top + y] = 0;
+    for (size_t y = 0; y < (size_t)height; ++y)
+        if ((size_t)(top + y) < RG_COUNT(screen_line_checksum))   // 物理坐标可能到 1279，别越界
+            screen_line_checksum[top + y] = 0;
 
     lcd_set_window(left + display.screen.margins.left, top + display.screen.margins.top, width, height);
 

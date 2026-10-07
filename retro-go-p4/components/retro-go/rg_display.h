@@ -129,5 +129,10 @@ void rg_display_set_backlight(display_backlight_t percent);
 display_backlight_t rg_display_get_backlight(void);
 void rg_display_set_border(const char *filename);
 char *rg_display_get_border(void);
+/* 内存面板当边框底图（皮肤）：surface 归调用方持有，本模块只借指针。
+ * 只在用户没手选 Border 图时生效 —— 用户的选择优先。 */
+void rg_display_set_border_surface(rg_surface_t *surface);
+/* 面板内容原地改过（换皮肤/换机型）→ 让显示任务整张重铺一遍 */
+void rg_display_border_refresh(void);
 void rg_display_set_custom_zoom(double factor);
 double rg_display_get_custom_zoom(void);

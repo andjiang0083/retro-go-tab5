@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "rg_touch_overlay.h"
+#include "rg_touch_skin.h"      /* 皮肤表/面板生成（配色与面板的唯一真源） */
 
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
 
@@ -30,6 +31,26 @@
 #define AW_BITS 6                /* 混合权重位宽（见 blend_px 的说明：必须 ≤ 6） */
 #define AW_ONE  (1 << AW_BITS)   /* 权重满值 = 64 */
 
+/* 控制区顶边（逻辑像素）：皮肤面板的几何基准。
+ * ⚠ 多核（GB/NES）落地后要改成"按各机型的视口高度传" —— 现在 GBA 视口 720x480 贴顶，
+ *   所以是常量 480。面板的锚定规则（上三排随控制区顶下移、系统键行钉屏底）已经在
+ *   rg_touch_skin.c 里按参数写好了，届时只需把这里换成一个变量。 */
+#define RG_OVERLAY_CTRL_TOP 480
+/* 面板物理高（Tab5 竖屏 720x1280）：控制区"整条重铺"要用它算高度。
+ * ⚠ 必须与 rg_touch_skin.c 里面板生成的高度一致（那边是物理全屏尺寸）。 */
+#define RG_OVERLAY_PANEL_H 1280
+
+/* 电量圆灯几何（逻辑像素）。提到文件头部的原因：建层时机（rg_overlay_init）也要用它 ——
+ * 皮肤面板的机型铭牌锚在"菱形键底 ~ 圆灯顶"的正中，所以面板生成需要这两个数。
+ * 原来定义在文件后段，只能被后面的函数引用。 */
+#define RG_BATT_LED_CX       360
+#define RG_BATT_LED_CY       1025    /* 兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
+#define RG_BATT_LED_R        12
+#define RG_BATT_LED_RING     3
+/* 灯条带 Y 范围不再写死：跟着 led_cy_cur 走（见 rg_batt_led_get_band），
+ * 行号还要按 4 取整（帧缓冲一行 1440B，128B 边界 = 每 4 行，msync 要求对齐）。 */
+#define RG_BATT_LED_BAND_PAD 2
+
 #define ROLE_NONE   0
 #define ROLE_BORDER 1
 #define ROLE_FILL   2
@@ -39,6 +60,7 @@
 #define SETTING_VISIBLE RG_TOUCH_SETTING_VISIBLE
 #define SETTING_ALPHA   RG_TOUCH_SETTING_ALPHA
 #define SETTING_SWAP    RG_TOUCH_SETTING_SWAP
+#define SETTING_SKIN    RG_TOUCH_SETTING_SKIN
 
 const int rg_overlay_alpha_levels[RG_OVERLAY_ALPHA_LEVEL_COUNT] = {100, 80, 60, 40, 20};
 
@@ -91,6 +113,29 @@ typedef struct
 #define RG_OVERLAY_TOGGLE_W 88
 #define RG_OVERLAY_TOGGLE_H 48
 
+/* ---------------- 当前游戏视口的运行时几何（**必须在所有使用点之前**）----------------
+ * 面板底图、"整条重铺"矩形、布局自检都要知道"画面到哪结束、控制区从哪开始"：
+ *   GBA 240x160 @3x = 720x480 贴顶        → 控制区顶 480（控制区高 800）
+ *   GB  160x144 @3x = 480x432 居中 top=24 → 控制区顶 456（控制区高 824）
+ *   NES 256x240 @2x = 512x480 居中 top=0  → 控制区顶 480（控制区高 800）
+ * 全部取自 rg_display_get_info()->viewport（视口在**逻辑屏 720x480** 内居中；竖屏物理下
+ * 逻辑 y 与物理 y 同向，可直接用）。⚠ 别再写死 480 —— 那是"换机型后凹槽/铭牌全错位"的来源。 */
+static int ctrl_top_cur = 480;   /* 兜底 = GBA 值（视口未就绪时用，与 RG_OVERLAY_CTRL_TOP 同值） */
+static int win_x_cur = 0;
+static int win_w_cur = 720;
+
+static void rg_overlay_sync_viewport(void)
+{
+    const rg_display_t *d = rg_display_get_info();
+    if (!d || d->viewport.width <= 0 || d->viewport.height <= 0)
+        return;
+    win_x_cur = d->viewport.left;
+    win_w_cur = d->viewport.width;
+    ctrl_top_cur = d->viewport.top + d->viewport.height;   /* 视口底 = 控制区顶 */
+    if (ctrl_top_cur < 0 || ctrl_top_cur > 1280 - 64)
+        ctrl_top_cur = 480;                                /* 明显不合理 → 退回兜底 */
+}
+
 static rg_overlay_btn_t *btns;
 static size_t btn_count;
 static bool ready;
@@ -124,6 +169,10 @@ static bool dirty_swap_btn = false;     /* 那颗切换按钮（不在 btns[] �
 static uint32_t dirty_last_visual = 0;  /* 上次看到的"高亮位"（含 linger 保持） */
 static uint32_t dirty_last_visual_before = 0; /* 再上一拍的高亮位：给抖动观测用（只统计） */
 static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画（外观可能全变） */
+/* 皮肤面板/边框整条重铺一次：Tab5 上"视口恰好等于逻辑屏"，display.changed 那条整屏重铺
+ * 条件是 `视口 < 屏`，对 Tab5 不成立 —— 也就是说**面板底/凹槽/铭牌的变化没人负责刷出去**
+ * （逐键的 dirty_units 只盖按键本身）。切皮肤时置这个标志，让下一帧把整条控制区刷一遍。 */
+static bool dirty_panel_strip = false;
 static bool swap_btn_ready = false;
 /* "这个**位置**现在代表哪个键" —— 调换开着时 X↔R、Y↔L，关着时原样。
  *
@@ -142,6 +191,16 @@ static uint32_t swap_generation = 0;    /* 每次调换 +1：菜单循环靠它�
 static uint32_t visual_mask;              /* 含"高亮保持"的显示用按下掩码 */
 static uint32_t debug_mask;               /* 预览用强制按下 */
 static uint8_t glyphs[128][8];            /* ASCII 8x8 点阵，MSB = 最左列 */
+
+/* ---- 皮肤（4 套可切，NVS: SETTING_SKIN）-------------------------------------
+ * 掩码里只存"覆盖率 + 角色"，颜色来自每键的 pal[] ⇒ **换皮肤不重建掩码**
+ * （13 键重烘焙约 200ms，切换会明显卡）；只重算调色板 + 原地重画面板。
+ * console_id = 当前核心的机型 id（gba/gb/gbc/nes/…）：决定铭牌文案与 D 套的点缀色。 */
+static int skin_idx = 0;
+static char console_id[16] = "";
+/* 圆灯中心 y（物理像素）：面板与灯条带共用**同一个推导值** —— 两边各写常量必然漂移。
+ * 面板装好/换皮肤时由 rg_touch_skin_led_cy() 更新。 */
+static int led_cy_cur = RG_BATT_LED_CY;
 
 /* ---------------------------------------------------------------- 颜色工具 */
 
@@ -175,23 +234,38 @@ static uint16_t c565_tint(uint16_t c, int k, int den)
  * 注释里的 #RRGGBB 是原始 RGB888（方便和预览脚本对照）。 */
 static uint16_t overlay_key_color(rg_key_t key)
 {
-    switch (key)
-    {
-        case RG_KEY_UP:     /* #7C8CA6 冷灰蓝 */
-        case RG_KEY_DOWN:
-        case RG_KEY_LEFT:
-        case RG_KEY_RIGHT:  return c565(0x7C, 0x8C, 0xA6);
-        case RG_KEY_A:      return c565(0xE2, 0x4B, 0x3F);  /* #E24B3F 红 */
-        case RG_KEY_B:      return c565(0xE8, 0xC3, 0x3A);  /* #E8C33A 黄 */
-        case RG_KEY_X:      return c565(0x3F, 0x7A, 0xD8);  /* #3F7AD8 蓝 */
-        case RG_KEY_Y:      return c565(0x4C, 0xB0, 0x5A);  /* #4CB05A 绿 */
-        case RG_KEY_L:      /* #A8B2C0 浅灰 */
-        case RG_KEY_R:      return c565(0xA8, 0xB2, 0xC0);
-        case RG_KEY_SELECT: /* #6C7686 中灰 */
-        case RG_KEY_START:  return c565(0x6C, 0x76, 0x86);
-        case RG_KEY_MENU:   return c565(0xE8, 0xA2, 0x2C);  /* #E8A22C 琥珀 */
-        default:            return c565(0xC0, 0xC0, 0xC0);
-    }
+    /* 颜色全部来自皮肤表（rg_touch_skin.c）：改动配色只需要动那张表，
+     * PC 预览工具解析同一张表 —— 别在这里写死颜色（会重新长出"两边各一份"的漂移）。 */
+    return rg_touch_skin_key_color(skin_idx, rg_touch_skin_slot_for_key(key), console_id);
+}
+
+/* 标签颜色覆盖（C 套统一 #FFD98A）：返回 false 表示"用 tint(键色, label%)" */
+
+/* 每键调色板配方：把"键色 + 皮肤配方"算成 pal/pal_p 两组色。
+ * 掩码不动（形状已烘好），所以这条路径就是换皮肤的全部代价。 */
+static void apply_recipe(uint16_t pal[4], uint16_t pal_p[4], uint16_t color)
+{
+    int radius_pct = 18, fill_pct = 55, label_pct = 70;
+    bool outline_only = false;
+    rg_touch_skin_button_recipe(skin_idx, &radius_pct, &fill_pct, &label_pct, &outline_only);
+    uint16_t label_override = 0;
+    const bool has_override = rg_touch_skin_label_color(skin_idx, &label_override);
+
+    pal[ROLE_BORDER] = color;
+    /* 填充比边框暗一些：否则"亮边框+亮标签"压在亮填充上对比不足（原来的 55% 口径） */
+    pal[ROLE_FILL]   = c565_scale(color, fill_pct, 100);
+    pal[ROLE_LABEL]  = has_override ? label_override : c565_tint(color, label_pct, 100);
+    /* 按下态：边框与文字转白，填充提亮（"亮起来"的观感） */
+    pal_p[ROLE_BORDER] = 0xFFFF;
+    pal_p[ROLE_FILL]   = c565_scale(color, 95, 100);
+    pal_p[ROLE_LABEL]  = 0xFFFF;
+}
+
+const uint8_t *rg_overlay_glyph_rows(int code)
+{
+    if (code <= 0 || code >= 128)
+        return NULL;
+    return glyphs[code][0] ? glyphs[code] : NULL;
 }
 
 /* ---------------------------------------------------------------- 字形 */
@@ -379,7 +453,11 @@ static void build_button(rg_overlay_btn_t *b, uint16_t color, const char *text_o
     else
         label_geom(w, h, b->key, &L);
 
-    float r = (float)((w < h ? w : h) * 18 / 100);
+    int radius_pct = 18, fill_pct = 55, label_pct = 70;
+    bool outline_only = false;
+    rg_touch_skin_button_recipe(skin_idx, &radius_pct, &fill_pct, &label_pct, &outline_only);
+
+    float r = (float)((w < h ? w : h) * radius_pct / 100);
     if (r < 2) r = 2;
     float bw = BORDER_PX;
     if (bw * 2 > (w < h ? w : h) / 2) bw = (w < h ? w : h) / 4.0f;
@@ -391,14 +469,8 @@ static void build_button(rg_overlay_btn_t *b, uint16_t color, const char *text_o
         return;
     }
 
-    b->pal[ROLE_BORDER] = color;
-    /* 填充比边框暗一些（55%）：否则"亮边框+亮标签"压在纯亮填充上对比不足。
-     * （左上角那颗开关图标的 30% 更暗填充在 blit_toggle 里单独处理，不走这条路径。） */
-    b->pal[ROLE_FILL] = c565_scale(color, 55, 100);
-    b->pal[ROLE_LABEL] = c565_tint(color, 70, 100);
-    b->pal_p[ROLE_BORDER] = 0xFFFF;
-    b->pal_p[ROLE_FILL] = c565_scale(color, 95, 100);
-    b->pal_p[ROLE_LABEL] = 0xFFFF;
+    /* 颜色与配方全部来自皮肤表（rg_touch_skin.c）：这里只剩"算"，没有"常量" */
+    apply_recipe(b->pal, b->pal_p, color);
 
     /* 内层（填充区）在外层坐标里内缩 bw、圆角 r-bw —— 与原来 in_rrect 的形状定义一致 */
     const float iw = (float)w - 2 * bw, ih = (float)h - 2 * bw;
@@ -502,8 +574,13 @@ static void build_button(rg_overlay_btn_t *b, uint16_t color, const char *text_o
  * 输出是 0..64 的 6 位权重（见 blend_px 的说明）。 */
 static void update_acov(void)
 {
-    static const uint8_t tier[4]  = {0, A_BORDER, A_FILL, A_LABEL};
-    static const uint8_t tierp[4] = {0, A_LABEL, A_FILL_PRESSED, A_LABEL};
+    /* 三个分层权重来自皮肤表：B 套是线框皮肤（填充层权重 0），不能写死成编译期常量。 */
+    uint8_t skin_tier[3];
+    rg_touch_skin_tiers(skin_idx, skin_tier);
+    const uint8_t tier[4]  = {0, skin_tier[0], skin_tier[1], skin_tier[2]};
+    /* 线框皮肤按下时补一点淡填充：否则"按下"只有描边/文字变白，反馈偏弱 */
+    const uint8_t pressed_fill = skin_tier[1] ? A_FILL_PRESSED : 72;
+    const uint8_t tierp[4] = {0, A_LABEL, pressed_fill, A_LABEL};
     const int a6 = alpha_level * AW_ONE / 255;
     for (int r = 0; r < 4; ++r)
     {
@@ -543,6 +620,15 @@ void rg_overlay_init(void)
     rg_overlay_set_alpha((int)rg_settings_get_number(NS_GLOBAL, SETTING_ALPHA, 100));
     /* X/Y ↔ L/R 调换（持久化）：必须在建掩码之前读进来，标签/配色才能一次到位 */
     swap_yx = rg_settings_get_boolean(NS_GLOBAL, SETTING_SWAP, false);
+    /* 皮肤（持久化）：同样必须在 build_button 之前读进来 —— 配色/圆角/图层权重
+     * 全按它算。默认 D 套（"主机配色点缀"）。 */
+    skin_idx = rg_touch_skin_clamp((int)rg_settings_get_number(NS_GLOBAL, SETTING_SKIN, RG_TOUCH_SKIN_DEFAULT));
+    {
+        /* 机型 id（configNs: gba/gb/gbc/nes/…）决定铭牌文案与 D 套的点缀色 */
+        const rg_app_t *app = rg_system_get_app();
+        strncpy(console_id, (app && app->configNs) ? app->configNs : "", sizeof(console_id) - 1);
+        console_id[sizeof(console_id) - 1] = 0;
+    }
 
     size_t n = 0;
     const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&n);
@@ -563,32 +649,48 @@ void rg_overlay_init(void)
         return;
     }
     memset(btns, 0, sizeof(rg_overlay_btn_t) * n);
-    btn_count = (n > RG_OVERLAY_MAX_BUTTONS) ? RG_OVERLAY_MAX_BUTTONS : n;   /* 上限保护 */
+    /* ⚠ btn_count 必须等于**实际建出来的**按键数：dirty 位、命中、绘制都按它对齐。
+     * 该机型没有的键直接跳过（GB/GBC 无 L/R 肩键），所以用独立计数器，不能直接用 n。 */
+    btn_count = 0;
 
-    for (size_t i = 0; i < n; ++i)
+    for (size_t i = 0; i < n && btn_count < RG_OVERLAY_MAX_BUTTONS; ++i)
     {
-        /* 位置固定、**功能键可调换**：btn.key 存的是"这个位置现在代表哪个键"
-         * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 btn.key
+        if (rg_touch_key_hidden(console_id, map[i].key))
+            continue;
+        rg_overlay_btn_t *b = &btns[btn_count++];
+        /* 位置固定、**功能键可调换**：b->key 存的是"这个位置现在代表哪个键"
+         * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 b->key
          * → 视觉与手感永远一致；也正因为存的是功能键，高亮匹配不用额外改。
          * ⚠ 这里必须走 rg_overlay_map_key()：输入层调的是同一个函数，
          * 两边不可能再出现"一边门控、一边没门控"的不一致（真机曾按 X 亮 R）。 */
-        btns[i].key = rg_overlay_map_key(map[i].key);
-        btns[i].w = map[i].w;
-        btns[i].h = map[i].h;
-        btns[i].x = map[i].x - map[i].w / 2;
-        btns[i].y = map[i].y - map[i].h / 2;
-        build_button(&btns[i], overlay_key_color(btns[i].key), NULL);
+        b->key = rg_overlay_map_key(map[i].key);
+        b->w = map[i].w;
+        b->h = map[i].h;
+        b->x = map[i].x - map[i].w / 2;
+        b->y = map[i].y - map[i].h / 2;
+        build_button(b, overlay_key_color(b->key), NULL);
     }
 
     /* L/R 之间那颗「X/Y ↔ L/R 调换」按钮：几何来自键位表（RG_TAB5_SWAP_*），
-     * key=0（不是游戏键，不注入输入），颜色借用 MENU 的琥珀 = "系统/UI 控件"。 */
-    swap_btn.key = RG_KEY_NONE;
-    swap_btn.w = RG_TAB5_SWAP_W;
-    swap_btn.h = RG_TAB5_SWAP_H;
-    swap_btn.x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2;
-    swap_btn.y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2;
-    build_button(&swap_btn, c565(0xE8, 0xA2, 0x2C), swap_label());
-    swap_btn_ready = (swap_btn.mask != NULL);
+     * key=0（不是游戏键，不注入输入），颜色走皮肤的 SWAP 槽（= 系统/UI 控件色）。 */
+    /* ⚠ 判据是"**GBA 专用**"（用户 2026-10-07 定），**不是** has_shoulders —— SNES 有 L/R 行
+     * 但不需要调换；早先绑在一起，SNES 顶上就多出这颗按钮。 */
+    if (rg_touch_has_swap_button(console_id))
+    {
+        swap_btn.key = RG_KEY_NONE;
+        swap_btn.w = RG_TAB5_SWAP_W;
+        swap_btn.h = RG_TAB5_SWAP_H;
+        swap_btn.x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2;
+        swap_btn.y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2;
+        build_button(&swap_btn, rg_touch_skin_key_color(skin_idx, RG_SKIN_SLOT_SWAP, console_id), swap_label());
+        swap_btn_ready = (swap_btn.mask != NULL);
+    }
+    else
+    {
+        swap_btn.mask = NULL;
+        swap_btn.mask_alt = NULL;
+        swap_btn_ready = false;
+    }
 
     /* ── 调换用的"另一套"掩码（预渲染，点击只对换）─────────────────────────
      * 只给 X/Y/L/R 四个键和这颗切换按钮建；集合在调换下闭合，所以"另一套"就是
@@ -612,10 +714,12 @@ void rg_overlay_init(void)
         int bad = 0;
         for (size_t i = 0; i < btn_count; ++i)
         {
-            if (btns[i].y < 480)
+            /* ⚠ 画面高度**按当前视口**算，别写死 480：GB 3x 时视口只到 y=456，
+             *   写死 480 会把"487 处的上三排"误判成没压画面（差 24px 的假阴性）。 */
+            if (btns[i].y < ctrl_top_cur)
             {
-                RG_LOGW("touch layout: button #%u top y=%d 压进游戏画面（竖屏视口 0..480）\n",
-                        (unsigned)i, btns[i].y);
+                RG_LOGW("touch layout: button #%u top y=%d 压进游戏画面（视口底 %d）\n",
+                        (unsigned)i, btns[i].y, ctrl_top_cur);
                 bad++;
             }
             for (size_t j = i + 1; j < btn_count; ++j)
@@ -635,10 +739,12 @@ void rg_overlay_init(void)
     }
 
     ready = true;
+    /* 控制区面板（皮肤底图）不在这里装：这时 lcd_init 还没转屏（显示层报横屏 720x480），
+     * 装了会被尺寸守卫拒绝。改到"第一次真正渲染控制区"时装（rg_overlay_try_panel）。 */
     /* 这一行会出现在串口上：app 切换（进出游戏）时 lcd_init 里会重跑建层，
      * 耗时直接决定黑屏等待时长 —— 所以别把 double/除法/strlen 放回热路径。 */
-    RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, X/Y<->L/R swapped=%d, built in %d ms\n",
-            (unsigned)btn_count, visible, alpha_pct, swap_yx,
+    RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, X/Y<->L/R swapped=%d, skin=%s, built in %d ms\n",
+            (unsigned)btn_count, visible, alpha_pct, swap_yx, rg_touch_skin_short_name(skin_idx),
             (int)((rg_system_timer() - t_start) / 1000));
 }
 
@@ -668,6 +774,144 @@ void rg_overlay_set_visible(bool value)
 int rg_overlay_get_alpha(void)
 {
     return alpha_pct;
+}
+
+/* ---------------------------------------------------------------- 皮肤 API
+ * 切换皮肤 = 重算调色板 + 原地重画面板 + 整片控制区置脏。
+ * **不重建掩码**（掩码只记覆盖率与角色）：13 键重烘焙约 200ms，切换会明显卡；
+ * 而掩码与颜色本来就是两组独立字段（当年 X/Y↔L/R 调换就是"换表不重建"的同一招）。 */
+int rg_overlay_skin_count(void)
+{
+    return rg_touch_skin_count();
+}
+
+int rg_overlay_get_skin(void)
+{
+    return skin_idx;
+}
+
+const char *rg_overlay_skin_name(int idx)
+{
+    return rg_touch_skin_name(idx);
+}
+
+const char *rg_overlay_skin_short_name(int idx)
+{
+    return rg_touch_skin_short_name(idx);
+}
+
+/* 面板底图**什么时候装**：必须等 lcd_init 完成转屏（转屏后屏是 720x1280；在那之前
+ * 显示层报的是横屏 720x480，面板尺寸对不上会被守卫拒绝 —— 真机日志见过
+ * "内存面板尺寸不符（720x1280，应为 720x480），忽略"）。所以不在建层时装，
+ * 而是**第一次真正渲染控制区时**装（那时必然已转屏）；幂等，成功后不再重复。 */
+static bool panel_installed = false;
+/* 已装面板对应的视口（换机型/换分辨率时判断"要不要重装"）。-1 = 还没装过。 */
+static int panel_vp_x = -1, panel_vp_w = -1, panel_vp_top = -1;
+
+/* ---------------- 当前游戏视口的运行时几何 ----------------
+ * 定义在**文件顶部**（见 rg_overlay_sync_viewport 附近）：布局自检那个更早的函数也要用它，
+ * 放这里会"未声明先用"。 */
+
+static void rg_overlay_try_panel(void)
+{
+    if (!btns)
+        return;
+    /* 该不该装：**判"在不在游戏里"**，别拿 rg_display_get_width/height 去比 720x1280 ——
+     * 那两个是**逻辑视口**尺寸（Tab5 上逻辑屏就是 720x480），比 1280 永远不成立。
+     * 真机现象就是"面板一直不装、守卫静默挡掉、无日志"。
+     * 控制区面板铺的是"游戏视口 + 下方控制条带"这个结构，启动器另有自己的全屏 UI。 */
+    if (!console_id[0] || strcmp(console_id, "launcher") == 0)
+        return;
+
+    rg_overlay_sync_viewport();
+    /* 视口变了（换机型 / 换分辨率）= 面板底图与"整条重铺"矩形都得重画 → 卸掉重装。
+     * 同视口重复调用是幂等的（rg_touch_panel_get 内部按参数缓存，不会重复生成）。 */
+    if (panel_installed && (panel_vp_x != win_x_cur || panel_vp_w != win_w_cur || panel_vp_top != ctrl_top_cur))
+    {
+        RG_LOGI("touch skin: viewport changed (x=%d w=%d top=%d) → (x=%d w=%d top=%d), re-installing panel\n",
+                panel_vp_x, panel_vp_w, panel_vp_top, win_x_cur, win_w_cur, ctrl_top_cur);
+        panel_installed = false;
+    }
+    if (panel_installed)
+        return;
+
+    /* led_cy 传 0 = 让皮肤布局**自己推导**（圆灯与铭牌在两排之间"各占一半、各自居中"）。
+     * 以前钉死 1025 是为了跟真机对齐，但那样铭牌只能挤在灯上方，分不均。 */
+    rg_surface_t *panel = rg_touch_panel_get(skin_idx, console_id, ctrl_top_cur,
+                                             win_x_cur, win_w_cur, 0, RG_BATT_LED_R);
+    if (!panel)
+        return;
+    rg_display_set_border_surface(panel);
+    rg_display_border_refresh();
+    panel_installed = true;
+    panel_vp_x = win_x_cur; panel_vp_w = win_w_cur; panel_vp_top = ctrl_top_cur;
+    dirty_panel_strip = true;   /* 让下一帧把整条控制区重铺一遍（见 dirty_panel_strip 的说明） */
+    /* 灯位从布局推导（与面板同源）。条带跟着它走，所以灯动条带也动。 */
+    led_cy_cur = rg_touch_skin_led_cy(ctrl_top_cur, RG_BATT_LED_R);
+    /* 这一行是"面板到底装上了没"的唯一判据（真机日志）：装上=控制区有底图；
+     * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。
+     * 中间三个数是**本次安装用的视口**：GBA x=0 w=720 top=480 / GB x=120 w=480 top=456 /
+     * NES x=104 w=512 top=480 —— 换机型时先看这行对不对得上。 */
+    RG_LOGI("touch skin: panel installed for '%s' (skin %s), vp x=%d w=%d ctrl_top=%d, screen %dx%d\n",
+            console_id, rg_touch_skin_name(skin_idx), win_x_cur, win_w_cur, ctrl_top_cur,
+            rg_display_get_width(), rg_display_get_height());
+}
+
+void rg_overlay_refresh_panel(void)
+{
+    panel_installed = false;    /* 换皮肤/换 Border 设置后允许重装 */
+    rg_overlay_try_panel();
+}
+
+/* "试穿"开关：菜单里光标移动到哪套就预览哪套时置 true —— 改内存、不落盘，
+ * 用户按 B 退出去时还来得及干净还原（设置项不该被"逛一圈"改掉）。 */
+static bool skin_preview_only = false;
+
+/* 试穿：只改内存 + 重算调色板 + 重画面板，**不写 NVS**。 */
+void rg_overlay_preview_skin(int idx)
+{
+    skin_preview_only = true;
+    rg_overlay_set_skin(idx);
+    skin_preview_only = false;
+}
+
+void rg_overlay_set_skin(int idx)
+{
+    idx = rg_touch_skin_clamp(idx);
+    /* 落盘必须在 early-return **之前**：用户按 A 确认时，光标停的那套正是预览已经生效的
+     * 那套（idx == skin_idx）——若把写 NVS 放在后面，确认会被跳过，重启就回到旧的（真机现象：
+     * "选了皮肤但确定不了/不生效"的另一半原因）。 */
+    if (!skin_preview_only)
+        rg_settings_set_number(NS_GLOBAL, SETTING_SKIN, idx);
+    if (idx == skin_idx && ready)
+        return;
+
+    skin_idx = idx;
+
+    /* 每键调色板重算（正常态 + 按下态 + 调换那套）。掩码一个字都不动。 */
+    for (size_t i = 0; i < btn_count; ++i)
+    {
+        apply_recipe(btns[i].pal, btns[i].pal_p, overlay_key_color(btns[i].key));
+        if (btns[i].mask_alt)
+            apply_recipe(btns[i].pal_alt, btns[i].pal_p_alt, overlay_key_color(btns[i].key_alt));
+    }
+    if (swap_btn_ready)
+    {
+        const uint16_t c = rg_touch_skin_key_color(skin_idx, RG_SKIN_SLOT_SWAP, console_id);
+        apply_recipe(swap_btn.pal, swap_btn.pal_p, c);
+        if (swap_btn.mask_alt)
+            apply_recipe(swap_btn.pal_alt, swap_btn.pal_p_alt, c);
+    }
+
+    /* 图层权重也随皮肤变（B 套是线框：填充层权重 0）—— 换完重算一次 */
+    update_acov();
+
+    /* 重画：控制区整片置脏（按键高亮层）+ 面板原地重画并整张重铺 */
+    dirty_all_units = true;
+    rg_overlay_refresh_panel();
+
+    RG_LOGI("touch skin: switched to %s (%d/%d)\n", rg_touch_skin_short_name(skin_idx),
+            skin_idx + 1, rg_touch_skin_count());
 }
 
 void rg_overlay_set_alpha(int percent)
@@ -903,8 +1147,24 @@ static void poll_pressed(void)
 
 int rg_overlay_take_dirty_rects(int *out_xywh, int max)
 {
+    rg_overlay_try_panel();     /* 第一帧真正要画时把皮肤面板装上（见上面的时序说明） */
     if (!out_xywh || max <= 0)
         return 0;
+
+    /* 面板底/凹槽/铭牌整条变过：直接把"整条控制区"当一个矩形交出去（显示层会用 border
+     * 重铺这块，覆盖层由驱动合成），比逐键返回 13 个矩形更省也更彻底。 */
+    if (dirty_panel_strip)
+    {
+        dirty_panel_strip = false;
+        dirty_units = 0;
+        dirty_swap_btn = false;
+        dirty_all_units = false;
+        out_xywh[0] = 0;
+        out_xywh[1] = ctrl_top_cur;                       /* 跟视口走（GBA 480 / GB 456 / NES 480） */
+        out_xywh[2] = RG_SCREEN_WIDTH;
+        out_xywh[3] = RG_OVERLAY_PANEL_H - ctrl_top_cur;
+        return 1;
+    }
 
     int n = 0;
     for (size_t i = 0; i < btn_count && n < max; ++i)
@@ -1117,6 +1377,7 @@ static void blit_swap_btn(uint16_t *buf, int stride, int rx, int ry, int rw, int
 
 void rg_overlay_blit(uint16_t *buf, int stride, int rx, int ry, int rw, int rh)
 {
+    rg_overlay_try_panel();
     if (!buf || rw <= 0 || rh <= 0)
         return;
 
@@ -1250,12 +1511,7 @@ static void blit_fps(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, 
  * ⚠ 行号必须是 4 的倍数：帧缓冲一行 = 720px×2B = 1440B，1440 % 128 = 32，
  *   只有每 4 行才落到 128B 边界上 —— cache 写回（esp_cache_msync）要求 128B 对齐。
  *   圆占 y 1013..1037，取 [1012,1040) 正好满足。 */
-#define RG_BATT_LED_CX       360
-#define RG_BATT_LED_CY       1025
-#define RG_BATT_LED_R        12
-#define RG_BATT_LED_RING     3
-#define RG_BATT_LED_BAND_Y0  1012
-#define RG_BATT_LED_BAND_Y1  1040
+/* （几何 RG_BATT_LED_* 已提到文件头部 —— 皮肤面板的铭牌锚点要用） */
 #ifndef RG_SCREEN_WIDTH
 #define RG_SCREEN_WIDTH 720
 #endif
@@ -1320,10 +1576,23 @@ bool rg_batt_led_refresh_needed(void)
 
 void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1)
 {
+    /* 条带跟着圆灯**实际位置**走（灯位由皮肤布局推导 → led_cy_cur），不再写死 1012/1040。
+     * 行号按 4 取整：帧缓冲一行 1440B，128B 边界每 4 行才落一次，msync 要求偏移/长度都对齐。 */
+    const int lo = led_cy_cur - RG_BATT_LED_R - RG_BATT_LED_BAND_PAD;
+    const int hi = led_cy_cur + RG_BATT_LED_R + RG_BATT_LED_BAND_PAD;
     if (x0) *x0 = 0;
-    if (y0) *y0 = RG_BATT_LED_BAND_Y0;
+    if (y0) *y0 = (lo & ~3) < 0 ? 0 : (lo & ~3);
     if (x1) *x1 = RG_SCREEN_WIDTH;
-    if (y1) *y1 = RG_BATT_LED_BAND_Y1;
+    if (y1) *y1 = ((hi + 3) & ~3) > RG_SCREEN_HEIGHT ? RG_SCREEN_HEIGHT : ((hi + 3) & ~3);
+}
+
+/* 擦灯条带用的背景色 = **当前皮肤的面板底色**（已量化 565）。
+ * 面板还没装（启动器/横屏阶段）时退回纯黑，与那时的黑底一致。 */
+uint16_t rg_batt_led_band_bg(void)
+{
+    if (!panel_installed)
+        return 0x0000;
+    return rg_touch_skin_panel_bg565(skin_idx);
 }
 
 void rg_batt_led_draw(uint16_t *buf, int stride)
@@ -1331,9 +1600,10 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
     if (!buf || stride <= 0)
         return;
     /* 契约（走查 P2-15）：buf 是**整屏**帧缓冲（竖屏线性映射下逻辑与物理同向），
-     * stride = 一行像素数。本函数只写 [RG_BATT_LED_BAND_Y0, RG_BATT_LED_BAND_Y1) 条带内的
-     * 像素，且是**直接覆盖**（那一条带背景纯黑，不需要混合）。
+     * stride = 一行像素数。本函数只写「灯条带」内的像素（条带范围由 rg_batt_led_get_band()
+     * 给出，跟着 led_cy_cur 走），且是**直接覆盖**。
      * 调用方（显示驱动 tab5_batt_led_refresh）负责：① 先把条带擦成背景
+     * （背景色 = rg_batt_led_band_bg()，即当前皮肤的面板底色 —— 用纯黑会在非黑面板上割裂画面）
      * ② 画完后对条带做 C2M cache 写回（CPU 写、DMA 读，方向不能反）。 */
 
     bool lit = true;
@@ -1350,11 +1620,13 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
     const int a_ring = alpha_level * (lit ? 90 : 72) / 100;
     const int a_fill = alpha_level * 50 / 100;
     const int R = RG_BATT_LED_R, Ri = R - RG_BATT_LED_RING;
+    int bx0, by0, bx1, by1;
+    rg_batt_led_get_band(&bx0, &by0, &bx1, &by1);
 
     for (int dy = -R; dy <= R; ++dy)
     {
-        const int ly = RG_BATT_LED_CY + dy;
-        if (ly < RG_BATT_LED_BAND_Y0 || ly >= RG_BATT_LED_BAND_Y1)
+        const int ly = led_cy_cur + dy;
+        if (ly < by0 || ly >= by1)
             continue;
         uint16_t *row = buf + (size_t)ly * stride;
         for (int dx = -R; dx <= R; ++dx)
@@ -1391,6 +1663,7 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
  * 这里不做第二份旋转位图，只在索引上换算 —— 一份数据、两种朝向。 */
 void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
 {
+    rg_overlay_try_panel();
     if (!buf || rw <= 0 || rh <= 0)
         return;
 
@@ -1418,6 +1691,7 @@ void rg_overlay_blit_cw90(uint16_t *buf, int stride, int rx, int ry, int rw, int
  * 与 cw90 版共用同一份绘制代码，只是 cw90=false。 */
 void rg_overlay_blit_linear(uint16_t *buf, int stride, int rx, int ry, int rw, int rh, int phys_w)
 {
+    rg_overlay_try_panel();
     if (!buf || rw <= 0 || rh <= 0)
         return;
 

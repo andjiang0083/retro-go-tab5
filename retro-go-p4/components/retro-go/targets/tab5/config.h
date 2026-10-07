@@ -82,8 +82,23 @@
  * ⚠ 必须用 ZOOM：FULL 会把画面拉到满屏、FIT 会另算比例，两者都会让按键压到画面上。
  *   custom_zoom 上限也要放开（上游硬夹 2.0）。 */
 #define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
-#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 3.0
-#define RG_DISPLAY_MAX_CUSTOM_ZOOM     4.0
+/* 默认倍数与上限（用户 2026-10-07 定："所有机种都尽量用满屏幕"）。
+ * ⚠ 这两个值**不是**"实际倍数"——实际倍数一律由 rg_display.c 的 ZOOM 分支算出来：
+ *     max_zoom = min(屏宽/源宽, RG_DISPLAY_MAX_WINDOW_HEIGHT/源高), zoom = min(custom_zoom, max_zoom)
+ *   所以把它们设大（= 不设限）才能让小屏机型用满屏（GW 96x64 → 7x = 672x448；
+ *   以前卡在 4.0，它只能到 4x = 384x256，白白浪费半屏）。
+ *   它们的用处只剩"用户想主动调小"这一条路径（设置里可选）。 */
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 16.0
+#define RG_DISPLAY_MAX_CUSTOM_ZOOM     16.0
+/* 画面窗口的**最大高度**（px）。它 = 物理屏高 1280 − 必须留给触摸控制区的最小高度 660。
+ * 换算是：底排按键底 = 1232（targets/tab5/touch_layout.h），再留 ~48px 呼吸 → 窗口底最下
+ * 只到 1280-660 = 620。
+ * ⚠ 必须用**物理屏高**（RG_SCREEN_HEIGHT=1280）算，不能用逻辑屏高（display.screen.height=480）
+ *   —— 480 是"GBA 满宽画面"的高度，控制区长在 1280 那块屏上。拿 480 去减会得出"控制区只有
+ *   48px"的荒谬结论，把 4x 一路砍到 1x（2026-10-07 的真实翻车）。
+ * 它是 ZOOM 的第二道闸，于是各机型的倍数都是**算出来的**：
+ *   GB/GBC 160x144 → 4x(640x576，余 704)   GBA 240x160 → 3x(720x480，余 800)   NES 256x240 → 2x(512x480) */
+#define RG_DISPLAY_MAX_WINDOW_HEIGHT   620
 
 
 /****************************************************************************

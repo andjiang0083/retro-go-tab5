@@ -409,3 +409,167 @@ P4 两条口径复测。
   - 已发布：<https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4>；
     **v0.4.3 已于本轮发布**（回读验证过：附件 merged bin 2,424,832 B / 单 app 包 1,441,152 B / 封面，
     均 uploaded）：<https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.3>
+
+
+---
+
+## §七 触摸皮肤（0.4.7 待发，2026-10-07 凌晨）
+
+**唯一真源**：`retro-go-p4/components/retro-go/rg_touch_skin.c/.h`
+四套皮肤（A 深灰拟物+琥珀 / B 极简线框 / C 琥珀复古 / D 主机配色点缀＝**默认**）
++ 每键 14 槽配色 + 12 个机型条目（铭牌文案 + 点缀色）+ 面板几何（凹槽/四分区 pad/铭牌 pad/字距）。
+**PC 预览器 `tools/preview-skin.py` 解析同一文件**（不再手抄常量）。
+
+**接线**：
+- `rg_touch_overlay.c`：`rg_overlay_set_skin/get_skin/refresh_panel`、`skin=Console` 进建层日志；
+  换皮肤只重算 `pal/pal_p`（**不重建掩码**）+ 原地重画面板 + 控制区整片置脏。
+- `rg_display.c`：`rg_display_set_border_surface()` 把内存面板接进**现成的 border 通路**
+  （`border_foreign` 标记：外部 surface 只脱手不 free；用户手选 Border 图优先）；
+  `rg_display_border_refresh()` 整屏重铺。
+- `rg_gui.c`：启动器与游戏两处 Options 都有 `Touch skin`（紧挨 Touch opacity），
+  子菜单**光标实时预览** + A 确认 / B 回退；Border 设置改动后回调 `rg_overlay_refresh_panel()`。
+
+**关键坑（真机两轮才纠对）**：`rg_display_get_width/height` 是**逻辑视口**（Tab5 上 720x480），
+而面板是**物理全屏** 720x1280 —— 别用"尺寸必须相等"去校验它（我第一版在两处都这么干了：
+`rg_overlay_try_panel` 的竖屏守卫 + `rg_display_set_border_surface` 的相等校验，结果面板被静默拒掉，
+日志里那句 `应为 720x480` 我当时还误判成"还没转屏"）。正解：
+- 该不该装 → 判语义：`console_id != "launcher"`（`rg_overlay_try_panel()`，幂等，挂在 take_dirty_rects/blit 入口）
+- 尺寸校验 → 改成"**必须盖住逻辑视口**"（≥ 而非 ==）
+顺带收益：launcher 阶段不白花 157ms 生成 + 1.8MB PSRAM（建层 438ms → 229ms）。
+装上的判据日志（唯一）：`touch skin: panel installed for 'gba'`。
+
+**控制区怎么被刷出来（Tab5 特有，别再踩）**：逻辑视口==逻辑屏 → `display.changed` 的整屏重铺
+条件 `视口<屏` 不成立，**那条路在 Tab5 上什么都不做**；控制区唯一的重铺通道是 `write_update()`
+里的覆盖层脏区段。所以面板/边框一变就要给它一条脏矩形 —— 已实现为 `dirty_panel_strip`
+（`rg_overlay_refresh_panel()` 置位，`take_dirty_rects()` 返回"整条控制区"一个矩形）。
+症状对照：面板装上、日志全对、屏上却纯黑 → 就是这个标志没置。代价 231ms/次（切皮肤时）。
+
+**铭牌/圆灯的排布与灯位真源**：把「上三排底边 ~ 系统键行顶边」这段竖向空间**对半分** ——
+上半区居中放铭牌、下半区居中放圆灯（GBA 实测：铭牌 y=965、圆灯 y=1085，间距 ~120px；
+旧规则是灯居中、铭牌挤在灯上方，只隔 ~65px，用户反馈"太挤"）。灯位由
+`rg_touch_skin_led_cy(ctrl_top, led_r)` 推导，**面板/覆盖层/灯条带三处共用同一个值**，
+不要再往任何地方复制 1025 这种常量。
+
+**电量灯的条带背景**：`tab5_batt_led_refresh()` 原来把灯条带擦成**纯黑**（当年代码注释就写死
+"那块没别的内容，纯黑"），面板底一旦不是黑就割裂画面。现在擦除色取
+`rg_batt_led_band_bg()` → `rg_touch_skin_panel_bg565(skin_idx)`（面板没装时退回纯黑，
+与启动器黑底一致）。条带 Y 范围也跟着灯位走，并保持 4 行对齐（帧缓冲一行 1440B，
+128B 边界每 4 行一次，msync 要求偏移/长度都对齐）。
+
+**rg_gui 对话框约定（菜单踩全了，改前必读）**：
+① NORMAL 选项的回调对 `RG_DIALOG_ENTER` 必须返回 `RG_DIALOG_SELECT`，否则"能选不能确定"；
+② `rg_gui_dialog()` 返回 `options[sel].arg`（不是索引），取消返回 `RG_DIALOG_CANCELLED`；
+③ option->value 别给 NULL；
+④ 预览分"试穿/落定"两条路（`rg_overlay_preview_skin` 不写 NVS / `rg_overlay_set_skin` 写），
+   且**写 NVS 要在 early-return 之前**，否则确认时"已是这套"会被跳过、表现成选了不生效。
+
+**验证工具**：
+- 回归门禁 `python3 tools/preview-skin.py --check`（与 `docs/skin-candidates/approved-2026-10-06/`
+  逐像素比 + **归因**：差异必须全落在面板几何边缘带 ±2px 内，跑出带外即失败）
+- 刷机+抓日志一条龙 `sh tools/flash-tab5.sh <merged.bin> [秒数]`（串口独占，BOD 复位当重启重试）
+- 构建双形态 `sh tools/build-tab5-skin.sh [single-app]`
+
+**待办**：
+1. 进游戏目视四套皮肤 + 菜单切换（需人工点开一个 GBA 游戏；日志判据：
+   `panel rebuilt for skin D / console 'gba'` → `内存面板接管边框底图 (720x1280)` → 切换时 `touch skin: switched to ...`）
+2. 多核（0.4.8）落地时：把 `rg_overlay_try_panel()` 里写死的 `0, RG_SCREEN_WIDTH, RG_OVERLAY_CTRL_TOP`
+   换成从 `rg_display_get_info()->viewport` 取的真实视口 —— 凹槽整形与"上三排下移"会自动跟着走。
+3. 发版走 `publish.yaml` + `check_merged.py`；版本号 0.4.7。
+
+## 多核底座（T1–T3，2026-10-07）
+
+Tab5 的缩放是**固定 ZOOM 3x**（`targets/tab5/config.h: RG_DISPLAY_DEFAULT_SCALING = ZOOM`），
+视口在**逻辑屏 720x480 内居中**（`rg_display.c: update_viewport_scaling()` 算 left/top = (720-w)/2、
+(480-h)/2）。由此定出各机型的窗口与控制区：
+
+| 机型 | 窗口 | 控制区顶 | 控制区高 | 左右边条 |
+|---|---|---|---|---|
+| GBA 240x160 @3x | 720x480 贴边 | 480 | 800 | 无（全宽） |
+| GB/GBC 160x144 @4x | 640x576 贴顶 x=40 | 576 | 704 | 各 40px |
+| NES 256x240 @2x | 512x480 居中 x=104 | 480 | 800 | 各 104px |
+
+**GB/GBC 落地（T4，2026-10-07）**：
+- **4x 640x576**（占屏宽 89%；3x 只有 67%）。576 > 可见区 480 → 视口 **贴顶**（`max(0,...)`），
+  否则居中会算出 top=-48 切画面；映射表 `map_viewport_to_source_x/y` 必须**按视口填**（不是按可见区 480），
+  否则 480..575 行残留旧映射 → 画面下半截横向拉错。
+- **去掉 L/R 肩键行**：GB/GBC 是单机时代掌机。判据 `rg_touch_has_shoulders()` / `rg_touch_key_hidden()`
+  （在 `rg_touch_skin.h`，**两侧唯一真源**）；消费点 = overlay 建 btns（独立计数器跳过 → btn_count
+  必须等于实际建出的数）+ swap_btn 不建 + 面板分区不生成 + preview-skin.py 同步。
+  **键位表（targets/tab5/touch_layout.h）不动** —— 它是坐标的单一真源。
+- **面板 dy 恒 0**：按键是键位表的固定坐标，面板分区框单独平移 = 与按键错位
+  （GB 4x 曾算出 dy=96 → 真机将是"框在下面、键在上面"）。要挪按键就改键位表。
+- 真机判据：`vp x=40 w=640 ctrl_top=576`；控制区高 704（内容 653..1232 = 579px，余 125px）。
+
+**三个运行时量**（`rg_touch_overlay.c`）：`win_x_cur / win_w_cur / ctrl_top_cur`，
+由 `rg_overlay_sync_viewport()` 从 `rg_display_get_info()->viewport` 取（`ctrl_top = viewport.top + viewport.height`）。
+⚠ 面板参数、灯位推导、`dirty_panel_strip` 的整条矩形**全部**用它们；`RG_OVERLAY_CTRL_TOP` 只作
+"视口未就绪"的兜底。**别再写死 480** —— 那就是"换机型后凹槽/铭牌全错位"的来源。
+面板按本次视口记忆（`panel_vp_x/w/top`），视口一变就 `panel_installed=false` 重装并整条重铺。
+
+**判据日志（换机型先看这两行）**：
+```
+display: zoom source 240x160 requested x3 → x3 (720x480)      ← ZOOM 分支的降倍结果
+touch skin: panel installed for 'gba' (skin ...), vp x=0 w=720 ctrl_top=480, screen 720x480
+touch skin: panel rebuilt for skin D / console 'gba' (ctrl_top=480, badge_y=965, 93 ms)
+```
+
+**ZOOM 超屏自动降倍**（`rg_display.c`）：ZOOM 是固定倍数，按机型算出来的窗口可能比逻辑屏还大
+（NES 3x = 768x720 > 720x480 → 居中会得到**负** left/top、画面切边）。现在在"不超屏"前提下取
+最大整数倍（NES → 2x = 512x480）。GBA/GB 不超屏 → 结果与改前完全相同（回归证据：`badge_y=965` 逐位不变）。
+
+## 单 app 合并形态（2026-10-07 定案，取代"多 app"成为默认发布形态）
+
+**为什么合并**：第三方启动器（M5Launcher 那类"只装一个 app"的）装多 app 镜像只会拿到第一个
+app（菜单），核心全丢。合并后整个镜像就是**一个 app**，装一个 = 有全部机型。
+
+**合并了什么**：`launcher`（菜单） + `gbsp`（GBA） + `retro-core` 的 8 个核心
+（gnuboy=GB/GBC、nofrendo=NES、pce-go、smsplus=SMS/GG/COL、gw-emulator、handy=Lynx、snes9x）。
+实测镜像 **2,097,152 B**，比三个独立 app 相加（3.6MB）还小 —— 单 app 是一份链接，
+`retro-go`/IDF/驱动的公共代码只算一次。
+
+**机制（4 处，见 ESP32-经验沉淀 §193）**：
+1. 入口改名：`launcher/components/retro-core-main/`（搬 retro-core 的 main，
+   `-Dapp_main=rg_core_main_multi`；GBA 那个仍是 `rg_core_main`）。
+2. NVS 待续标志带"哪一套"：`RG_SINGLE_APP_CORE_NONE/GBA/MULTI`（rg_system.h），
+   由 `update_boot_config()` 按 configNs 决定，`app_main` 据此选入口。
+3. `rg_system_have_app()` 认**多个**核心名（否则菜单里 GB/NES 那批游戏全空）。
+4. 组件目录**逐个列**（避开 `retro-core/components/launcher` 的同名组件）。
+
+**真机验证（2026-10-07）**：菜单出现 GBC 入口 → 点进 → `switch_app retro-core (gbc)` →
+重启 → 核心读 `gbc.json`（**只有核心会读它，菜单不读**，这是分发起效的铁证）；
+GBC ↔ GBA 双向切换均正常。
+
+**缩放口径（同见 §194）**：规则是"**尽量取最大的整数放大倍数**"，唯一约束是放得下：
+```c
+max_zoom = min(screen_width / src_width, RG_DISPLAY_MAX_WINDOW_HEIGHT / src_height)
+zoom     = min(用户的倍数设置 custom_zoom, max_zoom)
+```
+- `RG_DISPLAY_MAX_WINDOW_HEIGHT = 620`（= 物理屏 1280 − 控制区最小 660，由底排按键底 1232 反推）
+- `RG_DISPLAY_DEFAULT_CUSTOM_ZOOM = 4.0`（= Tab5 上限；它只是上限的进一步收紧，用户调小才生效）
+- 落点全是**算出来的**：GB/GBC **4x**(640x576，控制区余 704)、GBA **3x**(720x480，余 800)、
+  NES **2x**(512x480，余 800)
+- ⚠ **别拿逻辑屏高（display.screen.height = 480）当高度上限** —— 那是"GBA 满宽画面"的高度，
+  控制区长在物理屏 1280 上。用 480 去减会把 GB 4x 一路砍到 **1x**（2026-10-07 真实翻车，
+  且递减式 `while (zoom--)` 把上限写错伪装成了"正常成功"）。物理屏高常量是 `RG_SCREEN_HEIGHT`。
+
+**凹槽判据（与缩放联动）**：画凹槽的门槛是"**边条宽度 ≥ `RG_TOUCH_PANEL_GROOVE_MIN_SIDE`(64px)**"，
+由窗口 `win_x` 算出来，不按机型名硬编码 ——
+GBA 0px 不画、**GB/GBC 4x 的 40px 不画（用户定：这里不做元素，留黑边）**、NES 104px 才画 bezel。
+⚠ 倍数是会变的（谁改了缩放，边条宽度自动跟着变），所以判据必须挂在"宽度"上而不是机型上。
+其余面板元素（分区框/铭牌/圆灯/分界线）无需随缩放改：分区框按**按键坐标**推、铭牌与灯按控制区
+重新取中、分界线画在窗口底边，都自动跟随视口。
+
+### 机型按键能力（2026-10-07）
+
+| 机型 | 肩键 L/R | X/Y |
+|---|---|---|
+| GBA | 有 | 用（调换 L/R 之后的 ABXY 组） |
+| GB/GBC | **无**（隐藏） | **连发**：Y=连发 A、X=连发 B |
+| NES | **无**（隐藏；`NES_PAD_*` 里根本没有 L/R，是真死键） | **连发**：同上 |
+
+- 无肩键 → `rg_touch_has_shoulders()`（rg_touch_skin.h）返回 false：不绘制、不命中、不进分区框，
+  "X/Y↔L/R 调换"那颗按钮同去。**键位表（touch_layout.h）不动**，它仍是坐标唯一真源。
+- 连发 = `rg_input_apply_turbo()`（rg_input.c/.h 单一真源）：每 `RG_TURBO_PERIOD`(5) 帧翻转，
+  一个周期 10 帧 ≈ **每秒 12 次**（中速）。调用点只有 `retro-core/main/main_gbc.c` 与 `main_nes.c`。
+  ⚠ **SNES 不能加**（X/Y 是真按键）；PCE/SMS/GG/GW 本次未动。
+  ⚠ 掩码里的 X/Y 保留（只多合成 A/B），菜单/热键判断不受影响。

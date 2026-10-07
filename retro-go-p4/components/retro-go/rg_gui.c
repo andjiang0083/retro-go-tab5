@@ -1376,6 +1376,56 @@ static rg_gui_event_t touch_opacity_cb(rg_gui_option_t *option, rg_gui_event_t e
     snprintf(option->value, 8, "%d%%", rg_overlay_get_alpha());
     return RG_DIALOG_VOID;
 }
+
+/* ── 触摸皮肤选择器 ─────────────────────────────────────────────────────────
+ * 设计取舍（皮肤是"看着挑"的东西，不是"读着选"的）：
+ *  ① 独立子菜单列出全部皮肤（一行一套，名字自解释），而不是在父列表里循环 ——
+ *     循环看不全"一共有几套"，用户要转到头才知道；
+ *  ② 光标移到哪一行就**立刻预览**哪一套（RG_DIALOG_FOCUS_GAINED）。对话框是居中
+ *     的小盒子（4 行 ≈ 230px，落在 y≈525..740），下面的十字键/ABXY/铭牌/圆灯
+ *     照旧可见 —— 所以预览真的看得见，不是"改完退出去再看"；
+ *  ③ A 确认 / B 回退：回退 = 恢复进菜单前那套（预览期间改的都不算）。
+ * 换皮肤只重算调色板 + 原地重画面板（不重建掩码），所以预览没有卡顿。 */
+static rg_gui_event_t skin_preview_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_FOCUS_GAINED)
+    {
+        rg_overlay_preview_skin((int)option->arg);   /* 试穿，不落盘 */
+    }
+    else if (event == RG_DIALOG_ENTER)
+    {
+        /* ⚠ 这一步不能省：rg_gui_dialog 的事件循环里，NORMAL 选项按 A 走的是
+         * `callback(&options[sel], RG_DIALOG_ENTER)` 分支，**只有回调返回 SELECT/CANCEL
+         * 才会退出循环**（返回 VOID 就原地重画，于是"能选、但不能确定"）。 */
+        return RG_DIALOG_SELECT;
+    }
+    return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t touch_skin_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_ENTER)
+    {
+        const int count = rg_overlay_skin_count();
+        const int original = rg_overlay_get_skin();
+
+        rg_gui_option_t options[count + 1];
+        for (int i = 0; i < count; i++)
+            /* value 不用 NULL：对话框要打印它，且**没人会写**它（本回调只读），
+             * 所以直接借只读字面量最省事、也免了 NULL 解引用这一路风险。 */
+            options[i] = (rg_gui_option_t){i, rg_overlay_skin_name(i),
+                                           (char *)rg_overlay_skin_short_name(i),
+                                           RG_DIALOG_FLAG_NORMAL, &skin_preview_cb};
+        options[count] = (rg_gui_option_t)RG_DIALOG_END;
+
+        const int sel = rg_gui_dialog(_("Touch skin"), options, original);
+        /* B 回退：把预览过的皮肤还原（用户在菜单里"逛了一圈"不该改掉设置） */
+        rg_overlay_set_skin(sel == RG_DIALOG_CANCELLED ? original : sel);
+        return RG_DIALOG_REDRAW;
+    }
+    snprintf(option->value, 16, "%s", rg_overlay_skin_short_name(rg_overlay_get_skin()));
+    return RG_DIALOG_VOID;
+}
 #endif
 
 static rg_gui_event_t timezone_cb(rg_gui_option_t *option, rg_gui_event_t event)
@@ -1487,6 +1537,11 @@ static rg_gui_event_t border_update_cb(rg_gui_option_t *option, rg_gui_event_t e
         {
             rg_display_set_border(strlen(path) ? path : NULL);
             free(path);
+            #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+            /* 边框图与"皮肤面板"共用同一个底图位：选了图 → 用户的图优先；
+             * 选回 <None> → 皮肤面板接回来（否则控制区会停在纯黑，像是坏了）。 */
+            rg_overlay_refresh_panel();
+            #endif
             return RG_DIALOG_REDRAW;
         }
     }
@@ -1666,6 +1721,7 @@ void rg_gui_options_menu(void)
          * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
          * 透明度仍可调，它不会让人失去输入。 */
         {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
+        {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
         #endif
         {0, _("Timezone"),      "-", RG_DIALOG_FLAG_NORMAL, &timezone_cb},
         {0, _("Language"),      "-", RG_DIALOG_FLAG_NORMAL, &language_cb},
@@ -1690,6 +1746,7 @@ void rg_gui_options_menu(void)
          * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
          * 透明度仍可调，它不会让人失去输入。 */
         {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
+        {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
         #endif
         {0, _("Emulator options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},
         RG_DIALOG_END,

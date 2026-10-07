@@ -218,10 +218,18 @@ void rg_system_restart(void) __attribute__((noreturn));
 void rg_system_exit(void) __attribute__((noreturn));
 void rg_system_switch_app(const char *part, const char *name, const char *args, uint32_t flags) __attribute__((noreturn));
 bool rg_system_have_app(const char *app);
+/* ── 单 app 形态的"待续核心"标志值（一个 app 里可以编进**多套**核心，光有"有/无"不够）──
+ * 见 rg_system.c 的 single_app_set_core_id()。launcher 的 app_main 靠它决定这次起哪一套。 */
+#define RG_SINGLE_APP_CORE_NONE  0   /* 无待续：进菜单 */
+#define RG_SINGLE_APP_CORE_GBA   1   /* 起 gbsp（GBA，入口 rg_core_main） */
+#define RG_SINGLE_APP_CORE_MULTI 2   /* 起 retro-core 的分发器（入口 rg_core_main_multi，
+                                       承担 gb/gbc/nes/pce/sms/gg/col/gw/snes/lnx） */
+
 /* 单 app 形态（编译期 RG_SINGLE_APP）：这次开机该进模拟器核心吗？"取走即清" ——
- * 返回真的同时把标志清掉，防止核心启动即崩溃时反复重启进核心（那种情况会回落菜单）。
+ * 返回值同时把标志清掉，防止核心启动即崩溃时反复重启进核心（那种情况会回落菜单）。
+ * 返回上面三个标志值之一（双 app 形态永远返回 NONE）。
  * 语义与"双 app 形态下 otadata 指向核心分区"等价，定义见 rg_system.c 的 update_boot_config()。 */
-bool rg_system_single_app_take_core_pending(void);
+int rg_system_single_app_take_core_pending(void);
 void rg_system_set_indicator(rg_indicator_t indicator, bool on);
 bool rg_system_get_indicator(rg_indicator_t indicator);
 void rg_system_set_indicator_mask(rg_indicator_t indicator, bool on);

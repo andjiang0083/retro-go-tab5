@@ -166,7 +166,12 @@ void sms_main(void)
 
     while (true)
     {
+        /* ⚠ 连发（turbo）：SMS / GG 的触摸屏用 X/Y 做"按住连发 A/B"（Y=连发A、X=连发B）。
+         *   **COL（ColecoVision）同核心但不要** —— 它带数字键盘、手感不同（用户 2026-10-07 定）。
+         *   见 rg_input.h。 */
         uint32_t joystick = rg_input_read_gamepad();
+        if (strcmp(app->configNs, "col") != 0)
+            joystick = rg_input_apply_turbo(joystick);
 
         if (joystick & (RG_KEY_MENU|RG_KEY_OPTION))
         {

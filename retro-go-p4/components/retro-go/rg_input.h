@@ -122,6 +122,13 @@ bool rg_input_wait_for_key(rg_key_t mask, bool pressed, int timeout_ms);
 const char *rg_input_get_key_name(rg_key_t key);
 const char *rg_input_get_key_mapping(rg_key_t key);
 uint32_t rg_input_read_gamepad(void);
+/* X/Y = A/B 的连发（turbo）。**只给 GB/GBC/NES 调用** —— 那三台机器没有肩键、也没有第 3/4 个
+ * 动作键，触摸屏上的 X/Y 本来空着（核心的按键映射根本不读它们）。借它们做"按住即连发"是复古
+ * 掌机的惯例。映射：**Y = 连发 A，X = 连发 B**（用户 2026-10-07 定）。
+ * ⚠ SNES 的 X/Y 是真按键，绝不能调用本函数。 */
+#define RG_TURBO_PERIOD 5   /* 每这么多帧翻转一次"这轮出不出手"；一个完整周期 2×5=10 帧
+                             * （60fps ≈ 每秒 12 次）。调速率只改这一个数。 */
+uint32_t rg_input_apply_turbo(uint32_t keys);
 int rg_input_read_keyboard(const rg_keyboard_layout_t *map);
 rg_battery_t rg_input_read_battery(void);
 bool rg_input_read_gamepad_raw(uint32_t *out);

@@ -499,14 +499,25 @@ void app_main(void)
 #if defined(RG_SINGLE_APP)
     /* ── 单 app 形态的分发 ───────────────────────────────────────────────────────
      * 菜单与模拟器核心编在同一个 app 里，靠"重启自己 + NVS 待续标志"切换（写标志的是
-     * components/retro-go/rg_system.c 的 update_boot_config；核心入口被改名为 rg_core_main，
-     * 见 launcher/components/gbsp-core）。
+     * components/retro-go/rg_system.c 的 update_boot_config；核心入口被改名，见
+     * launcher/components/gbsp-core 与 launcher/components/retro-core-main）。
+     *
+     * 合并形态（2026-10-07）下同一个 app 里编了**两套**核心入口，所以标志不再只是"有/无"，
+     * 而是"这次该起哪一套"：
+     *   RG_SINGLE_APP_CORE_GBA   → rg_core_main（gbsp，GBA）
+     *   RG_SINGLE_APP_CORE_MULTI → rg_core_main_multi（retro-core 的分发器，它自己再按
+     *                              configNs 分到 gb/gbc/nes/pce/sms/gg/col/gw/snes/lnx）
+     *
      * ⚠ 必须放在任何 rg_* 初始化之前：核心进去后会自己跑一遍完整的 rg_system_init()，
      *   那时它会按 NS_BOOT 里的名字取到自己的 configNs 与 romPath（与双 app 形态一致）。
      * ⚠ 核心永不返回（退出走 rg_system_exit → 清标志 → 重启回本函数），所以下面不会被执行。 */
     extern void rg_core_main(void);
-    if (rg_system_single_app_take_core_pending())
+    extern void rg_core_main_multi(void);
+    const int pending_core = rg_system_single_app_take_core_pending();
+    if (pending_core == RG_SINGLE_APP_CORE_GBA)
         rg_core_main();
+    else if (pending_core == RG_SINGLE_APP_CORE_MULTI)
+        rg_core_main_multi();
 #endif
 
     const rg_handlers_t handlers = {

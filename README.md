@@ -62,16 +62,19 @@ Honest status, measured on the device (not aspirational):
 
 | Component | State | Notes |
 |---|---|---|
-| Launcher (ROM browser, menus) | ✅ Working | Touch-driven, 1:1 rendering (no scaling artifacts) |
+| Launcher (ROM browser, menus) | ✅ Working | Touch-driven, 1:1 rendering (no scaling artifacts). First-run guide card on the GBA page (bilingual: A opens the list, where ROMs go) |
 | GBA core (gpSP) | ✅ Working | Interpreter + **RISC-V dynarec** (JIT), ~2x faster than the interpreter |
+| **Cores — 11 consoles** | ✅ Working | GBA, GB, GBC, NES, SNES, SMS, Game Gear, ColecoVision, PC Engine, Lynx, Game & Watch — each with its own window size and integer zoom |
+| **Touch skins** | ✅ Working | Four switchable control-panel palettes (NVS `TouchSkin`). Only the control area is themed — the game screen and its letterbox bars are never touched |
+| **Per-console controls** | ✅ Working | Decided by **what the real controller has** (not by what the upstream core mapped). SNES gets real X/Y/L/R via a new default "Full" preset; GB/GBC/NES/SMS/GG get X/Y as turbo; ColecoVision gets neither |
 | Audio | ✅ Working | ES8388 codec over I2S, 32 kHz, no frame-rate impact |
-| Savestates | ✅ Working | Core-level state (~416 KB) written to the SD card |
+| Savestates | ✅ Working | Core-level state written to and restored from the SD card |
 | Touch virtual gamepad | ✅ Working | Portrait layout: the 720x480 game screen is pinned to the top, the gamepad sits in the control area below it (D-pad bottom-left, diamond ABXY bottom-right with per-key colours, L/R in the top corners, SELECT/START/MENU along the bottom). Never overlaps the game |
 | Chinese (CJK) support | ✅ Working | Built-in 3773-glyph CJK font (full GB2312 level-1, OFL-1.1) **compiled into the firmware image** — works no matter how the firmware was installed (a standalone font *partition* gets recreated as a FAT partition by installers like M5Launcher, which would silently lose it and turn Chinese text into boxes); all 197 UI strings localized |
 | Display path | ✅ Working | Block transpose into on-chip SRAM + AXI-QoS priority, and a bounded retry instead of silently dropped frames (v0.3 rework: ~30 fully-rendered frames/sec, no more drift over time) — see [Performance](#performance) |
 | Battery gauge | ✅ Working | INA226 power monitor on the BSP I2C bus (0x41), 2S pack voltage → percentage; shown as the coloured indicator light in the control area (blinks below 10%, breathes while charging) |
 | USB-C charging | ✅ Working | The board's charge-enable (`CHG_EN`) is left **low** by the vendor BSP's IO-expander init (its own comment claims otherwise), so the IP2326 charge IC stays disabled and the pack never charges. The firmware now asserts it explicitly after init, mirroring M5's own demo. Measured on hardware: **-0.75 ~ -0.87 A** into the pack, pack voltage climbing (7627 → 7745 mV) |
-| Other cores (NES/SNES/MD/PCE/...) | ❌ Not ported | The retro-go tree carries them; only the launcher + GBA are wired for this target |
+| Other cores in upstream retro-go (MD, MSX, ...) | ❌ Not ported | The 11 consoles above are wired for this target; the remaining retro-go cores are not |
 
 **Logical speed is full speed**: GBA titles run at 59-60 fps of emulated time with audio in sync.
 What is *not* yet at 60 is the number of frames the display path actually pushes to the panel (see below).
@@ -139,12 +142,31 @@ below the game (the game viewport is 720x480 anchored to the top of the portrait
 
 - **D-pad** — control area, bottom-left
 - **A / B / X / Y** — control area, bottom-right, diamond layout, each key its own colour
-- **L / R** — top corners of the control area (GBA shoulder buttons)
-- **X / Y** — the core's Turbo A / Turbo B (hold to auto-fire)
+- **L / R** — top corners of the control area (consoles that have shoulder buttons: **GBA and SNES**)
+- **Swap L/R with X/Y** — GBA only
+- **X / Y** — depends on the console:
+  - **GB / GBC / NES / SMS / Game Gear** — Turbo A / Turbo B (hold to auto-fire)
+  - **SNES** — real X / Y buttons (they are *not* turbo)
+  - **GBA** — real X / Y buttons
+  - **ColecoVision / PC Engine / Lynx / Game & Watch** — not shown (the real hardware has no X/Y)
 - **START / SELECT** — bottom centre
 - **MENU** — open the in-game menu (savestates, options, reset)
 - **Battery light** — centre of the control area: green ≥60% / amber 20-60% / red 10-20% / blinks below 10%, breathes while charging
 - **Language** — Options → Language switches the UI to Chinese (English by default; the choice persists in NVS)
+- **Touch skin** — four switchable control-panel colour palettes (Options). Only the control area is themed; the game screen is never touched
+
+### Controls per console
+
+The layout follows **what the real controller has**, not what the upstream core happened to map:
+
+| Console | Face buttons | Shoulders | Turbo |
+|---|---|---|---|
+| GBA | X / Y / A / B | L / R (+ swap button) | — |
+| SNES | X / Y / A / B | L / R | — |
+| GB / GBC / NES | A / B | — | X / Y |
+| SMS / Game Gear | A / B | — | X / Y |
+| ColecoVision | A / B | — | — |
+| PC Engine / Lynx / Game & Watch | A / B | — | — |
 
 Layout reference: [docs/touch-layout-p2.png](docs/touch-layout-p2.png) (landscape era) ·
 [docs/screenshot-portrait.png](docs/screenshot-portrait.png) (current portrait layout)

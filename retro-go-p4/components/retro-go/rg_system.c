@@ -181,13 +181,18 @@ IRAM_ATTR void esp_panic_putchar_hook(char c)
 #define RG_STR(x)      RG_STR_IMPL(x)
 #define RG_SINGLE_APP_CORE_STR RG_STR(RG_SINGLE_APP_CORE)
 
-static void single_app_set_core_pending(bool on)
+/* ── 单 app 形态的"待续核心"标志值（2026-10-07 起一个 app 里有**两套**核心）──────────
+ * 合并前 app 里只有 gbsp 一个核心，"有/无"就够用；现在 gbsp(GBA) 与 retro-core 的多核心
+ * 分发器（gb/gbc/nes/pce/sms/gg/col/gw/snes/lnx）同时编在镜像里，光有"有/无"分不出该起哪个。
+ * 常量定义在 rg_system.h（launcher 的 app_main 也要用）。 */
+
+static void single_app_set_core_id(uint8_t id)
 {
     nvs_handle_t h;
     if (nvs_open(RG_SINGLE_APP_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
         return;
-    if (on)
-        nvs_set_u8(h, RG_SINGLE_APP_NVS_KEY, 1);
+    if (id)
+        nvs_set_u8(h, RG_SINGLE_APP_NVS_KEY, id);
     else
         nvs_erase_key(h, RG_SINGLE_APP_NVS_KEY);
     nvs_commit(h);
@@ -195,7 +200,7 @@ static void single_app_set_core_pending(bool on)
 }
 #endif
 
-bool rg_system_single_app_take_core_pending(void)
+int rg_system_single_app_take_core_pending(void)
 {
 #if defined(ESP_PLATFORM) && defined(RG_SINGLE_APP)
     /* 本函数在 rg_system_init() 之前被调用，那时 NVS 可能还没初始化 —— 先确保它可用。
@@ -205,7 +210,7 @@ bool rg_system_single_app_take_core_pending(void)
     nvs_handle_t h;
     uint8_t v = 0;
     if (nvs_open(RG_SINGLE_APP_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
-        return false;
+        return RG_SINGLE_APP_CORE_NONE;
     if (nvs_get_u8(h, RG_SINGLE_APP_NVS_KEY, &v) == ESP_OK && v)
     {
         /* 取走即清：标志只对"这一次"生效。核心自己从 NS_BOOT 取 romPath/configNs（不依赖
@@ -214,12 +219,12 @@ bool rg_system_single_app_take_core_pending(void)
         nvs_erase_key(h, RG_SINGLE_APP_NVS_KEY);
         nvs_commit(h);
         nvs_close(h);
-        return true;
+        return v;   /* 1 = GBA 那套，2 = 多核心那套 */
     }
     nvs_close(h);
-    return false;
+    return RG_SINGLE_APP_CORE_NONE;
 #else
-    return false;   /* 双 app 形态：进哪个 app 由 otadata 决定，这里永远为假 */
+    return RG_SINGLE_APP_CORE_NONE;   /* 双 app 形态：进哪个 app 由 otadata 决定 */
 #endif
 }
 
@@ -242,7 +247,16 @@ static bool update_boot_config(const char *partition, const char *name, const ch
      * 那里取 configNs 与 romPath。名字为空 = 回菜单（rg_system_exit 正是 name=0），
      * 这时必须清标志，否则会自己反复重启进核心出不来。 */
     (void)partition;
-    single_app_set_core_pending(app.initialized && name != NULL && name[0] != 0);
+    /* name 是 configNs（"gba" / "gb" / "nes" / ...）—— 按它决定该起**哪一套**核心入口：
+     * gba 走 gbsp 的单核心入口，其余全走 retro-core 的多核心分发器。
+     * name 为空 = 回菜单（rg_system_exit 正是 name=0），这时必须清标志，
+     * 否则会自己反复重启进核心出不来。 */
+    {
+        uint8_t core_id = RG_SINGLE_APP_CORE_NONE;
+        if (app.initialized && name && name[0])
+            core_id = (strcmp(name, "gba") == 0) ? RG_SINGLE_APP_CORE_GBA : RG_SINGLE_APP_CORE_MULTI;
+        single_app_set_core_id(core_id);
+    }
 #elif defined(ESP_PLATFORM)
     // Check if the OTA settings are already correct, and if so do not call esp_ota_set_boot_partition
     // This is simply to avoid an unecessary flash write...
@@ -269,10 +283,21 @@ static void update_memory_statistics(void)
     statistics.freeMemoryInt = heap_info.total_free_bytes;
     statistics.freeBlockInt = heap_info.largest_free_block;
     statistics.totalMemoryInt = heap_info.total_free_bytes + heap_info.total_allocated_bytes;
-    heap_caps_get_info(&heap_info, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    statistics.freeMemoryExt = heap_info.total_free_bytes;
-    statistics.freeBlockExt = heap_info.largest_free_block;
-    statistics.totalMemoryExt = heap_info.total_free_bytes + heap_info.total_allocated_bytes;
+
+    /* ⚠ PSRAM 堆有 20+MB，heap_caps_get_info() 会走 tlsf_walk_pool() **遍历每一个块**，
+     *   而且整段在**关中断**的保护下 —— 堆一旦碎片化（SNES 读档正是分配大块的时候），
+     *   这个遍历就能超过**中断看门狗**的时限，把设备打成 "Interrupt wdt timeout" 并反复重启。
+     *   （真机教训：表面看是"进 SNES 读档蓝屏"，backtrace 却指向 system_monitor_task →
+     *     tlsf_walk_pool —— 游戏核心根本没崩，是统计任务把自己走死了。它本来就贴着悬崖边，
+     *     任何内存布局变化都可能把碎片推过线。）
+     *   这三个值只用于日志 / 统计文件 / 菜单显示，精度无所谓 → 全换 O(1) 的 API：
+     *     free  = heap_caps_get_free_size()   （精确，不遍历）
+     *     total = heap_caps_get_total_size()  （堆总容量，比"free+allocated"更直白）
+     *     block = 不再取"最大空闲块"（那必须遍历），用 free 顶上。
+     *   内部 RAM 那块堆只有几百 KB，遍历代价可忽略，保持原样以留精确值。 */
+    statistics.freeMemoryExt = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    statistics.totalMemoryExt = heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    statistics.freeBlockExt = statistics.freeMemoryExt;
 
     statistics.freeStackMain = uxTaskGetStackHighWaterMark(tasks[0].handle);
 #else
@@ -1097,11 +1122,13 @@ bool rg_system_have_app(const char *app)
 {
 #if defined(ESP_PLATFORM)
 #if defined(RG_SINGLE_APP)
-    /* 单 app 形态：核心被编进同一个镜像，没有独立分区可查 —— 唯一的"已安装应用"就是编进来的
-     * 那个核心（RG_SINGLE_APP_CORE，默认为 gbsp，见本文件上方；launcher 是菜单自己，不算）。
-     * ⚠ 这条判断决定菜单会不会列出该核心的游戏（applications.c 的 application() 早退）——
-     *   漏了就是"菜单里一个游戏都没有"。 */
-    return app && !strcmp(app, RG_SINGLE_APP_CORE_STR);
+    /* 单 app 形态：核心被编进同一个镜像，没有独立分区可查。
+     * ⚠ 编进来的是**两套**：gbsp（RG_SINGLE_APP_CORE）承担 "gba" 的菜单条目，
+     *   retro-core 的多核心分发器承担 gb/gbc/nes/pce/sms/gg/col/gw/snes/lnx 的条目。
+     *   这里少认一个，菜单里对应的那一批游戏就会全空（applications.c 的 application() 早退）。 */
+    if (!app)
+        return false;
+    return !strcmp(app, RG_SINGLE_APP_CORE_STR) || !strcmp(app, "retro-core");
 #else
     return esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, app) != NULL;
 #endif
