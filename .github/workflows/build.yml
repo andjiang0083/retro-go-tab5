@@ -1,8 +1,9 @@
 # .github/workflows/build.yml — retro-go-tab5 构建回归门禁
 #
-# 职责（只有这两件）：
+# 职责（只有这三件）：
 #   1) 干净克隆 + 全量构建能成功（--no-networking；增量构建会掩盖 P4 无射频的配置错误）
-#   2) 产物是「真的 merged 镜像」（三个结构锚点）+ IDF 版本与仓库记录一致
+#   2) 产物是「真的 merged 镜像」（三个结构锚点 + 512KB 下限）
+#   3) 仓库里不含「只在一台机器上成立」的绝对路径（别人克隆必须也能构建）
 # 不做：不验证帧率/显示通路/崩溃（无硬件，靠真机看屏 + SD 卡 /crash.log）；不做发布（M5Burner 手动）。
 # 禁止：continue-on-error / 跳过步骤 / 放宽门禁来换绿。
 #
@@ -10,7 +11,9 @@
 #   - 干净克隆构建成功：退出码 0、70 秒（18 核）／5.5.4 上 132 秒，两者产物均为 VALID
 #   - 产物真实路径：retro-go-p4/retro-go_<版本>_tab5.img（不是文档里写的 build/tab5-retro-go.img）
 #   - 三锚点：0x2000=E9 / 0x8000=50AA / 0x10020=ABCD5432（与本地发布门禁脚本的判定逐条一致）
-#   - 构建会改被跟踪的 */dependencies.lock（记录 IDF 版本）→ 反过来当「环境一致性」门禁用
+#   - IDF 版本：直接读 $IDF_PATH/tools/cmake/version.cmake 断言（不用间接信号）
+#   - 首跑（run #1）真实教训：被跟踪的 */dependencies.lock 是生成物、记的是生成机的绝对路径
+#     ⇒ 换台机器必然 CMake 报错。已改为不跟踪，并加了第 5 步「可移植性门禁」防回归。
 
 name: build-tab5
 
@@ -28,7 +31,8 @@ concurrency:
 
 env:
   # 与开发树 tools/idf-env.sh（~/esp/esp-idf-v5.5 = 5.5.2）一致。
-  # 5.5.4 上也能构建成功，但产出字节不同，且会把 dependencies.lock 改写成 5.5.4 —— 门禁会因此变红，这是有意的。
+  # 5.5.4 上也能构建成功，但产出字节不同（同为 2293760 B，约 1.94 MB 字节有差异）。
+  # 版本由第 2 步直接读 version.cmake 断言，不依赖任何间接信号。
   IDF_VERSION: "v5.5.2"
 
 jobs:
@@ -101,18 +105,27 @@ jobs:
           python3 -c "import sys;d=open(sys.argv[1],'rb').read();A=[(0x2000,b'\xe9'),(0x8000,b'\xaa\x50'),(0x10020,(0xABCD5432).to_bytes(4,'little'))];bad=[hex(o) for o,m in A if d[o:o+len(m)]!=m];ok=len(d)>=524288 and not bad;print('VALID' if ok else 'INVALID size=%d bad_anchors=%s'%(len(d),bad));sys.exit(0 if ok else 1)" "$IMG"
           shasum -a 256 "$IMG" launcher/build/launcher.bin gbsp/build/gbsp.bin | tee ../SHA256SUMS.txt
 
-      # ── 5. 门禁：CI 的 IDF 版本必须与仓库记录一致 ──────────────────────
-      # 构建会把被跟踪的 */dependencies.lock 里的 idf.version 写成当前 IDF 版本。
-      # 用 v5.5.2 构建 ⇒ 该文件不变（实测：5.5.2 构建后工作区干净；5.5.4 会改成 5.5.4）。
-      # 所以「lock 没被动过」==「CI 环境和仓库记录是同一个 IDF」，白捡的一致性门禁。
-      - name: Assert IDF version matches dependencies.lock
+      # ── 5. 门禁：仓库里不能有「只在一台机器上成立」的路径 ────────────────
+      # 首跑（run #1）实测：仓库跟踪的 */dependencies.lock 是组件管理器生成物，里面记的是
+      # 生成时那台机器的绝对路径（/Users/<某人>/.../vendor/managed_components/...）。
+      # 在生成它的机器上构建没问题（那个路径真的存在，本项目曾因此一直没发现），
+      # 换台机器/CI 则直接：
+      #   CMake Error: The "path" field in the manifest file ... does not point to a directory
+      # ⇒ 这类文件已改为不跟踪（.gitignore 覆盖，构建时自动重建）。
+      # 本步是防回归门禁：谁再把它提交回来，CI 立刻红。两条断言都机器可判，不靠人记规矩。
+      - name: Portability gate (no machine-specific paths)
         run: |
           set -euo pipefail
-          if ! git diff --exit-code -- '*/dependencies.lock'; then
-            echo "::error::dependencies.lock 被改写 ⇒ CI 实际用的 IDF 与仓库记录不一致（见上方 diff）"
+          if git grep -nE '/(Users|home)/[A-Za-z0-9._-]+/' -- .; then
+            echo "::error::跟踪文件里出现个人绝对路径 ⇒ 别人克隆后必然构建失败（见上方行号）"
             exit 1
           fi
-          echo "dependencies.lock 未被改写：CI 的 IDF 与仓库记录一致"
+          if git ls-files | grep -q 'dependencies\.lock$'; then
+            echo "::error::dependencies.lock 被跟踪 —— 它是含机器绝对路径的生成物，必须保持不跟踪"
+            git ls-files | grep 'dependencies\.lock$' | sed 's/^/     /'
+            exit 1
+          fi
+          echo "可移植性门禁通过：无机器专属路径，dependencies.lock 未被跟踪"
 
       # ── 6. 上传产物（含 SHA256SUMS）──────────────────────────────────────
       - name: Upload artifacts

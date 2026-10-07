@@ -8,9 +8,14 @@ IMG="$1"
 LOG_SECS="${2:-30}"
 [ -z "$IMG" ] && { echo "用法: $0 <merged.bin> [日志秒数]"; exit 2; }
 
-export IDF_PYTHON_ENV_PATH=/Users/jiangweizhong/.espressif/python_env/idf5.5_py3.12_env
-source ~/esp/esp-idf-v5.5/export.sh >/dev/null 2>&1
-cd ~/esp32/retro-go-tab5 || exit 1
+# ⚠ 不要在这里写死个人路径 —— 别人机器上克隆下来会直接跑不起来。
+# 可覆盖的环境变量：IDF_ENV_SH（ESP-IDF 的 export.sh，默认 $HOME/esp/esp-idf-v5.5/export.sh）、
+#                  DEV_TREE（仓库根，默认 = 本脚本所在目录的上一级）、IDF_PYTHON_ENV_PATH（可选）。
+: "${IDF_ENV_SH:=$HOME/esp/esp-idf-v5.5/export.sh}"
+: "${DEV_TREE:=$(cd "$(dirname "$0")/.." && pwd)}"
+if [ -n "${IDF_PYTHON_ENV_PATH:-}" ]; then export IDF_PYTHON_ENV_PATH; fi
+. "$IDF_ENV_SH" >/dev/null 2>&1
+cd "$DEV_TREE" || exit 1
 
 echo "=== FLASH START $(date '+%F %T')  $IMG ==="
 # ⚠ 刷写期可能 BOD 欠压复位 + USB 重新枚举：esptool 会抛 OSError/串口消失，

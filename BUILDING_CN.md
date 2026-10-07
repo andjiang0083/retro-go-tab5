@@ -99,13 +99,17 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 ## CI（GitHub Actions）
 
-`.github/workflows/build.yml` 在 push / PR 到 `main` 时跑一次**干净克隆的全量构建**，只回答两个问题：
+`.github/workflows/build.yml` 在 push / PR 到 `main` 时跑一次**干净克隆的全量构建**，只回答三个问题：
 
 1. 能不能构建（`--no-networking`，全量 —— 增量构建会掩盖配置错误）；
-2. 产物是不是**真的合并镜像**：三个结构锚点 + 512KB 下限，且 `*/dependencies.lock` 没被改写。
+2. 产物是不是**真的合并镜像**：三个结构锚点 + 512KB 下限；
+3. 仓库里**有没有「只在一台机器上成立」的路径**，以及用的 IDF 是不是 5.5.2。
 
-关于第 2 条里的 `dependencies.lock`：构建会把它记录里的 `idf.version` 写成当前 IDF 的版本，
-所以「这个文件没被动过」==「CI 用的 IDF 与仓库记录的是同一个版本」—— 这是顺带白捡的环境一致性门禁。
+关于第 3 条（CI 首跑就是这么红的）：`*/dependencies.lock` 是组件管理器生成的文件，里面记的是
+**生成时那台机器的绝对路径**（`/Users/<某人>/.../vendor/managed_components/...`）。这种文件在生成它的机器上
+构建毫无问题 —— 那个路径真的存在，所以本地一直没暴露 —— 但换台机器就会
+`CMake Error: The "path" field in the manifest file ... does not point to a directory`。
+因此这三个 lock **不跟踪**（`.gitignore` 覆盖，构建时自动重建）；CI 里两条断言负责防止它再被提交回来。
 
 它**不能**验证帧率、显示通路、崩溃、时序 —— 没有硬件无从验证（看屏幕 / 读 SD 卡 `/crash.log`）。
 它也不需要联网装组件（`vendor/` 已入库）。

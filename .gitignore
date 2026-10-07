@@ -5,6 +5,15 @@ build/
 sdkconfig.old
 dependencies.lock.bak
 
+# The component manager writes these. Each one records the ABSOLUTE path of the vendored
+# components on the machine that generated it (e.g. /Users/<someone>/.../vendor/...), which
+# makes a clean clone fail on any other machine with:
+#   CMake Error: The "path" field in the manifest file ... does not point to a directory
+# (You cannot reproduce it on the machine that generated the file — there the path exists.)
+# The build regenerates these in place, so they are not tracked.
+# Regression gate: CI step 5 "Portability gate" in .github/workflows/build.yml.
+dependencies.lock
+
 # generated per-app sdkconfig copies (the real, tracked ones live in
 # components/retro-go/targets/<target>/sdkconfig)
 retro-go-p4/*/sdkconfig

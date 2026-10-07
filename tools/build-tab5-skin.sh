@@ -4,12 +4,19 @@
 # ⚠ 长任务：本脚本必须在后台跑、日志落盘（用户硬约束：别在前台/管道 tail）
 set -o pipefail
 
-export IDF_PYTHON_ENV_PATH=/Users/jiangweizhong/.espressif/python_env/idf5.5_py3.12_env
-source ~/esp/esp-idf-v5.5/export.sh >/dev/null 2>&1
+# ⚠ 不要在这里写死个人路径 —— 别人机器上克隆下来会直接跑不起来。
+# 需要覆盖时用环境变量（默认值 = 本机开发环境）：
+#   IDF_ENV_SH           ESP-IDF 的 export.sh（默认 $HOME/esp/esp-idf-v5.5/export.sh，即 5.5.2）
+#   DEV_TREE             仓库根（默认 = 本脚本所在目录的上一级，自包含）
+#   IDF_PYTHON_ENV_PATH  想让构建用某个 python 环境时再设（不设就交给 export.sh 决定）
+: "${IDF_ENV_SH:=$HOME/esp/esp-idf-v5.5/export.sh}"
+: "${DEV_TREE:=$(cd "$(dirname "$0")/.." && pwd)}"
+if [ -n "${IDF_PYTHON_ENV_PATH:-}" ]; then export IDF_PYTHON_ENV_PATH; fi
+. "$IDF_ENV_SH" >/dev/null 2>&1
 
-cd ~/esp32/retro-go-tab5/retro-go-p4 || exit 1
+cd "$DEV_TREE/retro-go-p4" || exit 1
 
-LOGDIR=~/esp32/retro-go-tab5/.buildlogs
+LOGDIR="$DEV_TREE/.buildlogs"
 mkdir -p "$LOGDIR"
 
 echo "=== BUILD START $(date '+%F %T') mode=${1:-release} ==="
