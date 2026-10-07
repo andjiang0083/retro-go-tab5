@@ -506,20 +506,11 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
     /* ① 整屏底色 */
     panel_rect(panel, 0, 0, RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, to565(panel_bg));
 
-    /* ② 屏幕凹槽（比视口外扩，读成"屏幕嵌在面板里"）
-     * 围着**视口**画：整数缩放留下的边条消不掉，凹槽是让边条被读成 bezel 而不是"死区"的做法。
-     * ⚠ 判据是**边条够不够宽**，不是"有没有边条"：GBA 边条 0（画面 720 全宽，画了全在屏外，
-     *   白算）；GB/GBC 4x 边条只有 40px，画出来是一条贴边的脏线而不是"屏幕框"，**用户定：
-     *   这里不做元素、就留黑边**；NES 边条 104px 才值得画。
-     *   ⚠ 别按机型名硬编码 —— 边条宽度是窗口(win_x/win_w)算出来的，以后谁改了倍数自动跟着走。 */
-    if (win_x >= RG_TOUCH_PANEL_GROOVE_MIN_SIDE)
-    {
-        const int gx = win_x - RG_TOUCH_PANEL_GROOVE_PAD, gy = 0;
-        const int gw = win_w + 2 * RG_TOUCH_PANEL_GROOVE_PAD;
-        const int gh = ctrl_top - 3;
-        panel_rrect(panel, gx, gy, gw, gh, RG_TOUCH_PANEL_GROOVE_R,
-                    to565(groove_fill), true, to565(groove_line), true);
-    }
+    /* ② 屏幕凹槽 —— **已取消**（用户 2026-10-07："把所有支持机种的屏幕附近的边、属于皮肤的部分
+     *    都去掉，屏幕不需要主题"）。所以画面四周不再有任何皮肤元素：凹槽/描边全不画，
+     *    GBA 全宽、GB/GBC 的 40px 窄边、NES 的 104px 宽边，一律只是面板底色（黑边）。
+     *    groove_fill / groove_line 与 RG_TOUCH_PANEL_GROOVE_* 常量保留在文件里（结构不动），
+     *    但不再参与绘制 —— 以后想给某个机型加回"屏幕嵌在面板里"的读感，就在这里重画。 */
 
     /* ③ 画面与控制区的分界线 —— **已取消**（用户 2026-10-07：全机种都不要画面底部那条亮线，
      *    画面直接贴到控制区底色上，不再用横线分隔）。
