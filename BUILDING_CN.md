@@ -118,7 +118,10 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 **首次真实耗时（run #6，无任何缓存，两种形态都建）**：整轮 **7 分 49 秒** —— checkout 51s（必须带全历史与 tag）、
 装 ESP-IDF **226s**（官方 action 用 EIM 拉 5.5.2 + 工具链，是最大的一块）、双 app 构建 121s、单 app 构建 54s、
-门禁与上传 <5s。产物 artifact 4,180,865 B —— 两个合并镜像 2293760 / 2097152 B、两个 app bin、`SHA256SUMS.txt`（只列两个镜像，见下）与两份构建日志；runner 磁盘无压力（78 GB 可用）。
+门禁与上传 <5s。
+⚠ 会**浮动**：三次绿灯实测 7 分 49 秒 / 9 分 38 秒（同一份代码，IDF 安装 226~263s、双 app 构建 121~204s、
+checkout 5~55s 都随 runner 变）—— 别把上面那组数字当 SLA，当"量级"看；要提速就该缓存 IDF 工具链（占一半以上）。
+产物 artifact 4,180,865 B —— 两个合并镜像 2293760 / 2097152 B、两个 app bin、`SHA256SUMS.txt`（只列两个镜像，见下）与两份构建日志；runner 磁盘无压力（78 GB 可用）。
 
 > `SHA256SUMS.txt` **只列两个合并镜像**：单 app 构建会重建 `launcher.bin`/`gbsp.bin`，上传时它们已被覆盖（本轮实测抓到过一次清单与文件对不上）。bin 仍然上传供排查，但清单只描述不会被后续步骤改写的文件。
 

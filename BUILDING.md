@@ -126,9 +126,12 @@ and open a PR — CI must fail on the compile error.
 
 **Real timings (run #6, no cache at all, both forms built)**: **7 min 49 s** end to end — checkout 51 s (needs the full
 history and tags), ESP-IDF install **226 s** (the official action pulls 5.5.2 plus toolchains via EIM — the biggest
-chunk), dual-app build 121 s, single-app build 54 s, gates and upload <5 s. The artifact is 4,180,865 B: both merged
-images (2293760 / 2097152 B), both app bins, `SHA256SUMS.txt` and both build logs; disk on the runner is a non-issue
-(78 GB free).
+chunk), dual-app build 121 s, single-app build 54 s, gates and upload <5 s.
+⚠ It **varies**: across three green runs, 7 min 49 s and 9 min 38 s for identical code (IDF install 226–263 s, dual-app
+build 121–204 s, checkout 5–55 s all move with the runner) — treat those figures as an order of magnitude, not an SLA.
+If you need it faster, cache the IDF toolchain (it is more than half of the time).
+The artifact is 4,180,865 B: both merged images (2293760 / 2097152 B), both app bins, `SHA256SUMS.txt` and both build
+logs; disk on the runner is a non-issue (78 GB free).
 
 > `SHA256SUMS.txt` lists **only the two merged images**: the single-app build rebuilds `launcher.bin`/`gbsp.bin`, so by
 > upload time those have been overwritten (this run caught exactly that mismatch). The bins are still uploaded for
