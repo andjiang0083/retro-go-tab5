@@ -1,3 +1,7 @@
+# ⚠ 这**不是** GitHub workflow —— GitHub 只执行 `.github/workflows/` 下的文件。
+#   本文件是 **M5Burner 发布清单**：`~/esp32/tools/ledger.py` 按 `*/publish.yaml` 通配解析它
+#   （条目名↔项目/设备/版本/bin/封面 的台账来源），所以**不要改名**，改名会让台账找不到本项目。
+#   结构校验与发版门禁在 `.github/workflows/build.yml`（CI）与 `tools/check_merged.py`（本地）。
 # retro-go-tab5 — M5Burner 发布清单（发布前由 tools/check_merged.py 校验固件结构）
 # 修改版本时同步改这里；bin 必须是真 merged（bootloader + 分区表 + app）。
 project: retro-go-tab5

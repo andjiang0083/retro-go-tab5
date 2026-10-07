@@ -5,6 +5,11 @@ build/
 sdkconfig.old
 dependencies.lock.bak
 
+# 误提交的运行输出：本仓根目录曾误提交过 stdout.txt / stderr.txt（2026-10-07 从索引移除）。
+# 发布脚本的排除表里也加了同名 --exclude，两棵树都不会再被带进去。
+stdout.txt
+stderr.txt
+
 # 组件管理器生成物：里面记的是「生成时那台机器」的绝对路径（/Users/<某人>/.../vendor/...）。
 # 提交出去后，别的机器/CI 克隆下来会直接
 #   CMake Error: The "path" field in the manifest file ... does not point to a directory
