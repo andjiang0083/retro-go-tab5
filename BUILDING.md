@@ -124,11 +124,15 @@ It does **not** verify frame rate, display path, crashes or timing — none of t
 **To confirm the gate really goes red**: on a branch, break one `.c` on purpose (e.g. reference an undeclared identifier)
 and open a PR — CI must fail on the compile error.
 
-**Real timings, first run (2026-10-07, run #3, no cache at all)**: **7 min 58 s** end to end — checkout 55 s (needs the
-full history and tags), ESP-IDF install **231 s** (the official action pulls 5.5.2 plus toolchains via EIM — the biggest
-chunk), full build 198 s, gates <1 s each. (That run built the dual-app form only; both forms are built now, so treat the
-latest run as the reference.) The artifact is ~2.5 MB (merged image + both app bins + `SHA256SUMS.txt` +
-build log); disk on the runner is a non-issue (78 GB free).
+**Real timings (run #6, no cache at all, both forms built)**: **7 min 49 s** end to end — checkout 51 s (needs the full
+history and tags), ESP-IDF install **226 s** (the official action pulls 5.5.2 plus toolchains via EIM — the biggest
+chunk), dual-app build 121 s, single-app build 54 s, gates and upload <5 s. The artifact is 4,180,865 B: both merged
+images (2293760 / 2097152 B), both app bins, `SHA256SUMS.txt` and both build logs; disk on the runner is a non-issue
+(78 GB free).
+
+> `SHA256SUMS.txt` lists **only the two merged images**: the single-app build rebuilds `launcher.bin`/`gbsp.bin`, so by
+> upload time those have been overwritten (this run caught exactly that mismatch). The bins are still uploaded for
+> debugging, but the manifest only describes files no later step rewrites.
 
 ⚠ One environment trap (this is what killed run #2; the workflow's step 2 handles it): the official
 `install-esp-idf-action` exports `IDF_PATH` and the toolchains but does **not** put IDF's own script directories on

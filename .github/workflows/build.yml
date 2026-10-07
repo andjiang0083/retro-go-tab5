@@ -9,8 +9,9 @@
 #
 # 本文件里所有路径、命令、锚点均由 2026-10-07 的实测支撑：
 #   - 干净克隆构建成功：退出码 0、70 秒（18 核）／5.5.4 上 132 秒，两者产物均为 VALID
-#   - CI 实测（run #3，无缓存）：整轮 7 分 58 秒 = checkout 55s + 装 IDF 231s + 全量构建 198s + 门禁 <1s；
-#     产物 artifact 2,576,796 B（merged 镜像 2293760 B / 两个 app bin / SHA256SUMS.txt / 构建日志）
+#   - CI 实测（run #6，无缓存，双 app + 单 app 两种形态）：整轮 7 分 49 秒 = checkout 51s + 装 IDF 226s
+#     + 双 app 构建 121s + 单 app 构建 54s + 门禁/上传 <5s；产物 artifact 4,180,865 B
+#     （两个合并镜像 2293760 / 2097152 B + 两个 app bin + SHA256SUMS.txt + 两份构建日志）
 #   - 产物真实路径：retro-go-p4/retro-go_<版本>_tab5.img（不是文档里写的 build/tab5-retro-go.img）
 #   - 三锚点：0x2000=E9 / 0x8000=50AA / 0x10020=ABCD5432（与本地发布门禁脚本的判定逐条一致）
 #   - IDF 版本：直接读 $IDF_PATH/tools/cmake/version.cmake 断言（不用间接信号）
@@ -130,7 +131,10 @@ jobs:
           [ -s gbsp/build/gbsp.bin ] || { echo "::error::gbsp.bin 缺失"; exit 1; }
           echo "merged image: $IMG ($(stat -c%s "$IMG") bytes)"
           python3 -c "import sys;d=open(sys.argv[1],'rb').read();A=[(0x2000,b'\xe9'),(0x8000,b'\xaa\x50'),(0x10020,(0xABCD5432).to_bytes(4,'little'))];bad=[hex(o) for o,m in A if d[o:o+len(m)]!=m];ok=len(d)>=524288 and not bad;print('VALID' if ok else 'INVALID size=%d bad_anchors=%s'%(len(d),bad));sys.exit(0 if ok else 1)" "$IMG"
-          shasum -a 256 "$IMG" launcher/build/launcher.bin gbsp/build/gbsp.bin | tee ../SHA256SUMS.txt
+          shasum -a 256 "$IMG" | tee ../SHA256SUMS.txt
+          # ⚠ 只列两个合并镜像，不列 launcher.bin/gbsp.bin —— 单 app 构建会**重建**这两个 bin，
+          #   上传时它们已被覆盖（本轮实测：清单里那一行哈希与上传的 bin 对不上）。
+          #   bin 仍然上传供排查，但清单必须只描述"不会被后续步骤改写"的文件。
 
       # ── 5. 单 app 形态（M5Launcher / 第三方启动器装的形态）──────────────
       # v0.4.7 起"单 app 合并形态"是**默认发布形态**（第三方启动器只装一个 app，多 app 镜像会丢核心），

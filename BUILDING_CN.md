@@ -116,10 +116,11 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 **要确认门禁真的会红**：开一个分支故意改坏一个 `.c`（比如引一个不存在的标识符）提 PR，CI 必须红在编译错误上。
 
-**首次真实耗时（2026-10-07，run #3，无任何缓存）**：整轮 **7 分 58 秒** —— checkout 55s（必须带全历史与 tag）、
-装 ESP-IDF **231s**（官方 action 用 EIM 拉 5.5.2 + 工具链，是最大的一块）、全量构建 198s、门禁各 <1s。
-（那一轮只建了双 app 形态；现在两种形态都建，总时长以最新一次 run 为准。）
-产物 artifact 约 2.5 MB（merged 镜像 + 两个 app bin + `SHA256SUMS.txt` + 构建日志）；runner 磁盘无压力（78 GB 可用）。
+**首次真实耗时（run #6，无任何缓存，两种形态都建）**：整轮 **7 分 49 秒** —— checkout 51s（必须带全历史与 tag）、
+装 ESP-IDF **226s**（官方 action 用 EIM 拉 5.5.2 + 工具链，是最大的一块）、双 app 构建 121s、单 app 构建 54s、
+门禁与上传 <5s。产物 artifact 4,180,865 B —— 两个合并镜像 2293760 / 2097152 B、两个 app bin、`SHA256SUMS.txt`（只列两个镜像，见下）与两份构建日志；runner 磁盘无压力（78 GB 可用）。
+
+> `SHA256SUMS.txt` **只列两个合并镜像**：单 app 构建会重建 `launcher.bin`/`gbsp.bin`，上传时它们已被覆盖（本轮实测抓到过一次清单与文件对不上）。bin 仍然上传供排查，但清单只描述不会被后续步骤改写的文件。
 
 ⚠ 一个环境坑（run #2 就是死在这里，workflow 第 2 步已处理）：官方 `install-esp-idf-action` 只导出
 `IDF_PATH` 与工具链，**不把 IDF 自己的脚本目录铺进 PATH**（`$IDF_PATH/tools`、`components/partition_table`…）。
