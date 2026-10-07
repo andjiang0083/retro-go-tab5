@@ -230,7 +230,41 @@ python3 tools/make-cover.py --hero docs/screenshot-portrait.png
 
 ## 四、待办
 
-### ⭐ 本轮最新（2026-10-06 第二轮）：v0.4.5 —— 两处移植缺失已修并验证
+### ⏸ 挂起（2026-10-07）：GBA 内核（gbsp）差距评估 —— 已分析固化，**等用户量再推进**
+
+**一句话**：客户反馈《宝可梦弹珠台》"不支持" → 三层取证 + 与来源镜像全量 diff ⇒
+**我们与 `Irak4t0n/HowBoyAdvance`（我们的 RISC-V 移植来源）只差 20 个文件的零星差异，渲染器已是新版**
+（含上游 2023-08 的 OBJ 透明修复）；值得摘的是 mosaic 计数器一处真 bug + 存档检测等增量。
+（⚠ 当天我一度判成"渲染器落后两代"，被全量 diff 推翻 —— 错因是 grep 漏了 `.cpp` 扩展名，已留档。）
+
+- 完整评估（被推翻的假设、逐文件差异表、摘取优先级、外部 issue 索引）：**`docs/GBA-CORE-UPGRADE-ASSESSMENT.md`**
+- **用户决定（2026-10-07）：不急着推动** —— 等假期结束、M5Burner 审核通过、更多用户先接触到新版 v0.4.7
+- ⚠ **客户问题根因仍未定**：需「具体现象（花屏/重启/冻住/报错）+ 固件版本 + 复现率」；
+  零成本第一刀 = 宿主（解释器）逐帧 PNG，第二刀 = 真机 dynarec vs 解释器 A/B
+- 第一步（具体）：拿到现象后按评估文档 §六 执行；只有确认要同步时，才按 §五 的 P1→P4 顺序摘 hunk
+- **硬约束**：① 不追上游主仓（无 `riscv/`）② 跟 HowBoyAdvance **按 hunk 摘取，不整仓也不整文件替换**
+  （对方 `gba_memory.c` 的 RFILE/mirror/mini-ROM 模型与我们的分块+缺页回读冲突）③ 必须保住 v0.4.4 的
+  dynarec 周期记账口径对齐（对方与上游命中数均为 0）+ 我们的 `gba_over.h`（比对方多 784 行差异，我们更全）
+- 同一批挂起项：GBA zip 的假承诺（撤声明 + 清 14 处文案 + 启动前格式门禁，未实施）、
+  失败回执（ROM 体检一行 + panic 落 SD 日志）
+
+### ⭐ 本轮最新（2026-10-07）：SNES 帧率攻坚 —— 已固化，**暂停待续**（非发布内容）
+
+**一句话：10fps → 57.8fps，瓶颈已量化到一行代码，最后 518µs 未攻。**
+
+- 完整记录：**`docs/SNES-PERF-SESSION-2026-10-07.md`**（起点/终点、测量体系、因果链、未走的路、恢复方法）
+- 工作固化：分支 `perf-probe/snes-2026-10-07`（`27df21e`）+ 仓库外备份 `~/esp32/snes-perf-backup/snes-perf-probe-2026-10-07.patch`
+- **设备已刷回发行版 v0.4.7**（`dist/m5burner-0.4.7/retro-go-tab5-0.4.7-merged.bin`），探针日志命中 0 次
+
+| 项 | 内容 |
+|---|---|
+| 已确认的瓶颈 | `audio_task` 一轮 18.5ms = 等 I2S 16.7ms（必然，驱动注释 "the I2S DMA paces the emulator loop"）+ **DSP 混音 1.8ms（净多出来的）** ⇒ 周期 > 帧时间 ⇒ 队列积压 ⇒ 主循环 `send` 干等 5.2ms ⇒ 钉在 57.8fps。**同一根因造成声音发飘** |
+| 顺手修到的上游 bug | `rg_task_create_ex` 接收 `queueLen` 却从未写入结构体 ⇒ 所有任务队列深度恒为 1。**建议提 PR 给上游**（与本次调优无关，是独立缺陷） |
+| 下次接着干 | ① 优化 `S9xMixSamples`（定点化/内联化，音质无损、工作量大）② 降采样率 32000→22050（省约 560µs，**数字上刚好补上缺口**，代价是高音有损） |
+| 别再试 | PPA 硬件缩放（六轮 `err=0x102`）、换 snes9x2005/2010 内核（更精确=更慢）、65c816 dynarec（CPU 仅占核心 20%，收益约 5%） |
+| 方法论教训 | 屏幕探针是**瞬时值**，不能用来判效果 —— 本轮据此误判过一次。判改动一律 "串口抓 ≥200 组 → 算均值/σ → 再下结论" |
+
+### ⭐ 上一轮（2026-10-06 第二轮）：v0.4.5 —— 两处移植缺失已修并验证
 
 | # | 问题 | 根因 | 状态 |
 |---|---|---|---|
@@ -573,3 +607,40 @@ GBA 0px 不画、**GB/GBC 4x 的 40px 不画（用户定：这里不做元素，
   一个周期 10 帧 ≈ **每秒 12 次**（中速）。调用点只有 `retro-core/main/main_gbc.c` 与 `main_nes.c`。
   ⚠ **SNES 不能加**（X/Y 是真按键）；PCE/SMS/GG/GW 本次未动。
   ⚠ 掩码里的 X/Y 保留（只多合成 A/B），菜单/热键判断不受影响。
+
+---
+
+### 🟢 最新（2026-10-07）：v0.4.7 已发布（GitHub ✅ + M5Burner 待审）
+
+**主题**：11 机种 + 四套触摸皮肤 + 按键按真实手柄 + SNES 读档崩溃修复 + 启动器首页新手引导卡。
+
+**① 启动器首页新手引导卡（用户要求）**
+- 用户照片反馈「新用户看到的第一个界面……建议美化一下，加双语提示」→ 先出 PC 模拟图（`tools/mock-launcher-hint.py`，含真机 12×12 点阵字渲染）让用户挑，选「提示卡」方案。
+- 画在 **carousel 分支**（冷启动首页），**仅 `short_name == "gba"` 时显示**（用户定：只有 GBA 需要）。
+- 标题改**贴顶**（原来传 `(gui.height-HEADER_HEIGHT)/2 = 215` 是垂直居中，真机跑到屏幕 17% 处，用户说不对）；
+  卡片放剩余区域正中。卡片 600x204，高度按 4 行文字算（之前 186/200 时第 4 行被底边截掉，**真机照片才发现**）。
+- **坐标系澄清**：`gui.height = rg_display_get_height()` = **逻辑屏 480**；launcher 的 GUI 显示在物理屏
+  **上 480px**（占 37.5%），下面留给触摸按键。换算：逻辑 y → 物理百分比 = y/1280。
+- **坑（-Werror=address）**：`paths.roms` 与 `short_name` 都是 **char 数组**，地址恒非 NULL，
+  不能写 `x ? x : ""` 或 `!x ||`，否则编译直接失败（踩了两次）。
+
+**② 发布**
+- GitHub：公开仓补 `CHANGELOG_CN.md`（新建，双语齐了）、CHANGELOG 补 v0.4.2~0.4.7、
+  README/README_CN 的 Status 与 Controls 段更新（原来还写着「其它机种 ❌ 未移植」）、ROADMAP 重写（去掉已完成项）。
+  代码用 `tools/publish-github.sh` 同步（`fb29183`），tag `v0.4.7`，
+  Release <https://github.com/andjiang0083/retro-go-tab5/releases/tag/v0.4.7>（4 附件：merged / single-app / SHA256 / 封面）。
+- M5Burner：条目 `retro-go Tab5`（fid `2105333864932450305`）追加 **0.4.7**，
+  vid `2107726805810421761`，**PENDING**，上传 2026-10-07T14:56:46+08:00，bin `retro-go-tab5-0.4.7-merged.bin`。
+- ⚠️ **审核积压**：该条目现有 **4 条 PENDING**（0.4.4 / 0.4.5 / 0.4.6 / 0.4.7），线上仍是 **0.4.3**。
+  国庆假期审核停摆，节后再看。
+
+**③ 本轮新增的两个操作坑（已记 `~/esp32/ESP32-经验沉淀.md` §200）**
+- **M5Burner 新版本页的上传是「拖拽」组件**：`DOM.setFileInputFiles` 能把文件塞进 input、页面上也显示文件名，
+  但 **React 的 onChange 收不到**，提交后等于没传。正确做法：读 `input.files` 构造 `DataTransfer`，
+  对上传容器依次派发 `dragenter`/`dragover`/`drop`（`DragEvent` + `dataTransfer`）→ 封面区立刻显示文件名。
+- **burner 的接口要 `Authorization: Bearer <localStorage['m5burner.accessToken']>`**，`credentials:'include'` 不够
+  （cookie 为空，会 401）。版本级列表在 `/api/v1/users/me/firmwares`（**`rows`**，每行一个版本，
+  **含 PENDING**）；`/api/v1/firmwares/<fid>/versions` 只列 PUBLISHED，会把在审的误判成「没上架」。
+
+**发布产物**：`dist/m5burner-0.4.7/`（merged 3,801,088 B / sha256 `bd7352d5…`；
+single-app 2,097,152 B / sha256 `dc151e0c…`；字段表 / 双语 changelog / description / 封面）。
