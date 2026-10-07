@@ -1389,7 +1389,16 @@ static rg_gui_event_t touch_opacity_cb(rg_gui_option_t *option, rg_gui_event_t e
 static rg_gui_event_t skin_preview_cb(rg_gui_option_t *option, rg_gui_event_t event)
 {
     if (event == RG_DIALOG_FOCUS_GAINED)
-        rg_overlay_set_skin((int)option->arg);
+    {
+        rg_overlay_preview_skin((int)option->arg);   /* 试穿，不落盘 */
+    }
+    else if (event == RG_DIALOG_ENTER)
+    {
+        /* ⚠ 这一步不能省：rg_gui_dialog 的事件循环里，NORMAL 选项按 A 走的是
+         * `callback(&options[sel], RG_DIALOG_ENTER)` 分支，**只有回调返回 SELECT/CANCEL
+         * 才会退出循环**（返回 VOID 就原地重画，于是"能选、但不能确定"）。 */
+        return RG_DIALOG_SELECT;
+    }
     return RG_DIALOG_VOID;
 }
 
@@ -1402,7 +1411,11 @@ static rg_gui_event_t touch_skin_cb(rg_gui_option_t *option, rg_gui_event_t even
 
         rg_gui_option_t options[count + 1];
         for (int i = 0; i < count; i++)
-            options[i] = (rg_gui_option_t){i, rg_overlay_skin_name(i), NULL, RG_DIALOG_FLAG_NORMAL, &skin_preview_cb};
+            /* value 不用 NULL：对话框要打印它，且**没人会写**它（本回调只读），
+             * 所以直接借只读字面量最省事、也免了 NULL 解引用这一路风险。 */
+            options[i] = (rg_gui_option_t){i, rg_overlay_skin_name(i),
+                                           (char *)rg_overlay_skin_short_name(i),
+                                           RG_DIALOG_FLAG_NORMAL, &skin_preview_cb};
         options[count] = (rg_gui_option_t)RG_DIALOG_END;
 
         const int sel = rg_gui_dialog(_("Touch skin"), options, original);

@@ -106,7 +106,8 @@ void rg_overlay_set_swap(bool on);
  * 所以换皮肤只是重算调色板 + 原地重画面板（约 30ms 一次整屏重推），不卡。 */
 int  rg_overlay_skin_count(void);
 int  rg_overlay_get_skin(void);
-void rg_overlay_set_skin(int idx);          /* 立刻生效 + 存 NVS；面板同步重画 */
+void rg_overlay_set_skin(int idx);          /* 落定：立刻生效 + 存 NVS；面板同步重画 */
+void rg_overlay_preview_skin(int idx);       /* 试穿：立刻生效但**不存 NVS**（菜单预览/回退用） */
 const char *rg_overlay_skin_name(int idx);  /* 菜单显示用（ASCII） */
 const char *rg_overlay_skin_short_name(int idx);
 /* 把当前皮肤的面板底图交给显示层（幂等）。

@@ -611,9 +611,13 @@ void rg_display_set_border_surface(rg_surface_t *surface)
         RG_LOGI("display: 用户已选边框图 (%s)，内存面板不接管\n", config.border_file);
         return;
     }
-    if (!surface || surface->width != rg_display_get_width() || surface->height != rg_display_get_height())
+    /* 尺寸校验：面板是**物理全屏**底图（Tab5 竖屏 720x1280），而 rg_display_get_width/height
+     * 报的是**逻辑视口**（Tab5 上游戏视口只有 720x480）——拿后者做"必须相等"会把面板全拒掉
+     * （真机日志："内存面板尺寸不符（720x1280，应为 720x480），忽略"）。
+     * 改成"**必须盖住逻辑视口**"：够大才可能当底图，小了确实该拒。 */
+    if (!surface || surface->width < rg_display_get_width() || surface->height < rg_display_get_height())
     {
-        RG_LOGW("display: 内存面板尺寸不符（%dx%d，应为 %dx%d），忽略\n",
+        RG_LOGW("display: 内存面板尺寸不足（%dx%d，逻辑视口需 %dx%d），忽略\n",
                 surface ? surface->width : 0, surface ? surface->height : 0,
                 rg_display_get_width(), rg_display_get_height());
         return;
