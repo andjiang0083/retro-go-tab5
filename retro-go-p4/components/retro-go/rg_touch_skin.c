@@ -56,19 +56,17 @@
  * ⚠ 这些表是**被 PC 工具解析的**（tools/preview-skin.py）：
  *   一行一套皮肤、一行一套配色，字段顺序别改（改了要同步改解析器），
  *   汉字注释可以写，字符串值只能放 ASCII（设备字库只有 8x8 ASCII）。 */
-/* ⚠ D 套当前是**调试配色**（2026-10-07 真机确认布局用）：分区线亮青、分隔线品红、
-   面板底与分区填充都刻意提亮 —— 一眼看清"分区框在哪、多大、凹槽到哪、铭牌在哪"。
-   布局/层次经用户确认后，只换色相（分区描边→每机型点缀色提亮版、填充→中性灰蓝、
-   分界线→点缀色中等亮度），强度保持。原值：底 0x14171C 填充 0x1D222A 线 0x2C333D。
-   起因：原配色在 565 里分区填充比底色只亮 1~3 级（≈3~5%），PC 满亮度图看得出、真机低亮度看不见。
-   ⚠ 坑：注释**不能**夹在宏的续行中间 —— 注释那行没有行尾反斜杠，宏定义会当场断开
-   （本次真踩：编译报 rg_touch_skin.c:68 expected identifier before '{'）。 */
+/* ⚠ 成品配色（2026-10-07 定稿）：强度按用户选择——**分区框明显可见**（底+描边都保留）、
+   四类元素全留（分区框 / 凹槽 / 铭牌 / 画面-控制区分界线）。
+   565 量化后"分区填充 vs 面板底"的 G 通道差都做到 ≥8 级（≈12% 亮度），这是真机低亮度下
+   还能看见的下限 —— 原来的 1~3 级（3~5%）在 PC 满亮度图上看得见、真机上就是纯黑。
+   D 套的分区线/分界线/铭牌线用 **每机型点缀色**（GBA 靛蓝 / GB 绿 / NES 红），随核心自动变。 */
 #define RG_TOUCH_SKINS { \
     /* id  名字(ASCII)            短名       面板底   分区填充  分区线    分隔线    线粗 铭牌底   铭牌线   铭牌字    模式 描边 圆角% 填充% 标签%  标签覆盖    边框α 填充α 标签α 用机型点缀色 */ \
-    {"A", "Deep Grey + Amber",  "Amber",   0x14171C, 0x1D222A, 0x2C333D, 0x4A3A1A, 2, 0x1D222A, 0x3A3F49, 0xE8A22C, 0, 3, 18, 42, 72, RG_TOUCH_SKIN_NONE,   230, 128, 255, 0}, \
-    {"B", "Minimal Outline",   "Outline", 0x0E1013, RG_TOUCH_SKIN_NONE, 0x23272E, 0x23272E, 1, RG_TOUCH_SKIN_NONE, 0x23272E, 0x9AA3B0, 1, 3, 18,  0, 55, RG_TOUCH_SKIN_NONE,   230,   0, 255, 0}, \
-    {"C", "Amber Retro",       "Retro",   0x17110A, 0x221711, 0x3B2A16, 0x8A6420, 2, 0x221711, 0x6B4E1E, 0xFFC96B, 0, 3, 18, 30, 85, 0xFFD98A,             230, 128, 255, 0}, \
-    {"D", "Console Colors",    "Console", 0x1A2230, 0x24313F, 0x00E5FF, 0xFF5AA0, 2, 0x24313F, RG_TOUCH_SKIN_ACCENT, RG_TOUCH_SKIN_ACCENT, 0, 3, 18, 45, 80, RG_TOUCH_SKIN_NONE, 230, 128, 255, 1}, \
+    {"A", "Deep Grey + Amber",  "Amber",   0x14171C, 0x2A3540, 0x8A6420, 0x9A7028, 2, 0x2A3540, 0x8A6420, 0xE8A22C, 0, 3, 18, 42, 72, RG_TOUCH_SKIN_NONE,   230, 128, 255, 0}, \
+    {"B", "Minimal Outline",   "Outline", 0x0E1013, RG_TOUCH_SKIN_NONE, 0x505C6A, 0x3A4552, 1, RG_TOUCH_SKIN_NONE, 0x505C6A, 0x9AA3B0, 1, 3, 18,  0, 55, RG_TOUCH_SKIN_NONE,   230,   0, 255, 0}, \
+    {"C", "Amber Retro",       "Retro",   0x17110A, 0x34281A, 0x8A6420, 0xA87A28, 2, 0x34281A, 0x8A6420, 0xFFC96B, 0, 3, 18, 30, 85, 0xFFD98A,             230, 128, 255, 0}, \
+    {"D", "Console Colors",    "Console", 0x161B26, 0x2A3540, RG_TOUCH_SKIN_ACCENT, RG_TOUCH_SKIN_ACCENT, 2, 0x2A3540, RG_TOUCH_SKIN_ACCENT, RG_TOUCH_SKIN_ACCENT, 0, 3, 18, 45, 80, RG_TOUCH_SKIN_NONE, 230, 128, 255, 1}, \
 }
 
 /* 每套皮肤的每键配色（槽位序见 rg_touch_skin.h 的 rg_skin_slot_t）：
@@ -467,15 +465,24 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
     const uint32_t accent = (s->accent_from_console ? console_entry(cid)->accent : 0xE8A22C);
     const uint32_t panel_bg = q565(s->panel_bg);
     const uint32_t groove_fill = shade(panel_bg, 45);
-    /* 凹槽（屏幕四周的内嵌边）用"分区线"的暗化版画 —— 调试期提到 70，
-     * 免得亮青的槽线被压暗到看不见（最终配色定下来后再调回 18 那种含蓄值）。 */
-    const uint32_t groove_line = q565(s->cluster_line) == RG_TOUCH_SKIN_NONE ? panel_bg : tint(q565(s->cluster_line), 70);
+    /* 凹槽（屏幕四周的内嵌边）用"分区线"的暗化版画。成品值 70%：
+     * 凹槽要看得见但**不能压过按键本身**（用户：四类元素都保留、分区框明显）。
+     * 原来的 18% 在真机上基本看不见。 */
+    /* ACCENT 一律解释成"该机型的点缀色**本身**"（GBA 靛蓝 / GB 绿 / NES 红）。
+     * ⚠ 不要再给它套 shade()/tint() 变暗 —— 那等于把"明显可见"的点缀色又压回看不见
+     * （真机教训：分区框那档强度就是被这种"再暗一点"吃掉的）。
+     * D 套的表里 cluster_line / divider / badge_line / badge_text 都写 ACCENT。 */
+    const uint32_t accent565 = q565(accent);
     const uint32_t cluster_fill = s->cluster_fill == RG_TOUCH_SKIN_NONE ? 0 : q565(s->cluster_fill);
-    const uint32_t cluster_line = s->cluster_line == RG_TOUCH_SKIN_NONE ? 0 : q565(s->cluster_line);
-    const uint32_t divider = s->divider == RG_TOUCH_SKIN_ACCENT ? shade(q565(accent), 50) : q565(s->divider);
+    const uint32_t cluster_line = s->cluster_line == RG_TOUCH_SKIN_NONE ? 0
+                                : s->cluster_line == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->cluster_line);
+    /* 凹槽线：拿**已解释过的** cluster_line 暗化（原来直接 q565(s->cluster_line)，
+     * 遇到 ACCENT 哨兵会算出无意义颜色）。成品值 70%：看得见但不压过按键。 */
+    const uint32_t groove_line = cluster_line == 0 ? panel_bg : tint(cluster_line, 70);
+    const uint32_t divider = s->divider == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->divider);
     const uint32_t badge_fill = s->badge_fill == RG_TOUCH_SKIN_NONE ? 0 : q565(s->badge_fill);
-    const uint32_t badge_line = s->badge_line == RG_TOUCH_SKIN_ACCENT ? q565(accent) : q565(s->badge_line);
-    const uint32_t badge_text = s->badge_text == RG_TOUCH_SKIN_ACCENT ? tint(q565(accent), 25) : q565(s->badge_text);
+    const uint32_t badge_line = s->badge_line == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->badge_line);
+    const uint32_t badge_text = s->badge_text == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->badge_text);
 
     skin_box_t clusters[4];
     int led_cy_used = 0, badge_cy = 0;
@@ -486,12 +493,18 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
 
     /* ② 屏幕凹槽（比视口外扩，读成"屏幕嵌在面板里"）
      * 围着**视口**画：整数缩放留下的边条（GB 40px / NES 104px）消不掉，
-     * 凹槽是唯一能让它被读成 bezel 而不是"死区"的做法。 */
-    const int gx = win_x - RG_TOUCH_PANEL_GROOVE_PAD, gy = 0;
-    const int gw = win_w + 2 * RG_TOUCH_PANEL_GROOVE_PAD;
-    const int gh = ctrl_top - 3;
-    panel_rrect(panel, gx, gy, gw, gh, RG_TOUCH_PANEL_GROOVE_R,
-                to565(groove_fill), true, to565(groove_line), true);
+     * 凹槽是唯一能让它被读成 bezel 而不是"死区"的做法。
+     * ⚠ 只在**窗口没铺满全宽**（即左右有边条）时画：GBA 是 720 全宽 + 画面贴顶，
+     *   凹槽左右各 8px 落在屏外、上下被画面和分界线盖满 → 真机上它等于不存在，
+     *   画了只是白算（用户定：GBA 不画，GB/NES 这种有边条的才画）。 */
+    if (win_x > 0 || win_w < RG_SCREEN_WIDTH)
+    {
+        const int gx = win_x - RG_TOUCH_PANEL_GROOVE_PAD, gy = 0;
+        const int gw = win_w + 2 * RG_TOUCH_PANEL_GROOVE_PAD;
+        const int gh = ctrl_top - 3;
+        panel_rrect(panel, gx, gy, gw, gh, RG_TOUCH_PANEL_GROOVE_R,
+                    to565(groove_fill), true, to565(groove_line), true);
+    }
 
     /* ③ 画面与控制区的分界线 */
     panel_rect(panel, 0, ctrl_top - s->divider_h, RG_SCREEN_WIDTH, s->divider_h, to565(divider));
