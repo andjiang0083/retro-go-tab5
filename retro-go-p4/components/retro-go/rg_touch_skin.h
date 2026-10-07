@@ -61,14 +61,37 @@ bool rg_touch_skin_label_color(int skin_idx, uint16_t *out);
 
 /* 机型铭牌文案（按核心的 configNs：gba/gb/gbc/nes/...）+ 该机型的点缀色。
  * 找不到时退回通用值（"RETRO-GO" + 琥珀），不返回 NULL。 */
-/* 这个机型有没有 L/R 肩键 —— 判据来自**核心的真实映射**（gbsp/main/main.c 与
- * retro-core/main/main_*.c 里 grep RG_KEY_*）：**只有 GBA 用 RG_KEY_L / RG_KEY_R**。
- * ⚠ SNES 也在这个"没有"里：retro-go 的 snes 核心没映射 X/Y/L/R（物理手柄上有，软件没接），
- *   所以"R/L 调换"这颗按钮对它是空转 —— 用户 2026-10-07 定：**R/L 调换是 GBA 专用**。 */
+/* launcher（菜单）不是游戏机型：它要能操作所有键（菜单用方向键 + A/B 选择，X/Y/L/R 也可能
+ * 被当作快捷键）→ 一律给"GBA 那套"全键。
+ * ⚠ console_id 传进来的是 app->configNs，**菜单自己就是 "launcher"、不是 NULL/空串**
+ *   （rg_touch_overlay.c 从 app->configNs 拷来）—— 2026-10-07 的坑：只判了空字符串，
+ *   菜单于是落进"非 GBA"分支，L/R 和 X/Y 被静默隐藏，菜单少了键。 */
+static inline bool rg_touch_is_menu(const char *console_id)
+{
+    return !console_id || !*console_id || strcmp(console_id, "launcher") == 0;
+}
+
+/* 这个机型有没有 L/R 肩键。判据 = **该机型真实手柄有没有 L/R**（不是核心有没有映射它 ——
+ * 上游常为"按键不够"的硬件把 X/Y/L/R 重排掉，那是实现问题，不是硬件没有）。
+ *   GBA ✔（A/B/L/R + START/SELECT）
+ *   SNES ✔（A/B/X/Y + L/R + START/SELECT）—— 上游核心把 X/Y 借去当 START/SELECT、
+ *          L/R 变成组合键；触摸屏有这些键，所以另加了一套 "Full" 预设用真键（见 main_snes.c）。
+ *   GB/GBC/NES/GG/SMS/COL/PCE/Lynx/GW ✘（真实手柄没有 L/R）
+ * ⚠ 只有 GBA 该有"R/L 调换"按钮：那是为了把 L/R 换到拇指够得着的位置（用户 2026-10-07 定）。 */
 static inline bool rg_touch_has_shoulders(const char *console_id)
 {
-    if (!console_id || !*console_id)
-        return true;    /* 认不出的机型：给全功能，宁可多显示也别把键藏了 */
+    if (rg_touch_is_menu(console_id))
+        return true;    /* 菜单：给全功能（GBA 那套） */
+    return strcmp(console_id, "gba") == 0 || strcmp(console_id, "snes") == 0;
+}
+
+/* 「X/Y ↔ L/R 调换」这颗按钮只在 **GBA** 上出现（用户 2026-10-07 定：R/L 调换是 GBA 专用）。
+ * ⚠ 它和 rg_touch_has_shoulders() 是**两件事**，别绑在一起：SNES 的真实手柄有 L/R（要有那行），
+ *   但它的 L/R 位置本来就顺手、不需要调换 —— 早先把两者写成一个判据，SNES 上就多出一颗按钮。 */
+static inline bool rg_touch_has_swap_button(const char *console_id)
+{
+    if (rg_touch_is_menu(console_id))
+        return true;    /* 菜单：给全功能（GBA 那套） */
     return strcmp(console_id, "gba") == 0;
 }
 
@@ -84,15 +107,19 @@ static inline bool rg_touch_has_shoulders(const char *console_id)
  *     所以它们的动作区只剩 A/B 两颗（A/B 位置**不动**，保持跨机型手感一致）。 */
 static inline bool rg_touch_key_hidden(const char *console_id, rg_key_t key)
 {
-    if (!console_id || !*console_id)
-        return false;   /* 认不出：全给 */
-    const bool is_gba    = strcmp(console_id, "gba") == 0;
-    const bool has_turbo = is_gba || strcmp(console_id, "gb") == 0 ||
-                           strcmp(console_id, "gbc") == 0 || strcmp(console_id, "nes") == 0;
+    if (rg_touch_is_menu(console_id))
+        return false;   /* 菜单：全给（GBA 那套） */
     if (key == RG_KEY_L || key == RG_KEY_R)
-        return !is_gba;
+        return !rg_touch_has_shoulders(console_id);   /* 真实手柄有 L/R 的：GBA / SNES */
     if (key == RG_KEY_X || key == RG_KEY_Y)
-        return !has_turbo;
+    {
+        /* SNES 的 X/Y 是**真按键**（配 "Full" 预设用）；
+         * GBA/GB/GBC/NES 的 X/Y 是**连发 A/B**（rg_input_apply_turbo 在 input 层合成）；
+         * 其余机型既没有 X/Y 也没有连发 → 不显示。 */
+        return !(strcmp(console_id, "gba") == 0 || strcmp(console_id, "snes") == 0 ||
+                 strcmp(console_id, "gb")  == 0 || strcmp(console_id, "gbc") == 0 ||
+                 strcmp(console_id, "nes") == 0);
+    }
     return false;
 }
 

@@ -87,6 +87,7 @@
     {"gb",  "GAME BOY",         0x6E8F52}, \
     {"gbc", "GAME BOY COLOR",   0x3F8F8F}, \
     {"nes", "NES",              0xB5342B}, \
+    {"snes", "SUPER NES",       0x8E5FA8}, \
     {"sms", "MASTER SYSTEM",    0x2F6FA8}, \
     {"gg",  "GAME GEAR",        0x7A4FA8}, \
     {"col", "COLECOVISION",     0x8A6A2C}, \

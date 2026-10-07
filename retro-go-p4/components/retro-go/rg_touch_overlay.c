@@ -673,9 +673,9 @@ void rg_overlay_init(void)
 
     /* L/R 之间那颗「X/Y ↔ L/R 调换」按钮：几何来自键位表（RG_TAB5_SWAP_*），
      * key=0（不是游戏键，不注入输入），颜色走皮肤的 SWAP 槽（= 系统/UI 控件色）。 */
-    /* GB/GBC 没有肩键行 → "X/Y ↔ L/R 调换"没有意义，这颗按钮不建
-     * （不绘制、不命中、不占 dirty 位；swap_btn_ready=false 就是所有路径的总开关）。 */
-    if (rg_touch_has_shoulders(console_id))
+    /* ⚠ 判据是"**GBA 专用**"（用户 2026-10-07 定），**不是** has_shoulders —— SNES 有 L/R 行
+     * 但不需要调换；早先绑在一起，SNES 顶上就多出这颗按钮。 */
+    if (rg_touch_has_swap_button(console_id))
     {
         swap_btn.key = RG_KEY_NONE;
         swap_btn.w = RG_TAB5_SWAP_W;
