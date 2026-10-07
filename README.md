@@ -262,7 +262,12 @@ This port stands on other people's work:
 - **[retro-go](https://github.com/ducalex/retro-go)** by Alex Duchesne (ducalex) — the emulator frontend this is a port of. GPLv2.
 - **[gpSP](https://github.com/libretro/gpsp)** — the Game Boy Advance core. GPLv2.
 - **[HowBoyAdvance](https://github.com/Irak4t0n/HowBoyAdvance)** — the ESP32-P4 GBA project whose RISC-V dynarec this port's
-  JIT backend is derived from. GPLv2. Credit for the dynarec approach belongs there.
+  JIT backend is derived from (the derivation chain runs through gpSP, GPLv2). Credit for the dynarec approach belongs there.
+  Two backend defects this port found are reported upstream:
+  [#2 cycle-accounting divergence](https://github.com/Irak4t0n/HowBoyAdvance/issues/2) and
+  [#3 div/rem remainder semantics](https://github.com/Irak4t0n/HowBoyAdvance/issues/3).
+  ⚠️ That repository currently ships **no licence file** (its issue #1 asks about it), so this port only declares
+  *its own* GPLv2 status — it does not label upstream.
 - **M5Stack** — the Tab5 BSP and hardware documentation.
 - **Espressif** — ESP-IDF, and the PPA/DMA2D and MIPI-DSI drivers the display path experiments were built on.
 

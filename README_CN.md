@@ -249,8 +249,13 @@ docs/                   移植笔记（中文）+ 触摸布局图
 
 - **[retro-go](https://github.com/ducalex/retro-go)**（作者 Alex Duchesne / ducalex）—— 本移植所基于的模拟器前端，GPLv2。
 - **[gpSP](https://github.com/libretro/gpsp)** —— GBA 核心，GPLv2。
-- **[HowBoyAdvance](https://github.com/Irak4t0n/HowBoyAdvance)** —— 本移植的 RISC-V dynarec 后端派生自该 ESP32-P4 GBA 项目的实现，GPLv2。
-  dynarec 这条路线的功劳属于他们。
+- **[HowBoyAdvance](https://github.com/Irak4t0n/HowBoyAdvance)** —— 本移植的 RISC-V dynarec 后端派生自该 ESP32-P4 GBA 项目的实现
+  （衍生链经过 gpSP，GPLv2）。dynarec 这条路线的功劳属于他们。
+  本移植把发现的两个后端缺陷报回给了上游：
+  [#2 周期记账与解释器口径不一致](https://github.com/Irak4t0n/HowBoyAdvance/issues/2)、
+  [#3 div/rem 余数语义错误](https://github.com/Irak4t0n/HowBoyAdvance/issues/3)。
+  ⚠️ 该仓当前**没有 LICENSE 文件**（他们自己的 issue #1 正在问这件事），所以我们只声明**本仓自身**是 GPLv2，
+  不为上游指定许可证。
 - **M5Stack** —— Tab5 的 BSP 与硬件资料。
 - **Espressif** —— ESP-IDF，以及显示通路实验所依赖的 PPA/DMA2D 与 MIPI-DSI 驱动。
 
