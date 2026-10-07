@@ -14,6 +14,9 @@
 #   - IDF 版本：直接读 $IDF_PATH/tools/cmake/version.cmake 断言（不用间接信号）
 #   - 首跑（run #1）真实教训：被跟踪的 */dependencies.lock 是生成物、记的是生成机的绝对路径
 #     ⇒ 换台机器必然 CMake 报错。已改为不跟踪，并加了第 5 步「可移植性门禁」防回归。
+#   - 次跑（run #2）真实教训：官方 action 只给 IDF_PATH + 工具链，**IDF 自己那几个脚本目录不给**
+#     （rg_tool.py 在非 Windows 上裸调 idf.py / gen_esp32part.py）⇒ 编译全过、Packing 阶段才炸。
+#     已在第 2 步补齐 PATH 并提前断言（真要缺，在第 2 步就红）。
 
 name: build-tab5
 
@@ -77,6 +80,28 @@ jobs:
           # ESP_IDF_VERSION 只有主次版本（实测输出 5.5），断言补丁号必须读 version.cmake
           [ "$PATCH" = "2" ] || { echo "::error::期望 IDF 5.5.2，实际 patch=$PATCH"; exit 1; }
           riscv32-esp-elf-gcc --version | head -n1
+
+          # ⚠ 补 PATH：官方 action 只导出 IDF_PATH 与工具链，**不铺 IDF 自己那几个脚本目录**。
+          # 而 rg_tool.py 在非 Windows 上按**裸命令名**调用它们（:52-57）：
+          #   GEN_ESP32PART_PY="gen_esp32part.py" / ESPTOOL_PY="esptool.py" / PARTTOOL_PY="parttool.py"
+          # run #2 就是死在这里：编译全过、Packing 阶段 `Task failed: [Errno 2] No such file or directory: 'gen_esp32part.py'`。
+          # 下面四个目录抄自本机 `. tools/idf-env.sh` 之后的 PATH（开发环境就是这么跑通的）。
+          for d in tools components/partition_table components/app_update components/espcoredump; do
+            [ -d "$IDF_PATH/$d" ] || { echo "::error::$IDF_PATH/$d 不存在（IDF 布局变了）"; exit 1; }
+            echo "$IDF_PATH/$d" >> "$GITHUB_PATH"
+          done
+
+          # 提前失败：build-img 这条路径真正需要的是 idf.py 与 gen_esp32part.py
+          # （rg_tool.py:121 `idf.py bootloader`、:114 `gen_esp32part.py`）。
+          # 其余几个（esptool.py / parttool.py / idf_monitor.py）只在刷机/监视路径用到，这里只报不拦。
+          NEWPATH="$IDF_PATH/tools:$IDF_PATH/components/partition_table:$IDF_PATH/components/app_update:$PATH"
+          for c in idf.py gen_esp32part.py; do
+            PATH="$NEWPATH" command -v "$c" >/dev/null || { echo "::error::$c 在 PATH 上找不到 —— rg_tool.py 会裸调它"; exit 1; }
+          done
+          for c in esptool.py parttool.py idf_monitor.py; do
+            PATH="$NEWPATH" command -v "$c" >/dev/null || echo "::warning::$c 不在 PATH 上（本 CI 不刷机，允许）"
+          done
+          echo "IDF 脚本齐备：idf.py / gen_esp32part.py"
 
       # ── 3. 全量构建 ─────────────────────────────────────────────────────
       - name: Build merged image (launcher + gbsp)
