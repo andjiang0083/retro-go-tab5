@@ -413,7 +413,11 @@ static void update_viewport_scaling(void)
     new_height &= ~1;
 
     display.viewport.left = (screen_width - new_width) / 2;
-    display.viewport.top = (screen_height - new_height) / 2;
+    /* 太高就**贴顶**：Tab5 的游戏区只有 480 高（见 targets/tab5/config.h 的
+     * RG_SCREEN_VISIBLE_AREA），GB 4x = 576 高会算出 top = (480-576)/2 = **-48**
+     * （负值 → 画面顶部被切）。贴顶后画面占 y 0..576，控制区从 576 起。
+     * GBA(480)/NES(480) 本来就不超 → 结果为 0，与改前完全相同。 */
+    display.viewport.top = RG_MAX(0, (screen_height - new_height) / 2);
     display.viewport.width = new_width;
     display.viewport.height = new_height;
 
@@ -427,9 +431,12 @@ static void update_viewport_scaling(void)
 
     memset(screen_line_checksum, 0, sizeof(screen_line_checksum));
 
-    for (int x = 0; x < screen_width; ++x)
+    /* 映射表按**视口**填（不是可见区）：视口可能比可见区还高（GB 4x = 576 > 480），
+     * 只填到 screen_height 的话，480..575 那些行会残留上一次的映射（画面下半截拉错）。
+     * 数组本身按 RG_SCREEN_WIDTH/HEIGHT 分配，容量足够。 */
+    for (int x = 0; x < display.viewport.width; ++x)
         map_viewport_to_source_x[x] = FLOAT_TO_INT(x * display.viewport.step_x);
-    for (int y = 0; y < screen_height; ++y)
+    for (int y = 0; y < display.viewport.height; ++y)
         map_viewport_to_source_y[y] = FLOAT_TO_INT(y * display.viewport.step_y);
 
     RG_LOGI("%dx%d@%.3f => %dx%d@%.3f left:%d top:%d step_x:%.2f step_y:%.2f", src_width, src_height,

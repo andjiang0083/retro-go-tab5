@@ -113,6 +113,29 @@ typedef struct
 #define RG_OVERLAY_TOGGLE_W 88
 #define RG_OVERLAY_TOGGLE_H 48
 
+/* ---------------- 当前游戏视口的运行时几何（**必须在所有使用点之前**）----------------
+ * 面板底图、"整条重铺"矩形、布局自检都要知道"画面到哪结束、控制区从哪开始"：
+ *   GBA 240x160 @3x = 720x480 贴顶        → 控制区顶 480（控制区高 800）
+ *   GB  160x144 @3x = 480x432 居中 top=24 → 控制区顶 456（控制区高 824）
+ *   NES 256x240 @2x = 512x480 居中 top=0  → 控制区顶 480（控制区高 800）
+ * 全部取自 rg_display_get_info()->viewport（视口在**逻辑屏 720x480** 内居中；竖屏物理下
+ * 逻辑 y 与物理 y 同向，可直接用）。⚠ 别再写死 480 —— 那是"换机型后凹槽/铭牌全错位"的来源。 */
+static int ctrl_top_cur = 480;   /* 兜底 = GBA 值（视口未就绪时用，与 RG_OVERLAY_CTRL_TOP 同值） */
+static int win_x_cur = 0;
+static int win_w_cur = 720;
+
+static void rg_overlay_sync_viewport(void)
+{
+    const rg_display_t *d = rg_display_get_info();
+    if (!d || d->viewport.width <= 0 || d->viewport.height <= 0)
+        return;
+    win_x_cur = d->viewport.left;
+    win_w_cur = d->viewport.width;
+    ctrl_top_cur = d->viewport.top + d->viewport.height;   /* 视口底 = 控制区顶 */
+    if (ctrl_top_cur < 0 || ctrl_top_cur > 1280 - 64)
+        ctrl_top_cur = 480;                                /* 明显不合理 → 退回兜底 */
+}
+
 static rg_overlay_btn_t *btns;
 static size_t btn_count;
 static bool ready;
@@ -626,32 +649,48 @@ void rg_overlay_init(void)
         return;
     }
     memset(btns, 0, sizeof(rg_overlay_btn_t) * n);
-    btn_count = (n > RG_OVERLAY_MAX_BUTTONS) ? RG_OVERLAY_MAX_BUTTONS : n;   /* 上限保护 */
+    /* ⚠ btn_count 必须等于**实际建出来的**按键数：dirty 位、命中、绘制都按它对齐。
+     * 该机型没有的键直接跳过（GB/GBC 无 L/R 肩键），所以用独立计数器，不能直接用 n。 */
+    btn_count = 0;
 
-    for (size_t i = 0; i < n; ++i)
+    for (size_t i = 0; i < n && btn_count < RG_OVERLAY_MAX_BUTTONS; ++i)
     {
-        /* 位置固定、**功能键可调换**：btn.key 存的是"这个位置现在代表哪个键"
-         * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 btn.key
+        if (rg_touch_key_hidden(console_id, map[i].key))
+            continue;
+        rg_overlay_btn_t *b = &btns[btn_count++];
+        /* 位置固定、**功能键可调换**：b->key 存的是"这个位置现在代表哪个键"
+         * （调换后菱形位上是 R/L，肩键位上是 X/Y）。按下高亮、标签、配色都读 b->key
          * → 视觉与手感永远一致；也正因为存的是功能键，高亮匹配不用额外改。
          * ⚠ 这里必须走 rg_overlay_map_key()：输入层调的是同一个函数，
          * 两边不可能再出现"一边门控、一边没门控"的不一致（真机曾按 X 亮 R）。 */
-        btns[i].key = rg_overlay_map_key(map[i].key);
-        btns[i].w = map[i].w;
-        btns[i].h = map[i].h;
-        btns[i].x = map[i].x - map[i].w / 2;
-        btns[i].y = map[i].y - map[i].h / 2;
-        build_button(&btns[i], overlay_key_color(btns[i].key), NULL);
+        b->key = rg_overlay_map_key(map[i].key);
+        b->w = map[i].w;
+        b->h = map[i].h;
+        b->x = map[i].x - map[i].w / 2;
+        b->y = map[i].y - map[i].h / 2;
+        build_button(b, overlay_key_color(b->key), NULL);
     }
 
     /* L/R 之间那颗「X/Y ↔ L/R 调换」按钮：几何来自键位表（RG_TAB5_SWAP_*），
      * key=0（不是游戏键，不注入输入），颜色走皮肤的 SWAP 槽（= 系统/UI 控件色）。 */
-    swap_btn.key = RG_KEY_NONE;
-    swap_btn.w = RG_TAB5_SWAP_W;
-    swap_btn.h = RG_TAB5_SWAP_H;
-    swap_btn.x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2;
-    swap_btn.y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2;
-    build_button(&swap_btn, rg_touch_skin_key_color(skin_idx, RG_SKIN_SLOT_SWAP, console_id), swap_label());
-    swap_btn_ready = (swap_btn.mask != NULL);
+    /* GB/GBC 没有肩键行 → "X/Y ↔ L/R 调换"没有意义，这颗按钮不建
+     * （不绘制、不命中、不占 dirty 位；swap_btn_ready=false 就是所有路径的总开关）。 */
+    if (rg_touch_has_shoulders(console_id))
+    {
+        swap_btn.key = RG_KEY_NONE;
+        swap_btn.w = RG_TAB5_SWAP_W;
+        swap_btn.h = RG_TAB5_SWAP_H;
+        swap_btn.x = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2;
+        swap_btn.y = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2;
+        build_button(&swap_btn, rg_touch_skin_key_color(skin_idx, RG_SKIN_SLOT_SWAP, console_id), swap_label());
+        swap_btn_ready = (swap_btn.mask != NULL);
+    }
+    else
+    {
+        swap_btn.mask = NULL;
+        swap_btn.mask_alt = NULL;
+        swap_btn_ready = false;
+    }
 
     /* ── 调换用的"另一套"掩码（预渲染，点击只对换）─────────────────────────
      * 只给 X/Y/L/R 四个键和这颗切换按钮建；集合在调换下闭合，所以"另一套"就是
@@ -675,10 +714,12 @@ void rg_overlay_init(void)
         int bad = 0;
         for (size_t i = 0; i < btn_count; ++i)
         {
-            if (btns[i].y < 480)
+            /* ⚠ 画面高度**按当前视口**算，别写死 480：GB 3x 时视口只到 y=456，
+             *   写死 480 会把"487 处的上三排"误判成没压画面（差 24px 的假阴性）。 */
+            if (btns[i].y < ctrl_top_cur)
             {
-                RG_LOGW("touch layout: button #%u top y=%d 压进游戏画面（竖屏视口 0..480）\n",
-                        (unsigned)i, btns[i].y);
+                RG_LOGW("touch layout: button #%u top y=%d 压进游戏画面（视口底 %d）\n",
+                        (unsigned)i, btns[i].y, ctrl_top_cur);
                 bad++;
             }
             for (size_t j = i + 1; j < btn_count; ++j)
@@ -768,27 +809,8 @@ static bool panel_installed = false;
 static int panel_vp_x = -1, panel_vp_w = -1, panel_vp_top = -1;
 
 /* ---------------- 当前游戏视口的运行时几何 ----------------
- * 面板底图与"整条重铺"矩形都必须知道"画面到哪结束、控制区从哪开始"：
- *   GBA 240x160 @3x = 720x480 贴顶        → 控制区顶 480（控制区高 800）
- *   GB  160x144 @3x = 480x432 居中 top=24 → 控制区顶 456（控制区高 824）
- *   NES 256x240 @2x = 512x480 居中 top=0  → 控制区顶 480（控制区高 800）
- * 全部取自 rg_display_get_info()->viewport（视口在**逻辑屏 720x480** 内居中；竖屏物理下
- * 逻辑 y 与物理 y 同向，可直接用）。⚠ 别再写死 480 —— 那是"换机型后凹槽/铭牌全错位"的来源。 */
-static int ctrl_top_cur = RG_OVERLAY_CTRL_TOP;   /* 兜底 = GBA 值（视口未就绪时用） */
-static int win_x_cur = 0;
-static int win_w_cur = RG_SCREEN_WIDTH;
-
-static void rg_overlay_sync_viewport(void)
-{
-    const rg_display_t *d = rg_display_get_info();
-    if (!d || d->viewport.width <= 0 || d->viewport.height <= 0)
-        return;
-    win_x_cur = d->viewport.left;
-    win_w_cur = d->viewport.width;
-    ctrl_top_cur = d->viewport.top + d->viewport.height;   /* 视口底 = 控制区顶 */
-    if (ctrl_top_cur < 0 || ctrl_top_cur > RG_OVERLAY_PANEL_H - 64)
-        ctrl_top_cur = RG_OVERLAY_CTRL_TOP;                /* 明显不合理 → 退回兜底 */
-}
+ * 定义在**文件顶部**（见 rg_overlay_sync_viewport 附近）：布局自检那个更早的函数也要用它，
+ * 放这里会"未声明先用"。 */
 
 static void rg_overlay_try_panel(void)
 {

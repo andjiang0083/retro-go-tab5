@@ -16,6 +16,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>       /* 机型判据用 strcmp（头文件里的 static inline 也要能独立编译） */
 
 #include "rg_system.h"      /* rg_key_t + 屏幕尺寸（config.h） */
 #include "rg_surface.h"
@@ -60,6 +61,23 @@ bool rg_touch_skin_label_color(int skin_idx, uint16_t *out);
 
 /* 机型铭牌文案（按核心的 configNs：gba/gb/gbc/nes/...）+ 该机型的点缀色。
  * 找不到时退回通用值（"RETRO-GO" + 琥珀），不返回 NULL。 */
+/* 该机型的控制区**有没有肩键那一行** —— GB/GBC 是单机时代的掌机，没有 L/R。
+ * "X/Y↔L/R 调换"那颗按钮也只在有肩键时才有意义，所以它跟这一行同生共死。 */
+static inline bool rg_touch_has_shoulders(const char *console_id)
+{
+    if (!console_id || !*console_id)
+        return true;    /* 认不出的机型：给全功能，宁可多显示也别把键藏了 */
+    return strcmp(console_id, "gb") != 0 && strcmp(console_id, "gbc") != 0;
+}
+
+/* 这个键在该机型下**不存在**：隐藏 = 不绘制、不命中、不进分区框。
+ * ⚠ 只影响"可视与命中"；键位表（targets/tab5/touch_layout.h）本身不动 —— 它仍是坐标的单一真源，
+ *   真机上要挪按键就改那张表，别在这里挪。 */
+static inline bool rg_touch_key_hidden(const char *console_id, rg_key_t key)
+{
+    return !rg_touch_has_shoulders(console_id) && (key == RG_KEY_L || key == RG_KEY_R);
+}
+
 const char *rg_touch_skin_badge(const char *console_id);
 uint16_t    rg_touch_skin_accent(int skin_idx, const char *console_id);
 

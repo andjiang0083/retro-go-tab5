@@ -329,12 +329,18 @@ static void panel_text(rg_surface_t *s, int cx, int cy, int scale, int track, co
  * 键位从 rg_input_get_touch_keymap() 取（与触摸命中/掩码同一个真源）。 */
 typedef struct { int x0, y0, x1, y1; } skin_box_t;
 
-static void layout_compute(int ctrl_top, skin_box_t clusters[4], int *led_cy, int *badge_cy,
-                           int led_cy_in, int led_r)
+static void layout_compute(const char *console_id, int ctrl_top, skin_box_t clusters[4], int *led_cy,
+                           int *badge_cy, int led_cy_in, int led_r)
 {
     size_t n = 0;
     const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&n);
-    const int dy = ctrl_top - RG_TOUCH_PANEL_REF_CTRL_TOP;
+    /* 上三排的"避让画面"下移量 —— **恒为 0**。
+     * ⚠ 真实按键（btns[]）用的是键位表的固定坐标、**不加 dy**，所以面板分区框一旦单独平移，
+     *   就会与按键错位（真机表现：框在下面、键在上面）。要避让就必须同时改键位表
+     *   （targets/tab5/touch_layout.h）+ 掩码 + 命中判定 —— 那是"挪按键"，不是"挪面板"。
+     * GB 4x 去掉肩键行后按键顶(653)仍在画面底(576)之下，本来就不需要避让；
+     * 若将来某个机型真的压到画面，下面的自检会打 WARNING，改键位表即可。 */
+    const int dy = 0;
     const int pads[4] = {RG_TOUCH_PANEL_CLUSTER_PAD_DPAD, RG_TOUCH_PANEL_CLUSTER_PAD_ACTION,
                          RG_TOUCH_PANEL_CLUSTER_PAD_SHOULDER, RG_TOUCH_PANEL_CLUSTER_PAD_SYSTEM};
     int upper_bottom = 0, sys_top = 1 << 30;
@@ -346,6 +352,10 @@ static void layout_compute(int ctrl_top, skin_box_t clusters[4], int *led_cy, in
 
     for (size_t i = 0; i < n && map; ++i)
     {
+        /* 该机型没有的键（GB/GBC 无 L/R 肩键）不进分区框 —— 那一组自然为空，
+         * 绘制端靠 w<=0||h<=0 跳过（见面板生成的第 ④ 步）。 */
+        if (rg_touch_key_hidden(console_id, map[i].key))
+            continue;
         const bool is_system = (map[i].key == RG_KEY_SELECT || map[i].key == RG_KEY_START || map[i].key == RG_KEY_MENU);
         int x = map[i].x - map[i].w / 2;
         int y = map[i].y - map[i].h / 2 + (is_system ? 0 : dy);
@@ -376,7 +386,9 @@ static void layout_compute(int ctrl_top, skin_box_t clusters[4], int *led_cy, in
         if (y + h + p > clusters[c].y1) clusters[c].y1 = y + h + p;
     }
 
-    /* 肩键那一组要连上中间那颗调换按钮（它不在键位表里，几何在 touch_layout.h） */
+    /* 肩键那一组要连上中间那颗调换按钮（它不在键位表里，几何在 touch_layout.h）。
+     * GB/GBC 没有肩键行 → 那颗按钮也不存在 → 整段跳过。 */
+    if (rg_touch_has_shoulders(console_id))
     {
         const int sx = RG_TAB5_SWAP_X - RG_TAB5_SWAP_W / 2 - RG_TOUCH_PANEL_CLUSTER_PAD_SHOULDER;
         const int sy = RG_TAB5_SWAP_Y - RG_TAB5_SWAP_H / 2 + dy - RG_TOUCH_PANEL_CLUSTER_PAD_SHOULDER;
@@ -411,7 +423,7 @@ int rg_touch_skin_led_cy(int ctrl_top, int led_r)
 {
     skin_box_t clusters[4];
     int led_cy = 0, badge_cy = 0;
-    layout_compute(ctrl_top, clusters, &led_cy, &badge_cy, 0, led_r);   /* 传 0 = 用推导值 */
+    layout_compute(NULL, ctrl_top, clusters, &led_cy, &badge_cy, 0, led_r);   /* 传 0 = 用推导值；NULL = 不过滤按键（灯位与肩键行无关） */
     return led_cy;
 }
 
@@ -486,7 +498,7 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
 
     skin_box_t clusters[4];
     int led_cy_used = 0, badge_cy = 0;
-    layout_compute(ctrl_top, clusters, &led_cy_used, &badge_cy, led_cy, led_r);
+    layout_compute(console_id, ctrl_top, clusters, &led_cy_used, &badge_cy, led_cy, led_r);
 
     /* ① 整屏底色 */
     panel_rect(panel, 0, 0, RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, to565(panel_bg));
