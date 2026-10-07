@@ -480,11 +480,10 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
     /* 派生色：全部先过 565 量化，PC 侧同口径 */
     const uint32_t accent = (s->accent_from_console ? console_entry(cid)->accent : 0xE8A22C);
     const uint32_t panel_bg = q565(s->panel_bg);
-    const uint32_t groove_fill = shade(panel_bg, 45);
-    /* 凹槽（屏幕四周的内嵌边）用"分区线"的暗化版画。成品值 70%：
-     * 凹槽要看得见但**不能压过按键本身**（用户：四类元素都保留、分区框明显）。
-     * 原来的 18% 在真机上基本看不见。 */
-    /* ACCENT 一律解释成"该机型的点缀色**本身**"（GBA 靛蓝 / GB 绿 / NES 红）。
+    /* ⚠ 屏幕四周的**凹槽与分界线已取消**（用户 2026-10-07："屏幕不需要主题"）——
+     *   这里不再派生 groove_fill / groove_line / divider（死变量会触发 -Wunused-variable）。
+     *   皮肤元素只剩：分区框 / 铭牌 / 圆灯。要回滚就翻 git 历史，别把不画的变量留在代码里。
+     * ACCENT 一律解释成"该机型的点缀色**本身**"（GBA 靛蓝 / GB 绿 / NES 红）。
      * ⚠ 不要再给它套 shade()/tint() 变暗 —— 那等于把"明显可见"的点缀色又压回看不见
      * （真机教训：分区框那档强度就是被这种"再暗一点"吃掉的）。
      * D 套的表里 cluster_line / divider / badge_line / badge_text 都写 ACCENT。 */
@@ -492,10 +491,6 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
     const uint32_t cluster_fill = s->cluster_fill == RG_TOUCH_SKIN_NONE ? 0 : q565(s->cluster_fill);
     const uint32_t cluster_line = s->cluster_line == RG_TOUCH_SKIN_NONE ? 0
                                 : s->cluster_line == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->cluster_line);
-    /* 凹槽线：拿**已解释过的** cluster_line 暗化（原来直接 q565(s->cluster_line)，
-     * 遇到 ACCENT 哨兵会算出无意义颜色）。成品值 70%：看得见但不压过按键。 */
-    const uint32_t groove_line = cluster_line == 0 ? panel_bg : tint(cluster_line, 70);
-    const uint32_t divider = s->divider == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->divider);
     const uint32_t badge_fill = s->badge_fill == RG_TOUCH_SKIN_NONE ? 0 : q565(s->badge_fill);
     const uint32_t badge_line = s->badge_line == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->badge_line);
     const uint32_t badge_text = s->badge_text == RG_TOUCH_SKIN_ACCENT ? accent565 : q565(s->badge_text);
