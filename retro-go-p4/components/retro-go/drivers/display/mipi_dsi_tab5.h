@@ -45,7 +45,7 @@ extern esp_err_t bsp_display_new_with_handles(
 extern esp_err_t bsp_display_new_with_handles_to_st7123(
     const bsp_display_config_t *config, bsp_lcd_handles_t *ret_handles);
 
-/* ---- AXI-ICM QoS 调优（2026-09-25 夜；完整证据链见 docs/NIGHT-2026-09-25-DISPLAY.md）----
+/* ---- AXI-ICM QoS 调优（2026-09-25 夜；完整证据链见 docs/archive/NIGHT-2026-09-25-DISPLAY.md）----
  *
  * 起因：IDF 在 DSI 欠载中断里的官方提示就是"用 AXI-ICM 优化内存带宽"。P4 上确实有这套 QoS 硬件，
  * 我们的两条关键路径对应：
@@ -237,7 +237,7 @@ static void lcd_init(void)
     /* ⚠⚠ 关键一步：电源/复位外围（BSP I2C → IO 扩展器 → 充电使能）现在统一收在
      * tab5_power.h 的 tab5_power_init() 里，**横屏/竖屏两份显示驱动共用同一个实现**
      * （原先只写在竖屏版里 → 充电使能的修复漏了横屏一份，谁切横屏构建就复发，
-     *  见 docs/CODE-REVIEW-v0.4.1.md P1-1）。
+     *  见 docs/archive/CODE-REVIEW-v0.4.1.md P1-1）。
      * 为什么必须调、为什么顺序不能动：见 tab5_power.h 文件头的完整说明。
      * 必须放在 _to_st7123 之前，否则屏型探测拿不到 ST7123 会走错分支。 */
     tab5_power_init();
