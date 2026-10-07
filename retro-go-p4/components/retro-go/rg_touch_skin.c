@@ -390,16 +390,38 @@ static void layout_compute(int ctrl_top, skin_box_t clusters[4], int *led_cy, in
         if (sy1 > clusters[2].y1) clusters[2].y1 = sy1;
     }
 
-    /* 圆灯 = 「上三排底边」与「系统键行顶边」正中；铭牌 = 「上三排底边」与「圆灯顶」正中。
-     * GBA 下算得 1024（真机 1025，差 1px）—— 把锚定规则留着，多核时它自动跟着动。 */
+    /* 圆灯与铭牌在这段竖向空间里**各占一半、各自居中**（上半 = 铭牌，下半 = 圆灯）。
+     * 旧规则是"灯居中、铭牌挤在灯上方"，真机上两者只隔十几像素（用户反馈"太挤"）。
+     * led_cy_in > 0 时仍以它为准（覆盖层可以显式钉死灯位）。 */
     *led_cy = led_cy_in;
     if (sys_top > upper_bottom)
     {
-        const int derived = (upper_bottom + sys_top) / 2;
+        const int mid = (upper_bottom + sys_top) / 2;
         if (led_cy_in <= 0)
-            *led_cy = derived;
+            *led_cy = (mid + sys_top) / 2;      /* 下半区居中 */
+        *badge_cy = (upper_bottom + mid) / 2;   /* 上半区居中 */
     }
-    *badge_cy = (upper_bottom + (*led_cy - led_r)) / 2;
+    else
+    {
+        *badge_cy = (upper_bottom + (*led_cy - led_r)) / 2;   /* 退化情形：按老规则兜底 */
+    }
+}
+
+/* 覆盖层与显示驱动要跟面板用**同一套**几何（各写一份常量 = 必然漂移）：
+ * 圆灯中心 y 由这里算，调用方传自己的控制区顶与灯半径。 */
+int rg_touch_skin_led_cy(int ctrl_top, int led_r)
+{
+    skin_box_t clusters[4];
+    int led_cy = 0, badge_cy = 0;
+    layout_compute(ctrl_top, clusters, &led_cy, &badge_cy, 0, led_r);   /* 传 0 = 用推导值 */
+    return led_cy;
+}
+
+/* 面板底色（已量化成 565）：驱动擦"电量灯条带"时拿它当背景。
+ * ⚠ 不能用纯黑 —— 非黑面板上那条带会割裂画面（真机反馈）。 */
+uint16_t rg_touch_skin_panel_bg565(int skin_idx)
+{
+    return to565(skins[rg_touch_skin_clamp(skin_idx)].panel_bg);
 }
 
 /* ---------------------------------------------------------------- 面板生成 */

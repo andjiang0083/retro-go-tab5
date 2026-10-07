@@ -43,6 +43,11 @@ int  rg_touch_skin_count(void);
 int  rg_touch_skin_clamp(int idx);
 const char *rg_touch_skin_name(int idx);         /* ASCII 全名（选择器列表用；设备字库只有 8x8 ASCII） */
 const char *rg_touch_skin_short_name(int idx);   /* ASCII 短名（设置项右列用） */
+/* 覆盖层/显示驱动要跟面板用**同一套**几何（各写一份常量必然漂移）：圆灯中心 y。
+ * ctrl_top 传控制区顶（覆盖层是 RG_OVERLAY_CTRL_TOP），led_r 传灯半径。 */
+int rg_touch_skin_led_cy(int ctrl_top, int led_r);
+/* 面板底色（565）：驱动擦"电量灯条带"时用它当背景 —— 用纯黑会在非黑面板上割裂画面。 */
+uint16_t rg_touch_skin_panel_bg565(int skin_idx);
 int  rg_touch_skin_slot_for_key(rg_key_t key);   /* rg_key_t → 槽位（RG_KEY_NONE → SWAP 槽，见 .c 注释） */
 uint16_t rg_touch_skin_key_color(int skin_idx, int slot, const char *console_id);
 /* 按键三层配方（边框/填充/标签的**覆盖率权重**，0~255）：

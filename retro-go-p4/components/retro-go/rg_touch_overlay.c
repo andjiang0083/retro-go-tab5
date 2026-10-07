@@ -44,11 +44,12 @@
  * 皮肤面板的机型铭牌锚在"菱形键底 ~ 圆灯顶"的正中，所以面板生成需要这两个数。
  * 原来定义在文件后段，只能被后面的函数引用。 */
 #define RG_BATT_LED_CX       360
-#define RG_BATT_LED_CY       1025
+#define RG_BATT_LED_CY       1025    /* 兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
 #define RG_BATT_LED_R        12
 #define RG_BATT_LED_RING     3
-#define RG_BATT_LED_BAND_Y0  1012
-#define RG_BATT_LED_BAND_Y1  1040
+/* 灯条带 Y 范围不再写死：跟着 led_cy_cur 走（见 rg_batt_led_get_band），
+ * 行号还要按 4 取整（帧缓冲一行 1440B，128B 边界 = 每 4 行，msync 要求对齐）。 */
+#define RG_BATT_LED_BAND_PAD 2
 
 #define ROLE_NONE   0
 #define ROLE_BORDER 1
@@ -174,6 +175,9 @@ static uint8_t glyphs[128][8];            /* ASCII 8x8 点阵，MSB = 最左列 
  * console_id = 当前核心的机型 id（gba/gb/gbc/nes/…）：决定铭牌文案与 D 套的点缀色。 */
 static int skin_idx = 0;
 static char console_id[16] = "";
+/* 圆灯中心 y（物理像素）：面板与灯条带共用**同一个推导值** —— 两边各写常量必然漂移。
+ * 面板装好/换皮肤时由 rg_touch_skin_led_cy() 更新。 */
+static int led_cy_cur = RG_BATT_LED_CY;
 
 /* ---------------------------------------------------------------- 颜色工具 */
 
@@ -774,14 +778,18 @@ static void rg_overlay_try_panel(void)
     /* ⚠ 多核（GB/NES）落地前，视口只有 GBA 这一种（720x480 贴顶满宽）；
      *   届时把 win_x/win_w/ctrl_top 换成从 rg_display_get_info()->viewport 取的真实值，
      *   凹槽与"上三排下移"会自动跟着走（锚定规则已经在 rg_touch_skin.c 里参数化了）。 */
+    /* led_cy 传 0 = 让皮肤布局**自己推导**（圆灯与铭牌在两排之间"各占一半、各自居中"）。
+     * 以前钉死 1025 是为了跟真机对齐，但那样铭牌只能挤在灯上方，分不均。 */
     rg_surface_t *panel = rg_touch_panel_get(skin_idx, console_id, RG_OVERLAY_CTRL_TOP,
-                                             0, RG_SCREEN_WIDTH, RG_BATT_LED_CY, RG_BATT_LED_R);
+                                             0, RG_SCREEN_WIDTH, 0, RG_BATT_LED_R);
     if (!panel)
         return;
     rg_display_set_border_surface(panel);
     rg_display_border_refresh();
     panel_installed = true;
     dirty_panel_strip = true;   /* 让下一帧把整条控制区重铺一遍（见 dirty_panel_strip 的说明） */
+    /* 灯位从布局推导（与面板同源）。条带跟着它走，所以灯动条带也动。 */
+    led_cy_cur = rg_touch_skin_led_cy(RG_OVERLAY_CTRL_TOP, RG_BATT_LED_R);
     /* 这一行是"面板到底装上了没"的唯一判据（真机日志）：装上=控制区有底图；
      * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。 */
     RG_LOGI("touch skin: panel installed for '%s' (skin %s), screen %dx%d\n",
@@ -1507,10 +1515,23 @@ bool rg_batt_led_refresh_needed(void)
 
 void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1)
 {
+    /* 条带跟着圆灯**实际位置**走（灯位由皮肤布局推导 → led_cy_cur），不再写死 1012/1040。
+     * 行号按 4 取整：帧缓冲一行 1440B，128B 边界每 4 行才落一次，msync 要求偏移/长度都对齐。 */
+    const int lo = led_cy_cur - RG_BATT_LED_R - RG_BATT_LED_BAND_PAD;
+    const int hi = led_cy_cur + RG_BATT_LED_R + RG_BATT_LED_BAND_PAD;
     if (x0) *x0 = 0;
-    if (y0) *y0 = RG_BATT_LED_BAND_Y0;
+    if (y0) *y0 = (lo & ~3) < 0 ? 0 : (lo & ~3);
     if (x1) *x1 = RG_SCREEN_WIDTH;
-    if (y1) *y1 = RG_BATT_LED_BAND_Y1;
+    if (y1) *y1 = ((hi + 3) & ~3) > RG_SCREEN_HEIGHT ? RG_SCREEN_HEIGHT : ((hi + 3) & ~3);
+}
+
+/* 擦灯条带用的背景色 = **当前皮肤的面板底色**（已量化 565）。
+ * 面板还没装（启动器/横屏阶段）时退回纯黑，与那时的黑底一致。 */
+uint16_t rg_batt_led_band_bg(void)
+{
+    if (!panel_installed)
+        return 0x0000;
+    return rg_touch_skin_panel_bg565(skin_idx);
 }
 
 void rg_batt_led_draw(uint16_t *buf, int stride)
@@ -1518,9 +1539,10 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
     if (!buf || stride <= 0)
         return;
     /* 契约（走查 P2-15）：buf 是**整屏**帧缓冲（竖屏线性映射下逻辑与物理同向），
-     * stride = 一行像素数。本函数只写 [RG_BATT_LED_BAND_Y0, RG_BATT_LED_BAND_Y1) 条带内的
-     * 像素，且是**直接覆盖**（那一条带背景纯黑，不需要混合）。
+     * stride = 一行像素数。本函数只写「灯条带」内的像素（条带范围由 rg_batt_led_get_band()
+     * 给出，跟着 led_cy_cur 走），且是**直接覆盖**。
      * 调用方（显示驱动 tab5_batt_led_refresh）负责：① 先把条带擦成背景
+     * （背景色 = rg_batt_led_band_bg()，即当前皮肤的面板底色 —— 用纯黑会在非黑面板上割裂画面）
      * ② 画完后对条带做 C2M cache 写回（CPU 写、DMA 读，方向不能反）。 */
 
     bool lit = true;
@@ -1537,11 +1559,13 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
     const int a_ring = alpha_level * (lit ? 90 : 72) / 100;
     const int a_fill = alpha_level * 50 / 100;
     const int R = RG_BATT_LED_R, Ri = R - RG_BATT_LED_RING;
+    int bx0, by0, bx1, by1;
+    rg_batt_led_get_band(&bx0, &by0, &bx1, &by1);
 
     for (int dy = -R; dy <= R; ++dy)
     {
-        const int ly = RG_BATT_LED_CY + dy;
-        if (ly < RG_BATT_LED_BAND_Y0 || ly >= RG_BATT_LED_BAND_Y1)
+        const int ly = led_cy_cur + dy;
+        if (ly < by0 || ly >= by1)
             continue;
         uint16_t *row = buf + (size_t)ly * stride;
         for (int dx = -R; dx <= R; ++dx)

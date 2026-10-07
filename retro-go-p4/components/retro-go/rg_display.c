@@ -723,8 +723,14 @@ void rg_display_write_rect(int left, int top, int width, int height, int stride,
     stride = RG_MAX(stride, width * 2);
 
     // Clipping
-    width = RG_MIN(width, display.screen.width - left);
-    height = RG_MIN(height, display.screen.height - top);
+    /* ⚠ 基准是**物理屏**（real_*），不是逻辑视口（width/height）：
+     *   Tab5 竖屏上逻辑视口只有 720x480，而控制区条带（物理 y 480..1280）和边框图**都在它之外**。
+     *   用逻辑尺寸裁，`height = MIN(h, 480 - 480) = 0` → 一个像素都不写。
+     *   真机症状极具迷惑性：面板装上了、日志条条都对，控制区永远纯黑，只有"整帧发送"时才见按键变化
+     *   （覆盖层是驱动合成进物理帧缓冲的，不经过这里）。2026-10-07 定位。
+     *   screen_line_checksum[] 是按 real_height 开的，所以这里用 real 不会越界。 */
+    width = RG_MIN(width, display.screen.real_width - left);
+    height = RG_MIN(height, display.screen.real_height - top);
 
     // This can happen when left or top is out of bound
     if (width < 0 || height < 0)
@@ -738,8 +744,9 @@ void rg_display_write_rect(int left, int top, int width, int height, int stride,
 
     // This isn't really necessary but it makes sense to invalidate
     // the lines we're about to overwrite...
-    for (size_t y = 0; y < height; ++y)
-        screen_line_checksum[top + y] = 0;
+    for (size_t y = 0; y < (size_t)height; ++y)
+        if ((size_t)(top + y) < RG_COUNT(screen_line_checksum))   // 物理坐标可能到 1279，别越界
+            screen_line_checksum[top + y] = 0;
 
     lcd_set_window(left + display.screen.margins.left, top + display.screen.margins.top, width, height);
 

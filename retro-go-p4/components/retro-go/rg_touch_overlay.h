@@ -181,7 +181,8 @@ void rg_overlay_set_fps(int value);
  *   rg_batt_led_refresh_needed() / _get_band() / _draw() 直接写面板帧缓冲并做局部
  *   cache 写回（见 mipi_dsi_tab5_p.h 里 tab5_batt_led_refresh 的注释与实测教训）。 */
 bool rg_batt_led_refresh_needed(void);                          /* 样子变了才 true（含闪烁相位） */
-void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1);   /* 逻辑坐标整行带，行号已按 4 取整 */
+void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1);   /* 逻辑坐标整行带（跟随灯位，行号按 4 取整） */
+uint16_t rg_batt_led_band_bg(void);                              /* 擦条带的背景色 = 当前皮肤面板底色 */
 void rg_batt_led_draw(uint16_t *buf, int stride);                /* 线性映射（物理=逻辑）直绘 */
 
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */

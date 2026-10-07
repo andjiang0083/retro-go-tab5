@@ -514,12 +514,14 @@ static void tab5_batt_led_refresh(void)
 
     int x0, y0, x1, y1;
     rg_batt_led_get_band(&x0, &y0, &x1, &y1);
-    /* 先擦成背景（这块控制区没有任何别的内容，纯黑）：不擦的话"灭"的相位擦不掉旧像素 */
+    /* 先擦成背景：**面板底是皮肤色，不是黑** —— 用纯黑会在这条带上割裂画面（真机反馈）。
+     * 取"当前皮肤的面板底色"来擦，接缝就看不出来了。 */
+    const uint16_t band_bg = rg_batt_led_band_bg();
     for (int y = y0; y < y1; ++y)
     {
         uint16_t *row = tab5_fb + (size_t)y * TAB5_PHYS_W;
         for (int x = x0; x < x1; ++x)
-            row[x] = 0x0000;
+            row[x] = band_bg;
     }
     rg_batt_led_draw(tab5_fb, TAB5_PHYS_W);
 
