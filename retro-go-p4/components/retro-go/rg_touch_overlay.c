@@ -764,36 +764,75 @@ const char *rg_overlay_skin_short_name(int idx)
  * "内存面板尺寸不符（720x1280，应为 720x480），忽略"）。所以不在建层时装，
  * 而是**第一次真正渲染控制区时**装（那时必然已转屏）；幂等，成功后不再重复。 */
 static bool panel_installed = false;
+/* 已装面板对应的视口（换机型/换分辨率时判断"要不要重装"）。-1 = 还没装过。 */
+static int panel_vp_x = -1, panel_vp_w = -1, panel_vp_top = -1;
+
+/* ---------------- 当前游戏视口的运行时几何 ----------------
+ * 面板底图与"整条重铺"矩形都必须知道"画面到哪结束、控制区从哪开始"：
+ *   GBA 240x160 @3x = 720x480 贴顶        → 控制区顶 480（控制区高 800）
+ *   GB  160x144 @3x = 480x432 居中 top=24 → 控制区顶 456（控制区高 824）
+ *   NES 256x240 @2x = 512x480 居中 top=0  → 控制区顶 480（控制区高 800）
+ * 全部取自 rg_display_get_info()->viewport（视口在**逻辑屏 720x480** 内居中；竖屏物理下
+ * 逻辑 y 与物理 y 同向，可直接用）。⚠ 别再写死 480 —— 那是"换机型后凹槽/铭牌全错位"的来源。 */
+static int ctrl_top_cur = RG_OVERLAY_CTRL_TOP;   /* 兜底 = GBA 值（视口未就绪时用） */
+static int win_x_cur = 0;
+static int win_w_cur = RG_SCREEN_WIDTH;
+
+static void rg_overlay_sync_viewport(void)
+{
+    const rg_display_t *d = rg_display_get_info();
+    if (!d || d->viewport.width <= 0 || d->viewport.height <= 0)
+        return;
+    win_x_cur = d->viewport.left;
+    win_w_cur = d->viewport.width;
+    ctrl_top_cur = d->viewport.top + d->viewport.height;   /* 视口底 = 控制区顶 */
+    if (ctrl_top_cur < 0 || ctrl_top_cur > RG_OVERLAY_PANEL_H - 64)
+        ctrl_top_cur = RG_OVERLAY_CTRL_TOP;                /* 明显不合理 → 退回兜底 */
+}
 
 static void rg_overlay_try_panel(void)
 {
-    if (panel_installed || !btns)
+    if (!btns)
         return;
     /* 该不该装：**判"在不在游戏里"**，别拿 rg_display_get_width/height 去比 720x1280 ——
-     * 那两个是**逻辑视口**尺寸，Tab5 上逻辑屏与游戏视口都是 720x480（GBA 3x 正好铺满，
-     * 没有黑边），比 1280 永远不成立。真机现象就是"面板一直不装、守卫静默挡掉、无日志"。
+     * 那两个是**逻辑视口**尺寸（Tab5 上逻辑屏就是 720x480），比 1280 永远不成立。
+     * 真机现象就是"面板一直不装、守卫静默挡掉、无日志"。
      * 控制区面板铺的是"游戏视口 + 下方控制条带"这个结构，启动器另有自己的全屏 UI。 */
     if (!console_id[0] || strcmp(console_id, "launcher") == 0)
         return;
-    /* ⚠ 多核（GB/NES）落地前，视口只有 GBA 这一种（720x480 贴顶满宽）；
-     *   届时把 win_x/win_w/ctrl_top 换成从 rg_display_get_info()->viewport 取的真实值，
-     *   凹槽与"上三排下移"会自动跟着走（锚定规则已经在 rg_touch_skin.c 里参数化了）。 */
+
+    rg_overlay_sync_viewport();
+    /* 视口变了（换机型 / 换分辨率）= 面板底图与"整条重铺"矩形都得重画 → 卸掉重装。
+     * 同视口重复调用是幂等的（rg_touch_panel_get 内部按参数缓存，不会重复生成）。 */
+    if (panel_installed && (panel_vp_x != win_x_cur || panel_vp_w != win_w_cur || panel_vp_top != ctrl_top_cur))
+    {
+        RG_LOGI("touch skin: viewport changed (x=%d w=%d top=%d) → (x=%d w=%d top=%d), re-installing panel\n",
+                panel_vp_x, panel_vp_w, panel_vp_top, win_x_cur, win_w_cur, ctrl_top_cur);
+        panel_installed = false;
+    }
+    if (panel_installed)
+        return;
+
     /* led_cy 传 0 = 让皮肤布局**自己推导**（圆灯与铭牌在两排之间"各占一半、各自居中"）。
      * 以前钉死 1025 是为了跟真机对齐，但那样铭牌只能挤在灯上方，分不均。 */
-    rg_surface_t *panel = rg_touch_panel_get(skin_idx, console_id, RG_OVERLAY_CTRL_TOP,
-                                             0, RG_SCREEN_WIDTH, 0, RG_BATT_LED_R);
+    rg_surface_t *panel = rg_touch_panel_get(skin_idx, console_id, ctrl_top_cur,
+                                             win_x_cur, win_w_cur, 0, RG_BATT_LED_R);
     if (!panel)
         return;
     rg_display_set_border_surface(panel);
     rg_display_border_refresh();
     panel_installed = true;
+    panel_vp_x = win_x_cur; panel_vp_w = win_w_cur; panel_vp_top = ctrl_top_cur;
     dirty_panel_strip = true;   /* 让下一帧把整条控制区重铺一遍（见 dirty_panel_strip 的说明） */
     /* 灯位从布局推导（与面板同源）。条带跟着它走，所以灯动条带也动。 */
-    led_cy_cur = rg_touch_skin_led_cy(RG_OVERLAY_CTRL_TOP, RG_BATT_LED_R);
+    led_cy_cur = rg_touch_skin_led_cy(ctrl_top_cur, RG_BATT_LED_R);
     /* 这一行是"面板到底装上了没"的唯一判据（真机日志）：装上=控制区有底图；
-     * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。 */
-    RG_LOGI("touch skin: panel installed for '%s' (skin %s), screen %dx%d\n",
-            console_id, rg_touch_skin_name(skin_idx), rg_display_get_width(), rg_display_get_height());
+     * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。
+     * 中间三个数是**本次安装用的视口**：GBA x=0 w=720 top=480 / GB x=120 w=480 top=456 /
+     * NES x=104 w=512 top=480 —— 换机型时先看这行对不对得上。 */
+    RG_LOGI("touch skin: panel installed for '%s' (skin %s), vp x=%d w=%d ctrl_top=%d, screen %dx%d\n",
+            console_id, rg_touch_skin_name(skin_idx), win_x_cur, win_w_cur, ctrl_top_cur,
+            rg_display_get_width(), rg_display_get_height());
 }
 
 void rg_overlay_refresh_panel(void)
@@ -1099,9 +1138,9 @@ int rg_overlay_take_dirty_rects(int *out_xywh, int max)
         dirty_swap_btn = false;
         dirty_all_units = false;
         out_xywh[0] = 0;
-        out_xywh[1] = RG_OVERLAY_CTRL_TOP;
+        out_xywh[1] = ctrl_top_cur;                       /* 跟视口走（GBA 480 / GB 456 / NES 480） */
         out_xywh[2] = RG_SCREEN_WIDTH;
-        out_xywh[3] = RG_OVERLAY_PANEL_H - RG_OVERLAY_CTRL_TOP;
+        out_xywh[3] = RG_OVERLAY_PANEL_H - ctrl_top_cur;
         return 1;
     }
 

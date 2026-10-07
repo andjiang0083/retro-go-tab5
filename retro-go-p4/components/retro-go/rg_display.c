@@ -393,8 +393,19 @@ static void update_viewport_scaling(void)
     }
     else if (config.scaling == RG_DISPLAY_SCALING_ZOOM)
     {
-        new_width = FLOAT_TO_INT(src_width * config.custom_zoom);
-        new_height = FLOAT_TO_INT(src_height * config.custom_zoom);
+        /* ZOOM 是**固定倍数**（Tab5 上恒为 3x）：按机型原生尺寸算出来的窗口可能比逻辑屏还大
+         * ——NES 256x240 @3x = 768x720 > 720x480，出屏的窗口会被居中成**负** left/top（切边）。
+         * 这里在"不超出逻辑屏"的前提下**取最大整数倍**：宁可画面小一点，也要干净的像素对应。
+         * GBA 3x = 720x480、GB 3x = 480x432 本来就不超屏 → 走这条分支结果与原来完全相同。 */
+        int zoom = FLOAT_TO_INT(config.custom_zoom);
+        if (zoom < 1)
+            zoom = 1;
+        while (zoom > 1 && (src_width * zoom > screen_width || src_height * zoom > screen_height))
+            zoom--;
+        new_width = src_width * zoom;
+        new_height = src_height * zoom;
+        RG_LOGI("display: zoom source %dx%d requested x%g → x%d (%dx%d)\n",
+                src_width, src_height, config.custom_zoom, zoom, new_width, new_height);
     }
 
     // Everything works better when we use even dimensions!
