@@ -216,6 +216,18 @@ tools/                  build / flash / serial-log helper scripts
 docs/                   porting notes (Chinese) + touch layout diagram
 ```
 
+### What is upstream and what is this port
+
+`retro-go-p4/` is a full copy of upstream [retro-go](https://github.com/ducalex/retro-go) with local modifications, so the
+directory listing alone will not tell you which files this port touched. That boundary is computed mechanically:
+[docs/UPSTREAM-DIVERGENCE.md](docs/UPSTREAM-DIVERGENCE.md) — of the 841 upstream files, **746 are byte-identical,
+70 were modified by this port, 173 are new and 25 were not carried over**. Read it before editing an upstream file;
+it is also the only list you need to walk when following upstream updates.
+
+> This GitHub repository is the **published mirror** of the maintainer's development tree: `README*`, `CONTRIBUTING*`,
+> `ROADMAP*`, `CHANGELOG*`, `CREDITS.md`, `LICENSE` and `.github/` exist only here; everything else is mirrored wholesale.
+> Before contributing, see "Where your change lives" in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ---
 
 ## Porting notes

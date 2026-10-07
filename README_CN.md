@@ -207,6 +207,18 @@ tools/                  构建 / 刷机 / 抓日志的辅助脚本
 docs/                   移植笔记（中文）+ 触摸布局图
 ```
 
+### 哪些是上游代码、哪些是这个移植
+
+`retro-go-p4/` 是上游 [retro-go](https://github.com/ducalex/retro-go) 的**整树拷贝 + 就地修改**，
+所以光看目录分不出哪些文件被移植动过。这条边界是**机器算出来的**：
+[docs/UPSTREAM-DIVERGENCE.md](docs/UPSTREAM-DIVERGENCE.md) —— 上游 841 个文件里，
+**746 个逐字节未动 / 70 个被本移植修改 / 173 个是新增 / 25 个没有带上**。
+动上游文件前先读它；将来跟进上游更新时，它也是唯一需要逐条过的清单。
+
+> 本 GitHub 仓库是移植的**发布副本**：`README*`、`CONTRIBUTING*`、`ROADMAP*`、`CHANGELOG*`、`CREDITS.md`、
+> `LICENSE`、`.github/` 这些对外文件**只在这里存在**；其余内容由维护者的开发树整体镜像过来。
+> 贡献之前请看 [CONTRIBUTING_CN.md](CONTRIBUTING_CN.md) 的「你的改动落在哪」。
+
 ---
 
 ## 移植笔记
