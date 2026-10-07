@@ -13,10 +13,13 @@ LOGDIR=~/esp32/retro-go-tab5/.buildlogs
 mkdir -p "$LOGDIR"
 
 echo "=== BUILD START $(date '+%F %T') mode=${1:-release} ==="
+# 显式列出要编的 app：launcher(菜单) + gbsp(GBA) + retro-core(GB/GBC/NES/SMS/GG/SNES/PCE/Lynx/GW)。
+# ⚠ 必须显式传：默认的 DEFAULT_APPS 列表在本机环境下会把 retro-core 漏掉（只编出 launcher+gbsp），
+#   而启动器的 gb/gbc/nes 条目指向的就是 retro-core 分区 —— 分区不存在 → 判定"不可用" → 入口不显示。
 if [ "$1" = "single-app" ]; then
-    python3 rg_tool.py --target tab5 --no-networking --single-app release
+    python3 rg_tool.py --target tab5 --no-networking --single-app release launcher gbsp
 else
-    python3 rg_tool.py --target tab5 --no-networking release
+    python3 rg_tool.py --target tab5 --no-networking release launcher gbsp retro-core
 fi
 RC=$?
 echo "=== BUILD END rc=$RC $(date '+%F %T') ==="

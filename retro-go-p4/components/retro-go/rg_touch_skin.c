@@ -38,6 +38,9 @@
 #define RG_TOUCH_PANEL_CLUSTER_PAD_SHOULDER 16
 #define RG_TOUCH_PANEL_CLUSTER_PAD_SYSTEM  14
 #define RG_TOUCH_PANEL_GROOVE_PAD   8     /* 屏幕凹槽比视口外扩多少（让边条读成 bezel 而不是死区） */
+/* 画凹槽所需的**最小边条宽度**：窄于此就不画、留黑边。由各机型的窗口算出来，不按机型名写死 ——
+ * GBA 0px（画面 720 全宽）、GB/GBC 4x 40px（太窄，画了是脏线；用户定不做元素）、NES 104px（画）。 */
+#define RG_TOUCH_PANEL_GROOVE_MIN_SIDE 64
 #define RG_TOUCH_PANEL_GROOVE_R     6
 #define RG_TOUCH_PANEL_BADGE_PAD_X  56    /* 铭牌底板 = 文字宽 + 此值（横向） */
 #define RG_TOUCH_PANEL_BADGE_PAD_Y  30
@@ -504,12 +507,12 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
     panel_rect(panel, 0, 0, RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT, to565(panel_bg));
 
     /* ② 屏幕凹槽（比视口外扩，读成"屏幕嵌在面板里"）
-     * 围着**视口**画：整数缩放留下的边条（GB 40px / NES 104px）消不掉，
-     * 凹槽是唯一能让它被读成 bezel 而不是"死区"的做法。
-     * ⚠ 只在**窗口没铺满全宽**（即左右有边条）时画：GBA 是 720 全宽 + 画面贴顶，
-     *   凹槽左右各 8px 落在屏外、上下被画面和分界线盖满 → 真机上它等于不存在，
-     *   画了只是白算（用户定：GBA 不画，GB/NES 这种有边条的才画）。 */
-    if (win_x > 0 || win_w < RG_SCREEN_WIDTH)
+     * 围着**视口**画：整数缩放留下的边条消不掉，凹槽是让边条被读成 bezel 而不是"死区"的做法。
+     * ⚠ 判据是**边条够不够宽**，不是"有没有边条"：GBA 边条 0（画面 720 全宽，画了全在屏外，
+     *   白算）；GB/GBC 4x 边条只有 40px，画出来是一条贴边的脏线而不是"屏幕框"，**用户定：
+     *   这里不做元素、就留黑边**；NES 边条 104px 才值得画。
+     *   ⚠ 别按机型名硬编码 —— 边条宽度是窗口(win_x/win_w)算出来的，以后谁改了倍数自动跟着走。 */
+    if (win_x >= RG_TOUCH_PANEL_GROOVE_MIN_SIDE)
     {
         const int gx = win_x - RG_TOUCH_PANEL_GROOVE_PAD, gy = 0;
         const int gw = win_w + 2 * RG_TOUCH_PANEL_GROOVE_PAD;

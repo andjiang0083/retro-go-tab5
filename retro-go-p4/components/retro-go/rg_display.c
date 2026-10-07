@@ -393,19 +393,32 @@ static void update_viewport_scaling(void)
     }
     else if (config.scaling == RG_DISPLAY_SCALING_ZOOM)
     {
-        /* ZOOM 是**固定倍数**（Tab5 上恒为 3x）：按机型原生尺寸算出来的窗口可能比逻辑屏还大
-         * ——NES 256x240 @3x = 768x720 > 720x480，出屏的窗口会被居中成**负** left/top（切边）。
-         * 这里在"不超出逻辑屏"的前提下**取最大整数倍**：宁可画面小一点，也要干净的像素对应。
-         * GBA 3x = 720x480、GB 3x = 480x432 本来就不超屏 → 走这条分支结果与原来完全相同。 */
+        /* 规则：**尽量取最大的整数放大倍数**，唯一约束是放得下。两道闸：
+         *   ① 宽度不超逻辑屏宽（720）—— 超了会被居中成负 left（切边），宁可小一点。
+         *   ② 高度不超 RG_DISPLAY_MAX_WINDOW_HEIGHT（620 = 物理屏 1280 − 控制区 660）——
+         *      画面下面必须留得下触摸按键。
+         * 于是各机型的倍数是算出来的：GB/GBC 4x(640x576)、GBA 3x(720x480)、NES 2x(512x480)。
+         * ⚠ 别拿"逻辑屏高"当高度上限：那是 480（GBA 满宽画面的高度），控制区长在物理屏
+         *   1280 上，用 480 去算会把 GB 4x 一路砍到 1x。
+         * ⚠ custom_zoom（默认 4.0 = Tab5 上限）只作为**上限的进一步收紧**，用户调小才生效。 */
+#ifndef RG_DISPLAY_MAX_WINDOW_HEIGHT
+#define RG_DISPLAY_MAX_WINDOW_HEIGHT screen_height   /* 未定义的 target = 沿用逻辑屏高 */
+#endif
+        const int max_zoom_w = screen_width / src_width;
+        const int max_zoom_h = RG_DISPLAY_MAX_WINDOW_HEIGHT / src_height;
+        int max_zoom = RG_MIN(max_zoom_w, max_zoom_h);
+        if (max_zoom < 1)
+            max_zoom = 1;
         int zoom = FLOAT_TO_INT(config.custom_zoom);
+        if (zoom > max_zoom)
+            zoom = max_zoom;
         if (zoom < 1)
             zoom = 1;
-        while (zoom > 1 && (src_width * zoom > screen_width || src_height * zoom > screen_height))
-            zoom--;
         new_width = src_width * zoom;
         new_height = src_height * zoom;
-        RG_LOGI("display: zoom source %dx%d requested x%g → x%d (%dx%d)\n",
-                src_width, src_height, config.custom_zoom, zoom, new_width, new_height);
+        RG_LOGI("display: zoom source %dx%d requested x%g → x%d (%dx%d), max x%d, ctrl left %d\n",
+                src_width, src_height, config.custom_zoom, zoom, new_width, new_height,
+                max_zoom, RG_SCREEN_HEIGHT - new_height);
     }
 
     // Everything works better when we use even dimensions!

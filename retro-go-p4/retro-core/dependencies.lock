@@ -1,0 +1,59 @@
+dependencies:
+  espressif/cmake_utilities:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__cmake_utilities
+      type: local
+    version: 0.5.3
+  espressif/esp_codec_dev:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__esp_codec_dev
+      type: local
+    version: 1.6.1
+  espressif/esp_lcd_st7703:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__esp_lcd_st7703
+      type: local
+    version: 1.0.5
+  espressif/esp_lcd_touch:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__esp_lcd_touch
+      type: local
+    version: 1.2.1
+  espressif/esp_lcd_touch_gt911:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__esp_lcd_touch_gt911
+      type: local
+    version: 1.2.0~2
+  espressif/esp_lcd_touch_st7123:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__esp_lcd_touch_st7123
+      type: local
+    version: 1.0.2
+  espressif/usb_host_hid:
+    dependencies: []
+    source:
+      path: /Users/jiangweizhong/esp32/retro-go-tab5/vendor/managed_components/espressif__usb_host_hid
+      type: local
+    version: 1.2.0
+  idf:
+    source:
+      type: idf
+    version: 5.5.2
+direct_dependencies:
+- espressif/cmake_utilities
+- espressif/esp_codec_dev
+- espressif/esp_lcd_st7703
+- espressif/esp_lcd_touch
+- espressif/esp_lcd_touch_gt911
+- espressif/esp_lcd_touch_st7123
+- espressif/usb_host_hid
+- idf
+manifest_hash: 9a63a260a83b10183c4057a18814f2f1af1751c4b2150e4f4639184f5863db35
+target: esp32p4
+version: 2.0.0

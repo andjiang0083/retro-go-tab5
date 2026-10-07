@@ -82,8 +82,23 @@
  * ⚠ 必须用 ZOOM：FULL 会把画面拉到满屏、FIT 会另算比例，两者都会让按键压到画面上。
  *   custom_zoom 上限也要放开（上游硬夹 2.0）。 */
 #define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
-#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 3.0
+/* 默认倍数取 4.0（不再是 3.0）：ZOOM 分支会**按机型自动降到放得下的最大整数倍**，
+ * 所以这个值更像"各机型的公共上限"。三种机型的实际落点：
+ *   GB/GBC 160x144 → 4x = 640x576（控制区还剩 704px）  ← 用户 2026-10-07 选定 4x
+ *   GBA    240x160 → 4x 出屏宽(960>720) 且控制区不足 → 3x = 720x480
+ *   NES    256x240 → 4x 出屏 → 2x = 512x480
+ * ⚠ 逐机型硬编码倍数会散成多份真源，交给 ZOOM 的降倍规则统一推。 */
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 4.0
 #define RG_DISPLAY_MAX_CUSTOM_ZOOM     4.0
+/* 画面窗口的**最大高度**（px）。它 = 物理屏高 1280 − 必须留给触摸控制区的最小高度 660。
+ * 换算是：底排按键底 = 1232（targets/tab5/touch_layout.h），再留 ~48px 呼吸 → 窗口底最下
+ * 只到 1280-660 = 620。
+ * ⚠ 必须用**物理屏高**（RG_SCREEN_HEIGHT=1280）算，不能用逻辑屏高（display.screen.height=480）
+ *   —— 480 是"GBA 满宽画面"的高度，控制区长在 1280 那块屏上。拿 480 去减会得出"控制区只有
+ *   48px"的荒谬结论，把 4x 一路砍到 1x（2026-10-07 的真实翻车）。
+ * 它是 ZOOM 的第二道闸，于是各机型的倍数都是**算出来的**：
+ *   GB/GBC 160x144 → 4x(640x576，余 704)   GBA 240x160 → 3x(720x480，余 800)   NES 256x240 → 2x(512x480) */
+#define RG_DISPLAY_MAX_WINDOW_HEIGHT   620
 
 
 /****************************************************************************
