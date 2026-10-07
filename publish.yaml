@@ -5,8 +5,9 @@ platform_entries:
   - name: retro-go Tab5
     device: Tab5
     category: Games
-    version: "0.4.6"
-    bin: dist/m5burner-0.4.6/retro-go-tab5-0.4.6-merged.bin
+    version: "0.4.7"
+    bin: dist/m5burner-0.4.7/retro-go-tab5-0.4.7-merged.bin
     cover: releases/cover-1280x720-retro-go-tab5-tab5.png
     project_link: ""
-    readback: 2026-10-06 PENDING vid=2107475429264072706
+    bin_external: true          # 本仓不携带产物（公开仓）→ 跳过 bin 存在性校验
+    readback: ""                # 提交后由登录态接口回读（/api/v1/users/me/firmwares）
