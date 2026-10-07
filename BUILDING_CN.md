@@ -101,7 +101,7 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 `.github/workflows/build.yml` 在 push / PR 到 `main` 时跑一次**干净克隆的全量构建**，只回答三个问题：
 
-1. 能不能构建（`--no-networking`，全量 —— 增量构建会掩盖配置错误）；
+1. 能不能构建（`--no-networking`，全量 —— 增量构建会掩盖配置错误；**双 app 与单 app 两种形态都建**）；
 2. 产物是不是**真的合并镜像**：三个结构锚点 + 512KB 下限；
 3. 仓库里**有没有「只在一台机器上成立」的路径**，以及用的 IDF 是不是 5.5.2。
 
@@ -118,6 +118,7 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 **首次真实耗时（2026-10-07，run #3，无任何缓存）**：整轮 **7 分 58 秒** —— checkout 55s（必须带全历史与 tag）、
 装 ESP-IDF **231s**（官方 action 用 EIM 拉 5.5.2 + 工具链，是最大的一块）、全量构建 198s、门禁各 <1s。
+（那一轮只建了双 app 形态；现在两种形态都建，总时长以最新一次 run 为准。）
 产物 artifact 约 2.5 MB（merged 镜像 + 两个 app bin + `SHA256SUMS.txt` + 构建日志）；runner 磁盘无压力（78 GB 可用）。
 
 ⚠ 一个环境坑（run #2 就是死在这里，workflow 第 2 步已处理）：官方 `install-esp-idf-action` 只导出

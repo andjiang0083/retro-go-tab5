@@ -105,7 +105,8 @@ Do not trust the absence of errors. Check:
 `.github/workflows/build.yml` runs a **full build from a clean clone** on every push / PR to `main`, and answers
 exactly three questions:
 
-1. does it build (`--no-networking`, full build — an incremental build hides config errors);
+1. does it build (`--no-networking`, full build — an incremental build hides config errors; **both the dual-app and
+   the single-app form are built**);
 2. is the artifact a **real merged image**: the three structure anchors plus a 512 KB floor;
 3. does the repository contain any path that is **only valid on one machine**, and is the IDF version 5.5.2.
 
@@ -125,7 +126,8 @@ and open a PR — CI must fail on the compile error.
 
 **Real timings, first run (2026-10-07, run #3, no cache at all)**: **7 min 58 s** end to end — checkout 55 s (needs the
 full history and tags), ESP-IDF install **231 s** (the official action pulls 5.5.2 plus toolchains via EIM — the biggest
-chunk), full build 198 s, gates <1 s each. The artifact is ~2.5 MB (merged image + both app bins + `SHA256SUMS.txt` +
+chunk), full build 198 s, gates <1 s each. (That run built the dual-app form only; both forms are built now, so treat the
+latest run as the reference.) The artifact is ~2.5 MB (merged image + both app bins + `SHA256SUMS.txt` +
 build log); disk on the runner is a non-issue (78 GB free).
 
 ⚠ One environment trap (this is what killed run #2; the workflow's step 2 handles it): the official

@@ -1,7 +1,7 @@
 # .github/workflows/build.yml — retro-go-tab5 构建回归门禁
 #
 # 职责（只有这三件）：
-#   1) 干净克隆 + 全量构建能成功（--no-networking；增量构建会掩盖 P4 无射频的配置错误）
+#   1) 干净克隆 + 全量构建能成功（双 app 与单 app 两种形态；--no-networking，增量构建会掩盖 P4 无射频的配置错误）
 #   2) 产物是「真的 merged 镜像」（三个结构锚点 + 512KB 下限）
 #   3) 仓库里不含「只在一台机器上成立」的绝对路径（别人克隆必须也能构建）
 # 不做：不验证帧率/显示通路/崩溃（无硬件，靠真机看屏 + SD 卡 /crash.log）；不做发布（M5Burner 手动）。
@@ -132,7 +132,23 @@ jobs:
           python3 -c "import sys;d=open(sys.argv[1],'rb').read();A=[(0x2000,b'\xe9'),(0x8000,b'\xaa\x50'),(0x10020,(0xABCD5432).to_bytes(4,'little'))];bad=[hex(o) for o,m in A if d[o:o+len(m)]!=m];ok=len(d)>=524288 and not bad;print('VALID' if ok else 'INVALID size=%d bad_anchors=%s'%(len(d),bad));sys.exit(0 if ok else 1)" "$IMG"
           shasum -a 256 "$IMG" launcher/build/launcher.bin gbsp/build/gbsp.bin | tee ../SHA256SUMS.txt
 
-      # ── 5. 门禁：仓库里不能有「只在一台机器上成立」的路径 ────────────────
+      # ── 5. 单 app 形态（M5Launcher / 第三方启动器装的形态）──────────────
+      # v0.4.7 起"单 app 合并形态"是**默认发布形态**（第三方启动器只装一个 app，多 app 镜像会丢核心），
+      # 所以它必须和双 app 一起守。实测：2097152 B，同一套结构锚点 VALID。
+      # 同一个 build 目录里从双 app 切到单 app 是支持的（开发树 tools/build-tab5-skin.sh 就这么用），
+      # 但开关必须每次显式传 —— §127：CMake 缓存变量是"粘"的，漏传会混进上一次形态的产物。
+      - name: Build single-app image (M5Launcher form)
+        working-directory: retro-go-p4
+        run: |
+          set -euo pipefail
+          python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher gbsp 2>&1 | tee ../build-tab5-single.log
+          IMG=$(ls retro-go_*_tab5-single.img | head -n1)
+          [ -n "$IMG" ] || { echo "::error::没找到 retro-go_*_tab5-single.img"; ls -la; exit 1; }
+          echo "single-app image: $IMG ($(stat -c%s "$IMG") bytes)"
+          python3 -c "import sys;d=open(sys.argv[1],'rb').read();A=[(0x2000,b'\xe9'),(0x8000,b'\xaa\x50'),(0x10020,(0xABCD5432).to_bytes(4,'little'))];bad=[hex(o) for o,m in A if d[o:o+len(m)]!=m];ok=len(d)>=524288 and not bad;print('VALID' if ok else 'INVALID size=%d bad_anchors=%s'%(len(d),bad));sys.exit(0 if ok else 1)" "$IMG"
+          shasum -a 256 "$IMG" >> ../SHA256SUMS.txt
+
+      # ── 6. 门禁：仓库里不能有「只在一台机器上成立」的路径 ────────────────
       # 首跑（run #1）实测：仓库跟踪的 */dependencies.lock 是组件管理器生成物，里面记的是
       # 生成时那台机器的绝对路径（/Users/<某人>/.../vendor/managed_components/...）。
       # 在生成它的机器上构建没问题（那个路径真的存在，本项目曾因此一直没发现），
@@ -154,7 +170,7 @@ jobs:
           fi
           echo "可移植性门禁通过：无机器专属路径，dependencies.lock 未被跟踪"
 
-      # ── 6. 上传产物（含 SHA256SUMS）──────────────────────────────────────
+      # ── 7. 上传产物（含 SHA256SUMS）──────────────────────────────────────
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -162,13 +178,15 @@ jobs:
           name: tab5-fw-${{ github.run_number }}-${{ github.sha }}
           path: |
             retro-go-p4/retro-go_*_tab5.img
+            retro-go-p4/retro-go_*_tab5-single.img
             retro-go-p4/launcher/build/launcher.bin
             retro-go-p4/gbsp/build/gbsp.bin
             SHA256SUMS.txt
             build-tab5.log
+            build-tab5-single.log
           if-no-files-found: warn   # 构建失败时可能确实没产物；上传步骤本身不该变成第二个红点
 
-      # ── 7. 观测（不改结论）：磁盘与耗时，供下一轮决定是否上缓存 ───────────
+      # ── 8. 观测（不改结论）：磁盘与耗时，供下一轮决定是否上缓存 ───────────
       - name: Disk + timing report
         if: always()
         run: |
