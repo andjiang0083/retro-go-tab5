@@ -123,6 +123,18 @@ It does **not** verify frame rate, display path, crashes or timing — none of t
 **To confirm the gate really goes red**: on a branch, break one `.c` on purpose (e.g. reference an undeclared identifier)
 and open a PR — CI must fail on the compile error.
 
+**Real timings, first run (2026-10-07, run #3, no cache at all)**: **7 min 58 s** end to end — checkout 55 s (needs the
+full history and tags), ESP-IDF install **231 s** (the official action pulls 5.5.2 plus toolchains via EIM — the biggest
+chunk), full build 198 s, gates <1 s each. The artifact is ~2.5 MB (merged image + both app bins + `SHA256SUMS.txt` +
+build log); disk on the runner is a non-issue (78 GB free).
+
+⚠ One environment trap (this is what killed run #2; the workflow's step 2 handles it): the official
+`install-esp-idf-action` exports `IDF_PATH` and the toolchains but does **not** put IDF's own script directories on
+`PATH` (`$IDF_PATH/tools`, `components/partition_table`, …). And `rg_tool.py` calls `idf.py` / `gen_esp32part.py` /
+`esptool.py` / `parttool.py` by **bare name** on non-Windows (see `rg_tool.py:52-57`) ⇒ the symptom is "everything
+compiles, then Packing dies with `No such file or directory: 'gen_esp32part.py'`". The local dev tree is fine only
+because `tools/idf-env.sh` sources IDF's `export.sh`.
+
 ## Partition layout constraint
 
 The apps are flashed into fixed-size OTA partitions: **launcher 960 KB, gbsp 704 KB** (gbsp has roughly 47 KB of headroom).

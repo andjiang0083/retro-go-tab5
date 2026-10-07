@@ -9,6 +9,8 @@
 #
 # 本文件里所有路径、命令、锚点均由 2026-10-07 的实测支撑：
 #   - 干净克隆构建成功：退出码 0、70 秒（18 核）／5.5.4 上 132 秒，两者产物均为 VALID
+#   - CI 实测（run #3，无缓存）：整轮 7 分 58 秒 = checkout 55s + 装 IDF 231s + 全量构建 198s + 门禁 <1s；
+#     产物 artifact 2,576,796 B（merged 镜像 2293760 B / 两个 app bin / SHA256SUMS.txt / 构建日志）
 #   - 产物真实路径：retro-go-p4/retro-go_<版本>_tab5.img（不是文档里写的 build/tab5-retro-go.img）
 #   - 三锚点：0x2000=E9 / 0x8000=50AA / 0x10020=ABCD5432（与本地发布门禁脚本的判定逐条一致）
 #   - IDF 版本：直接读 $IDF_PATH/tools/cmake/version.cmake 断言（不用间接信号）

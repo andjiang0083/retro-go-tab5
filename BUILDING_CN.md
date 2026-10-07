@@ -116,6 +116,16 @@ python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 write-flash 
 
 **要确认门禁真的会红**：开一个分支故意改坏一个 `.c`（比如引一个不存在的标识符）提 PR，CI 必须红在编译错误上。
 
+**首次真实耗时（2026-10-07，run #3，无任何缓存）**：整轮 **7 分 58 秒** —— checkout 55s（必须带全历史与 tag）、
+装 ESP-IDF **231s**（官方 action 用 EIM 拉 5.5.2 + 工具链，是最大的一块）、全量构建 198s、门禁各 <1s。
+产物 artifact 约 2.5 MB（merged 镜像 + 两个 app bin + `SHA256SUMS.txt` + 构建日志）；runner 磁盘无压力（78 GB 可用）。
+
+⚠ 一个环境坑（run #2 就是死在这里，workflow 第 2 步已处理）：官方 `install-esp-idf-action` 只导出
+`IDF_PATH` 与工具链，**不把 IDF 自己的脚本目录铺进 PATH**（`$IDF_PATH/tools`、`components/partition_table`…）。
+而 `rg_tool.py` 在非 Windows 上按**裸命令名**调用 `idf.py` / `gen_esp32part.py` / `esptool.py` / `parttool.py`
+（见 `rg_tool.py:52-57`）⇒ 症状是"编译全过、Packing 阶段才炸：`No such file or directory: 'gen_esp32part.py'`"。
+本地开发树之所以没事，是因为 `tools/idf-env.sh` 会 source IDF 的 `export.sh`。
+
 ## 分区布局约束
 
 两个 app 被刷进固定大小的 OTA 分区：**launcher 960KB、gbsp 704KB**（gbsp 只剩约 47KB 余量）。
