@@ -521,8 +521,9 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
                     to565(groove_fill), true, to565(groove_line), true);
     }
 
-    /* ③ 画面与控制区的分界线 */
-    panel_rect(panel, 0, ctrl_top - s->divider_h, RG_SCREEN_WIDTH, s->divider_h, to565(divider));
+    /* ③ 画面与控制区的分界线 —— **已取消**（用户 2026-10-07：全机种都不要画面底部那条亮线，
+     *    画面直接贴到控制区底色上，不再用横线分隔）。
+     *    s->divider / s->divider_h 字段在四套皮肤表里保留（结构不动），但当前不再绘制。 */
 
     /* ④ 四个分区色块（B 套是线框皮肤：不填充，只留 1px 线） */
     for (int c = 0; c < 4; ++c)
