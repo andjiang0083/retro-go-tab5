@@ -26,7 +26,7 @@ static rg_task_t *display_task_queue;
  *   于是"模拟器生产"与"显示推送"被串行化 —— 这正是满屏负载只有 ~15fps 的机制。
  *   实测把深度提到 2 能让真正画出来的帧数翻倍（15→30/秒），但当年会周期性把显示路径楔死
  *   （画面定格、只能断电；DSI/PSRAM 总线饿死那一类），故一直保持 1。
- *   2026-09-25 夜查清了背后机制（见 docs/NIGHT-2026-09-25-DISPLAY.md）：IDF 的 DPI 驱动在
+ *   2026-09-25 夜查清了背后机制（见 docs/archive/NIGHT-2026-09-25-DISPLAY.md）：IDF 的 DPI 驱动在
  *   DMA2D 忙时是**丢弃**本次绘制（不是等待），丢帧率一度达 51%；同时找到了官方指路的
  *   AXI-ICM QoS 提权（已实施）。于是"深度 2"值得再试一次 —— 但仍必须配限流/上限，
  *   所以做成**独立镜像**（dist/retro-go-p2.6.8-depth2.img）而不是改默认值：
@@ -59,6 +59,42 @@ uint32_t rg_display_push_redirty = 0;    /* 因丢块被退回重推的行数（
 #ifndef RG_DISPLAY_PUSH_REDIRTY
 #define RG_DISPLAY_PUSH_REDIRTY 1
 #endif
+
+/* ── P2-2：显示通路「只提交变化行」（默认关，放在 SD 卡开关后面）────────────────────
+ * 现状：一个 32 行的块里只要有 1 行变了，整块 32 行都会走一遍转置+推屏（LCD_BUFFER_LENGTH
+ * = 720×32，见 tab5 config.h）。改动：块内**按变化行的连续段**分别设置窗口推送，
+ * 没变的行不推（不推的行只是我们不把它送进面板，缓冲区内容照旧丢弃）。
+ *
+ * 为什么放 SD 卡开关后面：这是显示通路的改动，一旦真机上出问题必须能**不重刷固件**退回；
+ * 而且 A/B 对比需要"同一份代码两种行为"。开关 = <config>/display-dirty-rows.txt **存在即启用**
+ * （文件内容不解析），出厂默认关闭 = 现行为。
+ *
+ * 编译期默认值 RG_DISPLAY_DIRTY_ROWS_DEFAULT 只给无人值守真机实验用（默认 0）。
+ * ⚠ 行级推送的安全前提：垂直滤波（filter_y）会用 i±1 行混合出"重复行"，所以变化掩码
+ *   必须**向外膨胀 1 行**再推送；否则"自身校验和没变、邻居变了"的重复行会漏推 → 残影。
+ *   膨胀由下面的 RG_DIRTY_ROW_DILATE 分支保证，别删。 */
+#ifndef RG_DISPLAY_DIRTY_ROWS_DEFAULT
+#define RG_DISPLAY_DIRTY_ROWS_DEFAULT 0
+#endif
+/* 单次块内最多多少行（掩码数组上限）；块大小由 LCD_BUFFER_LENGTH/draw_width 决定，
+ * 720 宽时是 32 行。给到 128 足够覆盖窄窗口场景，超了就把块切小（见调用处）。 */
+#define RG_DIRTY_ROW_MAX 128
+static int rg_display_dirty_rows_state = -1;   /* -1 = 还没判定 */
+
+static bool rg_display_dirty_rows_on(void)
+{
+    if (rg_display_dirty_rows_state < 0)
+    {
+        rg_display_dirty_rows_state = RG_DISPLAY_DIRTY_ROWS_DEFAULT ? 1 : 0;
+        bool sd = rg_storage_exists(RG_BASE_PATH_CONFIG "/display-dirty-rows.txt");
+        if (sd)
+            rg_display_dirty_rows_state = 1;
+        RG_LOGI("display: 只提交变化行 = %s（编译期默认 %d，SD 开关 %s）\n",
+                rg_display_dirty_rows_state ? "开" : "关", RG_DISPLAY_DIRTY_ROWS_DEFAULT,
+                sd ? "有" : "无");
+    }
+    return rg_display_dirty_rows_state == 1;
+}
 
 void rg_display_push_failed(int top, int lines)
 {
@@ -235,8 +271,13 @@ static inline void write_update(const rg_surface_t *update)
     const uint16_t *palette = update->palette;
 
     const bool partial_update = RG_SCREEN_PARTIAL_UPDATES;
+    /* P2-2：只提交变化行（SD 卡开关）。关闭时下面的推送逻辑与改动前**逐字节等价**，
+     * 所以这个开关本身可以安全地留在发行版里。 */
+    const bool dirty_rows = partial_update && rg_display_dirty_rows_on();
 
     int lines_per_buffer = LCD_BUFFER_LENGTH / draw_width;
+    if (dirty_rows && lines_per_buffer > RG_DIRTY_ROW_MAX)
+        lines_per_buffer = RG_DIRTY_ROW_MAX;   /* 掩码数组上限（见 RG_DIRTY_ROW_MAX） */
     int lines_remaining = draw_height;
     int lines_updated = 0;
     int window_top = -1;
@@ -261,6 +302,10 @@ static inline void write_update(const rg_surface_t *update)
 
         uint32_t checksum = 0xFFFFFFFF;
         bool need_update = !partial_update;
+        /* P2-2：本块内每行"内容是否变了"的掩码（只在开关打开时维护，关闭时零成本） */
+        uint8_t line_changed[RG_DIRTY_ROW_MAX];
+        if (dirty_rows)
+            memset(line_changed, 0, sizeof(line_changed));
 
         for (int i = 0; i < lines_to_copy; ++i)
         {
@@ -295,6 +340,8 @@ static inline void write_update(const rg_surface_t *update)
             {
                 screen_line_checksum[draw_top + y] = checksum;
                 need_update = true;
+                if (dirty_rows)
+                    line_changed[i] = 1;   /* P2-2：记下"这一行变了" */
 #if defined(RG_GBA_DIAG) && RG_GBA_DIAG
                 rg_display_dirty_lines++;
 #endif
@@ -340,11 +387,55 @@ static inline void write_update(const rg_surface_t *update)
         {
             int left = display.screen.margins.left + draw_left;
             int top = display.screen.margins.top + draw_top + y - lines_to_copy;
-            if (top != window_top)
-                lcd_set_window(left, top, draw_width, lines_remaining);
-            lcd_send_buffer(line_buffer, draw_width * lines_to_copy);
-            window_top = top + lines_to_copy;
-            lines_updated += lines_to_copy;
+            int dirty_n = 0;
+            if (dirty_rows)
+                for (int i = 0; i < lines_to_copy; ++i)
+                    dirty_n += line_changed[i] ? 1 : 0;
+
+            if (dirty_rows && dirty_n < lines_to_copy)
+            {
+                /* ── P2-2：只推"变化行的连续段"─────────────────────────────────────
+                 * 块内整块都变时走下面的原路径（窗口按剩余高度设一次、后续块流式追加），
+                 * 这里只处理"部分行没变"的情况。
+                 * ⚠ 膨胀 1 行：垂直滤波用 i±1 混合出重复行，漏推邻居会留残影（见文件头）。
+                 *   就地膨胀，先左→右再右→左各扫一遍即可。 */
+                if (filter_y)
+                {
+                    for (int i = 1; i < lines_to_copy; ++i)
+                        if (line_changed[i - 1])
+                            line_changed[i] = 1;
+                    for (int i = lines_to_copy - 2; i >= 0; --i)
+                        if (line_changed[i + 1])
+                            line_changed[i] = 1;
+                }
+                int run = -1;
+                for (int i = 0; i <= lines_to_copy; ++i)
+                {
+                    const bool changed = (i < lines_to_copy) && line_changed[i];
+                    if (changed && run < 0)
+                    {
+                        run = i;
+                    }
+                    else if (!changed && run >= 0)
+                    {
+                        const int n = i - run;
+                        lcd_set_window(left, top + run, draw_width, n);
+                        lcd_send_buffer(line_buffer + (size_t)run * draw_width, draw_width * n);
+                        lines_updated += n;
+                        run = -1;
+                    }
+                }
+                /* 窗口已被逐段改写过，作废流式记账，别让下一块误复用窗口 */
+                window_top = -1;
+            }
+            else
+            {
+                if (top != window_top)
+                    lcd_set_window(left, top, draw_width, lines_remaining);
+                lcd_send_buffer(line_buffer, draw_width * lines_to_copy);
+                window_top = top + lines_to_copy;
+                lines_updated += lines_to_copy;
+            }
         }
         else
         {
