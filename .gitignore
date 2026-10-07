@@ -5,6 +5,13 @@ build/
 sdkconfig.old
 dependencies.lock.bak
 
+# 组件管理器生成物：里面记的是「生成时那台机器」的绝对路径（/Users/<某人>/.../vendor/...）。
+# 提交出去后，别的机器/CI 克隆下来会直接
+#   CMake Error: The "path" field in the manifest file ... does not point to a directory
+# （生成它的机器上反而看不出来 —— 那个路径真的存在）。构建时会自动重建，故不跟踪。
+# 防回归门禁：公开仓 CI 的 Portability gate（.github/workflows/build.yml 第 5 步）。
+dependencies.lock
+
 # 日志
 logs/
 *.log
