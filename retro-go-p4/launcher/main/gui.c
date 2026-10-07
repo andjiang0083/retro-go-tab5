@@ -21,6 +21,10 @@ retro_gui_t gui;
 #define SETTING_SCROLL_MODE     "ScrollMode"
 #define SETTING_HIDE_TAB(name)  strcat((char[99]){"HideTab."}, (name))
 
+/* 前置声明：gui_draw_newbie_hint 定义在文件后半（跟其它 draw 函数放一起），
+ * 但要在 gui_draw 里更早调用 —— 没有这行会 -Wimplicit-function-declaration。 */
+static void gui_draw_newbie_hint(tab_t *tab, int top);
+
 static int max_visible_lines(const tab_t *tab, int *_line_height)
 {
     int line_height = TEXT_RECT("ABC123", 0).height;
@@ -391,7 +395,14 @@ void gui_redraw(void)
     else
     {
         gui_draw_background(tab, 0);
-        gui_draw_header(tab, (gui.height - HEADER_HEIGHT) / 2);
+        /* ⚠ carousel 首页的布局（用户 2026-10-07 定）：
+         *   标题贴**顶部**（原来传 (gui.height-HEADER_HEIGHT)/2 = 215，那是"垂直居中"，
+         *   真机上看起来在屏幕 17% 处，用户觉得不对）；
+         *   提示卡放在**剩余区域的中间**。
+         * 注意 gui.height 是**逻辑屏 480**（rg_display_get_height），
+         * 而 launcher 的 GUI 显示在物理屏的**上 480px**（占 37.5%），下面留给触摸按键。 */
+        gui_draw_header(tab, 8);
+        gui_draw_newbie_hint(tab, 8 + HEADER_HEIGHT);   /* 新用户引导卡 */
         // gui_draw_tab_indicator();
     }
 
@@ -488,6 +499,60 @@ void gui_draw_tab_indicator(void)
     memset(buffer, ' ', gui.tabs_count);
     buffer[gui.selected_tab] = '-';
     rg_gui_draw_text(RG_GUI_CENTER, RG_GUI_BOTTOM, 0, buffer, C_SNOW, C_TRANSPARENT, RG_TEXT_BIGGER|RG_TEXT_MONOSPACE);
+}
+
+/* 新用户引导卡（carousel 首页）。
+ *
+ * 为什么需要：新装好的机器开机直接进这个界面，屏幕上只有一行机型名 + 一排触摸按键，
+ * 新用户既不知道"按 A 能进游戏列表"，也不知道 ROM 该拷到哪个目录 —— 只能猜。
+ *
+ * 为什么画在 carousel 而不是列表里：carousel 是**冷启动**的界面（真正"新用户第一个界面"），
+ * 它下方有大片空白；而 browser 的列表会随 ROM 数量铺开，塞进去会挡条目。
+ *
+ * ROM 路径取 `app->paths.roms`（当前 tab 的机型自己的路径），去掉 `/sd` 前缀显示 ——
+ * 不写死，换到 Gameboy 就自动显示 /roms/gb。
+ * ⚠ 中文走 rg_gui_draw_text 的内置 12x12 点阵字库（rg_cjk），无需另找字体。 */
+static void gui_draw_newbie_hint(tab_t *tab, int top)
+{
+    if (!tab || !tab->arg)
+        return;
+
+    const retro_app_t *app = (const retro_app_t *)tab->arg;
+
+    /* ⚠ 只在 **GBA** 的界面显示（用户 2026-10-07 定）：GBA 是装机量最大的入口，
+     *   其余机型（GB/GBC/NES/…）不需要这块引导。按 short_name 判断。
+     * ⚠ short_name 是 char 数组（不是指针）→ 不要判 NULL，-Werror=address 会报"恒为真"。 */
+    if (strcmp(app->short_name, "gba") != 0)
+        return;
+
+    /* paths.roms 是 char[RG_PATH_MAX] 数组，地址恒非 NULL —— 不要写 ?: 判断，
+     * -Werror=address 会直接报"比较恒为真"。 */
+    const char *roms = rg_relpath(app->paths.roms);
+    char cn[96], en[128];
+
+    /* 卡片：与触摸皮肤同一套观感（描边 + 透明底），别抢按键的视觉重心。
+     * ⚠ rg_gui_draw_rect 的签名是 (x, y, w, h, border_size, border_color, fill_color) ——
+     *   没有圆角参数，所以是直角卡片；fill 传 TRANSPARENT 只留描边。
+     * 位置与高度：标题贴顶（8~58）之后，卡片放在**剩余区域的正中**：
+     *   top = 58（标题底），可用高度 = 480 - 58 = 422，卡片 204 高 → y = 58 + (422-204)/2 = 167。
+     * 高度按内容算：4 行文字各约 39px（含 CJK 点阵）+ 行距 2/2/12 + 上下内边距 16×2 ≈ 204，
+     *   留足余量 —— 之前给 186 时第 4 行（英文那行）被底边截掉过。 */
+    const int card_w = 600, card_h = 204;
+    const int card_x = (gui.width - card_w) / 2;
+    const int card_y = top + (gui.height - top - card_h) / 2;
+    rg_gui_draw_rect(card_x, card_y, card_w, card_h, 2, C_DIM_GRAY, C_TRANSPARENT);
+
+    int y = card_y + 16;
+
+    snprintf(cn, sizeof(cn), "按 A 键进入游戏列表");
+    y += rg_gui_draw_text(RG_GUI_CENTER, y, 0, cn, C_SNOW, C_TRANSPARENT, 0).height + 2;
+    snprintf(en, sizeof(en), "Press A to open the game list");
+    y += rg_gui_draw_text(RG_GUI_CENTER, y, 0, en, C_DIM_GRAY, C_TRANSPARENT, 0).height + 12;
+
+    snprintf(cn, sizeof(cn), "游戏 ROM 放在 %s 目录下", roms);
+    y += rg_gui_draw_text(RG_GUI_CENTER, y, 0, cn, C_SNOW, C_TRANSPARENT, 0).height + 2;
+    snprintf(en, sizeof(en), "Put ROM files in %s", roms);
+    rg_gui_draw_text(RG_GUI_CENTER, y, 0, en, C_DIM_GRAY, C_TRANSPARENT, 0);
 }
 
 void gui_draw_status(tab_t *tab)
