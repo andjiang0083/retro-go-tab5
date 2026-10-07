@@ -113,12 +113,15 @@ static inline bool rg_touch_key_hidden(const char *console_id, rg_key_t key)
         return !rg_touch_has_shoulders(console_id);   /* 真实手柄有 L/R 的：GBA / SNES */
     if (key == RG_KEY_X || key == RG_KEY_Y)
     {
-        /* SNES 的 X/Y 是**真按键**（配 "Full" 预设用）；
-         * GBA/GB/GBC/NES 的 X/Y 是**连发 A/B**（rg_input_apply_turbo 在 input 层合成）；
-         * 其余机型既没有 X/Y 也没有连发 → 不显示。 */
-        return !(strcmp(console_id, "gba") == 0 || strcmp(console_id, "snes") == 0 ||
-                 strcmp(console_id, "gb")  == 0 || strcmp(console_id, "gbc") == 0 ||
-                 strcmp(console_id, "nes") == 0);
+        /* 这四类机型要显示 X/Y，但**用途不同**：
+         *   · SNES —— X/Y 是**真按键**（配 main_snes.c 的 "Full" 预设）。
+         *   · GBA / GB / GBC / NES / SMS / GG —— 借 X/Y 做**连发 A/B**
+         *     （rg_input_apply_turbo 在 input 层合成；SMS/GG 走 main_sms.c，COL 排除在外）。
+         *   其余机型既没有 X/Y 也没有连发 → 不显示。 */
+        return !(strcmp(console_id, "snes") == 0 || strcmp(console_id, "gba") == 0 ||
+                 strcmp(console_id, "gb")   == 0 || strcmp(console_id, "gbc") == 0 ||
+                 strcmp(console_id, "nes")  == 0 ||
+                 strcmp(console_id, "sms")  == 0 || strcmp(console_id, "gg")  == 0);
     }
     return false;
 }
