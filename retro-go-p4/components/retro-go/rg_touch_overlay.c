@@ -35,7 +35,10 @@
  * ⚠ 多核（GB/NES）落地后要改成"按各机型的视口高度传" —— 现在 GBA 视口 720x480 贴顶，
  *   所以是常量 480。面板的锚定规则（上三排随控制区顶下移、系统键行钉屏底）已经在
  *   rg_touch_skin.c 里按参数写好了，届时只需把这里换成一个变量。 */
-#define RG_OVERLAY_CTRL_TOP  480
+#define RG_OVERLAY_CTRL_TOP 480
+/* 面板物理高（Tab5 竖屏 720x1280）：控制区"整条重铺"要用它算高度。
+ * ⚠ 必须与 rg_touch_skin.c 里面板生成的高度一致（那边是物理全屏尺寸）。 */
+#define RG_OVERLAY_PANEL_H 1280
 
 /* 电量圆灯几何（逻辑像素）。提到文件头部的原因：建层时机（rg_overlay_init）也要用它 ——
  * 皮肤面板的机型铭牌锚在"菱形键底 ~ 圆灯顶"的正中，所以面板生成需要这两个数。
@@ -142,6 +145,10 @@ static bool dirty_swap_btn = false;     /* 那颗切换按钮（不在 btns[] �
 static uint32_t dirty_last_visual = 0;  /* 上次看到的"高亮位"（含 linger 保持） */
 static uint32_t dirty_last_visual_before = 0; /* 再上一拍的高亮位：给抖动观测用（只统计） */
 static bool dirty_all_units = false;    /* 调换/显隐：13 个单元全重画（外观可能全变） */
+/* 皮肤面板/边框整条重铺一次：Tab5 上"视口恰好等于逻辑屏"，display.changed 那条整屏重铺
+ * 条件是 `视口 < 屏`，对 Tab5 不成立 —— 也就是说**面板底/凹槽/铭牌的变化没人负责刷出去**
+ * （逐键的 dirty_units 只盖按键本身）。切皮肤时置这个标志，让下一帧把整条控制区刷一遍。 */
+static bool dirty_panel_strip = false;
 static bool swap_btn_ready = false;
 /* "这个**位置**现在代表哪个键" —— 调换开着时 X↔R、Y↔L，关着时原样。
  *
@@ -774,6 +781,7 @@ static void rg_overlay_try_panel(void)
     rg_display_set_border_surface(panel);
     rg_display_border_refresh();
     panel_installed = true;
+    dirty_panel_strip = true;   /* 让下一帧把整条控制区重铺一遍（见 dirty_panel_strip 的说明） */
     /* 这一行是"面板到底装上了没"的唯一判据（真机日志）：装上=控制区有底图；
      * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。 */
     RG_LOGI("touch skin: panel installed for '%s' (skin %s), screen %dx%d\n",
@@ -1073,6 +1081,21 @@ int rg_overlay_take_dirty_rects(int *out_xywh, int max)
     rg_overlay_try_panel();     /* 第一帧真正要画时把皮肤面板装上（见上面的时序说明） */
     if (!out_xywh || max <= 0)
         return 0;
+
+    /* 面板底/凹槽/铭牌整条变过：直接把"整条控制区"当一个矩形交出去（显示层会用 border
+     * 重铺这块，覆盖层由驱动合成），比逐键返回 13 个矩形更省也更彻底。 */
+    if (dirty_panel_strip)
+    {
+        dirty_panel_strip = false;
+        dirty_units = 0;
+        dirty_swap_btn = false;
+        dirty_all_units = false;
+        out_xywh[0] = 0;
+        out_xywh[1] = RG_OVERLAY_CTRL_TOP;
+        out_xywh[2] = RG_SCREEN_WIDTH;
+        out_xywh[3] = RG_OVERLAY_PANEL_H - RG_OVERLAY_CTRL_TOP;
+        return 1;
+    }
 
     int n = 0;
     for (size_t i = 0; i < btn_count && n < max; ++i)
