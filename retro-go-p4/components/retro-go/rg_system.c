@@ -283,10 +283,21 @@ static void update_memory_statistics(void)
     statistics.freeMemoryInt = heap_info.total_free_bytes;
     statistics.freeBlockInt = heap_info.largest_free_block;
     statistics.totalMemoryInt = heap_info.total_free_bytes + heap_info.total_allocated_bytes;
-    heap_caps_get_info(&heap_info, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    statistics.freeMemoryExt = heap_info.total_free_bytes;
-    statistics.freeBlockExt = heap_info.largest_free_block;
-    statistics.totalMemoryExt = heap_info.total_free_bytes + heap_info.total_allocated_bytes;
+
+    /* ⚠ PSRAM 堆有 20+MB，heap_caps_get_info() 会走 tlsf_walk_pool() **遍历每一个块**，
+     *   而且整段在**关中断**的保护下 —— 堆一旦碎片化（SNES 读档正是分配大块的时候），
+     *   这个遍历就能超过**中断看门狗**的时限，把设备打成 "Interrupt wdt timeout" 并反复重启。
+     *   （真机教训：表面看是"进 SNES 读档蓝屏"，backtrace 却指向 system_monitor_task →
+     *     tlsf_walk_pool —— 游戏核心根本没崩，是统计任务把自己走死了。它本来就贴着悬崖边，
+     *     任何内存布局变化都可能把碎片推过线。）
+     *   这三个值只用于日志 / 统计文件 / 菜单显示，精度无所谓 → 全换 O(1) 的 API：
+     *     free  = heap_caps_get_free_size()   （精确，不遍历）
+     *     total = heap_caps_get_total_size()  （堆总容量，比"free+allocated"更直白）
+     *     block = 不再取"最大空闲块"（那必须遍历），用 free 顶上。
+     *   内部 RAM 那块堆只有几百 KB，遍历代价可忽略，保持原样以留精确值。 */
+    statistics.freeMemoryExt = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    statistics.totalMemoryExt = heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    statistics.freeBlockExt = statistics.freeMemoryExt;
 
     statistics.freeStackMain = uxTaskGetStackHighWaterMark(tasks[0].handle);
 #else
