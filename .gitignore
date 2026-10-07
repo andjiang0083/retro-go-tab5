@@ -5,6 +5,11 @@ build/
 sdkconfig.old
 dependencies.lock.bak
 
+# Stray run output: stdout.txt / stderr.txt were committed here by mistake (removed from the index
+# 2026-10-07). The publish script also excludes them, so they cannot come back through a sync.
+stdout.txt
+stderr.txt
+
 # The component manager writes these. Each one records the ABSOLUTE path of the vendored
 # components on the machine that generated it (e.g. /Users/<someone>/.../vendor/...), which
 # makes a clean clone fail on any other machine with:
