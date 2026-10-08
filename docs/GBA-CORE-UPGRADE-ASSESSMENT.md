@@ -129,6 +129,10 @@ retro-go 接口层（`main.c` app 黏合、按键含 L/R/X/Y+Turbo、`memmap.c` 
 - **GBA zip 声明**：`launcher/main/applications.c` GBA 条目写了 `"gba zip"`，gbsp 无任何
   `rg_storage_unzip_file` 分支 ⇒ 列表能点、点了 `RG_PANIC` → `abort()` → 重启；
   `README.md` + `dist/m5burner-0.2…0.4.6` 共 **14 处**文案承诺了 zip。方案 A（撤声明 + 清文案 + 启动前门禁）**未实施**。
+  → **2026-10-08 更新：改为实现（0.4.8）**。声明保留并补齐实现：`gbsp` 的
+  `load_gamepak_zipped()` 整块解压复用 ROM 缓冲（内存增量 0 块），`rg_storage_unzip_file()` 升级为
+  本地头 + 中央目录双路径（支持 data descriptor 模式的真实 zip、method=0、CRC 校验）。
+  README 里"`.gba` 或 `.zip`"这句**至此才为真**。实现说明与真机数据见 `docs/GBA-ZIP-SUPPORT.md`。
 - **失败回执**：启动 GBA 前打一行 ROM 体检（title/code/size/存档类型/是否走缺页回读），panic 时把最后几行
   落 `sd/retro-go/logs/last-crash.txt` —— 让下一次"某游戏不支持"自带判据。
 
