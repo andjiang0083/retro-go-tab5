@@ -112,10 +112,20 @@ def main():
     dd = ImageDraw.Draw(cover)
     dd.text((tx, 22), "retro-go", font=font(26, True), fill=(240, 242, 248, 255))
     dd.text((tx, 52), "Tab5", font=font(26, True), fill=(122, 176, 232, 255))
-    dd.text((tx, 86), "GBA 模拟器 · 竖屏版", font=font(13), fill=(206, 212, 224, 255))
-    dd.text((tx, 104), "v" + ver, font=font(17, True), fill=(232, 162, 44, 255))
-    dd.text((tx, 130), "M5Stack Tab5 (ESP32-P4)", font=font(11), fill=(150, 158, 174, 255))
-    dd.text((tx, 146), "触摸虚拟手柄 · 中文界面", font=font(11), fill=(150, 158, 174, 255))
+    # 右侧文案统一走自动缩字号 —— 320px 宽很容易溢出（2026-10-08 踩过：两行都被切）
+    max_w = COVER_W - tx - 8
+
+    def line(y, text, size, fill):
+        f, s = font(size), size
+        while s > 9 and dd.textlength(text, font=f) > max_w:
+            s -= 1
+            f = font(s)
+        dd.text((tx, y), text, font=f, fill=fill)
+
+    line(86, "11 机种 · 满帧 GBA · 触摸手柄", 13, (206, 212, 224, 255))
+    # 封面**不印版本号**：版本号只在条目里出现，封面跨版本复用
+    line(110, "M5Stack Tab5 (ESP32-P4)", 11, (150, 158, 174, 255))
+    line(126, "中文界面 · 存档跨重启 · zip 直放", 11, (150, 158, 174, 255))
 
     # 电量圆灯图例（与固件同色同配方）
     ly = 170
