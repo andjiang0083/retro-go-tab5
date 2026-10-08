@@ -1,13 +1,18 @@
-# retro-go Tab5 —— M5Stack Tab5 上的 GBA 模拟器（竖屏版）
+# retro-go Tab5 —— Tab5 上首个满帧 GBA 模拟器（一台机器 11 个机种）
 
-M5Stack Tab5（ESP32-P4，1280x720 原生竖屏）上的 **Game Boy Advance 模拟器**，
-基于 [retro-go](https://github.com/ducalex/retro-go) 移植，界面按面板的原生竖屏重做：
-游戏画面（720x480 = GBA 240x160 的 3 倍整数缩放）贴顶占满宽度，触摸手柄在下方控制区。
+M5Stack Tab5（ESP32-P4，1280x720 原生竖屏）上的复古游戏机固件：**GBA 满帧 60FPS**（RISC-V 动态重编译），
+并把 retro-core 的其余 10 个机种一起装进同一个固件 —— GB / GBC / NES / SNES / SMS / Game Gear /
+ColecoVision / PC Engine / Lynx / Game & Watch，共 11 个机种。
 
-A Game Boy Advance emulator for the **M5Stack Tab5** (ESP32-P4, 1280x720 native portrait),
-ported from [retro-go](https://github.com/ducalex/retro-go). The UI is reworked for the panel's
-portrait orientation: the game screen (720x480, integer 3x of the GBA's 240x160) is pinned to the
-top, the touch gamepad sits in the control area below.
+界面按面板的原生竖屏重做：游戏画面（720x480 = GBA 240x160 的 3 倍整数缩放）贴顶占满宽度，触摸手柄在下方控制区。
+ROM 直接放 SD 卡（`.zip` 压缩包也能直接放，卡上省一半空间），存档写在卡里、关机重启后还在。
+
+The first full-speed GBA emulator for the **M5Stack Tab5** (ESP32-P4, 1280x720 native portrait):
+GBA at a solid **60 FPS** with a RISC-V dynamic recompiler, plus the 10 other retro-go systems in the
+same firmware — GB / GBC / NES / SNES / SMS / Game Gear / ColecoVision / PC Engine / Lynx / Game & Watch.
+The UI is reworked for the panel's portrait orientation: the game screen (720x480, integer 3x of the
+GBA's 240x160) is pinned to the top, the touch gamepad sits in the control area below. ROMs live on the
+SD card (`.zip` works directly, halving card usage) and saves persist across reboots.
 
 ---
 
