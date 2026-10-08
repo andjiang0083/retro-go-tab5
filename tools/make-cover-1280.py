@@ -44,7 +44,9 @@ FONT_CANDIDATES = (
 COPY = dict(
     brand_a="retro-go",                       # 白
     brand_b="Tab5",                           # 蓝
-    headline="把 5 寸屏变成 11 台掌机",
+    headline="Tab5 上首个满帧 GBA 模拟器",
+    en="The first full-speed GBA emulator for M5Stack Tab5",
+    count="一台 Tab5 ＝ 11 台掌机",
     consoles="GBA · GB · GBC · NES · SNES · SMS · GG · COL · PCE · Lynx · G & W",
     feat1="触摸手柄 · 按键按真机布局 · 存档跨重启",
     feat2="中英双语界面 · ROM 放 SD 卡即玩",
@@ -160,38 +162,41 @@ def main():
 
     # ---- 右：文案 ----
     tx = 516
-    d.text((tx, 86), COPY["brand_a"], font=font(48, True), fill=INK)
-    wa = d.textlength(COPY["brand_a"], font=font(48, True))
-    d.text((tx + wa + 14, 86), COPY["brand_b"], font=font(48, True), fill=ACCENT_BLUE)
+    d.text((tx, 76), COPY["brand_a"], font=font(46, True), fill=INK)
+    wa = d.textlength(COPY["brand_a"], font=font(46, True))
+    d.text((tx + wa + 13, 76), COPY["brand_b"], font=font(46, True), fill=ACCENT_BLUE)
 
-    d.text((tx, 172), COPY["headline"], font=font(46, True), fill=INK)
+    d.text((tx, 146), COPY["headline"], font=font(44, True), fill=INK)
+    d.text((tx, 204), COPY["en"], font=font(19), fill=INK_DIM)
+    d.text((tx, 240), COPY["count"], font=font(23), fill=ACCENT_BLUE)
 
     # 机种清单：自动缩到放得下（放不下就拆两行）—— 防止右边被切掉（本轮踩过）
     max_w = 1230 - tx
-    csize = 23
-    while csize > 18 and d.textlength(COPY["consoles"], font=font(csize)) > max_w:
+    csize = 21
+    while csize > 17 and d.textlength(COPY["consoles"], font=font(csize)) > max_w:
         csize -= 1
     if d.textlength(COPY["consoles"], font=font(csize)) > max_w:
         parts = [p.strip() for p in COPY["consoles"].split("·")]
         half = len(parts) // 2 + len(parts) % 2
-        d.text((tx, 240), " · ".join(parts[:half]), font=font(csize), fill=ACCENT_BLUE)
-        d.text((tx, 272), " · ".join(parts[half:]), font=font(csize), fill=ACCENT_BLUE)
-        y1 = 320
+        d.text((tx, 274), " · ".join(parts[:half]), font=font(csize), fill=ACCENT_BLUE)
+        d.text((tx, 300), " · ".join(parts[half:]), font=font(csize), fill=ACCENT_BLUE)
+        y1 = 344
     else:
-        d.text((tx, 246), COPY["consoles"], font=font(csize), fill=ACCENT_BLUE)
-        y1 = 306
-    d.text((tx, y1), COPY["feat1"], font=font(23), fill=INK_MID)
-    d.text((tx, y1 + 38), COPY["feat2"], font=font(23), fill=INK_MID)
+        d.text((tx, 276), COPY["consoles"], font=font(csize), fill=ACCENT_BLUE)
+        y1 = 330
+    d.text((tx, y1), COPY["feat1"], font=font(22), fill=INK_MID)
+    d.text((tx, y1 + 36), COPY["feat2"], font=font(22), fill=INK_MID)
 
     fchip = font(25)
     cw = d.textlength(COPY["chip"], font=fchip)
-    chip_box = (tx - 16, 412 if y1 == 306 else 430, tx + cw + 24, (412 if y1 == 306 else 430) + 54)
+    chip_y = y1 + 94
+    chip_box = (tx - 16, chip_y, tx + cw + 24, chip_y + 54)
     rounded(cover, chip_box, 10, (46, 36, 18, 255))
     d.rounded_rectangle(chip_box, radius=10, outline=(112, 78, 26, 255), width=2)
     d.text((tx, chip_box[1] + 12), COPY["chip"], font=fchip, fill=ACCENT_WARM)
 
-    d.text((tx, 596), COPY["dev"], font=font(21), fill=INK_DIM)
-    d.text((tx, 632), COPY["url"], font=font(21), fill=(150, 158, 174))
+    d.text((tx, 600), COPY["dev"], font=font(20), fill=INK_DIM)
+    d.text((tx, 634), COPY["url"], font=font(20), fill=(150, 158, 174))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
