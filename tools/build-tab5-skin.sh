@@ -1,8 +1,11 @@
 #!/bin/bash
 # 构建 Tab5 双形态（多 app 常规包 + 单 app M5Launcher 包）
 # 用法：tools/build-tab5-skin.sh [single-app]
+#       RG_TAB5_ORIENTATION=1 tools/build-tab5-skin.sh    # 出横屏镜像（默认 0 = 竖屏）
 # ⚠ 长任务：本脚本必须在后台跑、日志落盘（用户硬约束：别在前台/管道 tail）
 set -o pipefail
+# 屏幕方向：0 = 竖屏（默认，= 现状）1 = 横屏。显式 export 给 rg_tool.py（它会每次都传 -D）。
+export RG_TAB5_ORIENTATION="${RG_TAB5_ORIENTATION:-0}"
 
 # ⚠ 不要在这里写死个人路径 —— 别人机器上克隆下来会直接跑不起来。
 # 需要覆盖时用环境变量（默认值 = 本机开发环境）：

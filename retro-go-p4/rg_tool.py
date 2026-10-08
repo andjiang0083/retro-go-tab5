@@ -165,6 +165,10 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     # ⚠ 必须每次都显式传 0/1：CMake 缓存变量是"粘"的，上一次留在 build 目录里的 1 会影响后续
     # 所有构建（症状：双 app 构建里混进单 app 的产物、体积对不上）。
     args.append(f"-DRG_SINGLE_APP={1 if single_app else 0}")
+    # 屏幕方向（Tab5 专用：0 = 竖屏默认，1 = 横屏）。⚠ 每次都显式传：CMake 缓存变量是"粘"的，
+    # 漏传会沿用上一次构建留在 build 目录里的值 —— 症状是"改了方向却没变"或"竖屏构建实际是横屏"。
+    # 用法：RG_TAB5_ORIENTATION=1 tools/build-tab5-skin.sh
+    args.append(f"-DRG_TAB5_ORIENTATION={os.getenv('RG_TAB5_ORIENTATION', '0')}")
     with open("partitions.csv", "w") as f:
         f.write("# This table isn't used, it's just needed to avoid esp-idf build failures.\n")
         f.write("dummy, app, ota_0, 65536, 3145728\n")

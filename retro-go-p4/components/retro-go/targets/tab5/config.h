@@ -59,11 +59,74 @@
 /****************************************************************************
  * Video — MIPI DSI / ST7123, 走官方 Tab5 BSP                                *
  ****************************************************************************/
-#define RG_SCREEN_DRIVER            3   // 3 = MIPI DSI 竖屏线性（本分支专用，无旋转）
+/* 【屏幕方向开关】0 = 竖屏（默认，= 现状，行为零变化） 1 = 横屏
+ * ---------------------------------------------------------------------------
+ * 横屏形态 = 老线（M5Burner 0.2/0.3）那套：逻辑画布 1280×720、驱动做 90° 映射，
+ * 游戏窗仍是 **720×480 居中**（x[280,1000) y[120,600)），四周留白全给虚拟按键。
+ *
+ * 两种方向的差别**只有四处**：逻辑画布尺寸 / 驱动映射方向 / 键位表 / 视口上限；
+ * 核心、缩放、滤镜、存档、封面完全共用。详见 docs/ORIENTATION-SWITCH-EVAL.md。
+ *
+ * 构建横屏镜像：RG_TAB5_ORIENTATION=1 tools/build-tab5-skin.sh
+ * （⚠ 构建脚本每次都会显式传 0/1 —— CMake 缓存变量是"粘"的，不显式传会串味。） */
+#ifndef RG_TAB5_ORIENTATION
+#define RG_TAB5_ORIENTATION 0
+#endif
+
+#if RG_TAB5_ORIENTATION == 1
+/* ──────────────── 横屏：逻辑 1280×720（物理 720×1280，驱动 90° 映射） ──────────────── */
+#define RG_SCREEN_DRIVER            2   // 2 = MIPI DSI 横屏（mipi_dsi_tab5.h，90° 映射）
+#define RG_SCREEN_BACKLIGHT         1
+/* 逻辑分辨率 = 用户自然持机的**横向**视角；物理面板是 720×1280 竖屏，
+ * 驱动按 90° 映射写入，所以这里必须是横向的那一组数。RG_SCREEN_ROTATE 保持 0。 */
+#define RG_SCREEN_WIDTH             1280
+#define RG_SCREEN_HEIGHT            720
+#define RG_SCREEN_ROTATE            0
+/* 可见区 = **GBA 游戏窗那块 720×480**（left/top/right/bottom 各 120/280）。
+ * 于是 display.screen.* = 720×480：UI（启动器/菜单/模拟器 OSD）只在这块里画，
+ * 四周 280/120 宽的留白专供虚拟按键 —— 与竖屏同构（竖屏也是"可见区 = 游戏带、下方留给按键"）。
+ * 用户 2026-10-08 真机反馈原话："launcher 的面积大小不是全屏，应该是 gba 游戏屏幕的大小"。 */
+#define RG_SCREEN_VISIBLE_AREA      {280, 120, 280, 120}
+/* 【无肩键行机型】的画面可用区：**上边界 0、下边界 576** —— GB/GBC/NES/GG/SMS/COL/PCE/GW/Lynx
+ * 这些真实手柄没有 L/R 的机型，顶部那条（L/R + L/R 调换键）本来就不存在，于是把那条空间
+ * 让给画面（用户 2026-10-08 定："GB 显示框往上移就是，因为 GB 没有那个切换键"）。
+ * 可见区 720×576：GB/GBC 4x(640×576) 正好吃满 → **x320..960 / y0..576**（与 rg_touch_skin.c
+ * 里 GB 4x 的避让假设完全一致），底边 144 留给 SELECT/START/MENU（y622..698，留 46px 不重合）。
+ * 由 rg_display_set_visible_area_for_console() 按机型选档；GBA/SNES/菜单 用上面那档。 */
+#define RG_SCREEN_VISIBLE_AREA_NO_SHLD {280, 0, 280, 144}
+#define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}
+#define RG_SCREEN_PARTIAL_UPDATES   1
+#define RG_SCREEN_INIT()
+
+/* 游戏缩放：**锁定 ZOOM**，倍数由"放得下的最大整数倍"算出来（用户 2026-10-08 真机反馈：
+ * "GB/GBC 可以用 4x，nes 可以放大一些，整数倍就 ok，GG/sms 也是，反正不能和按键重合就行"）。
+ * 两道闸（见 rg_display.c 的 ZOOM 分支）：可用宽 = 可见区宽 720，可用高 = MAX_WINDOW_HEIGHT。
+ *   GBA 240x160 → 3x(720x480)   可用宽把它限死在 3x
+ *   GB/GBC/GG 160x144 → 4x(640x576)  ← 取 4 需要高度 ≥576，见下
+ *   NES 256x240 → 2x(512x480)    3x 要 768 宽 > 720 → 被宽度挡死（要更大只能挪两侧按键）
+ *   SMS 256x192 → 2x(512x384)    同上
+ * ⚠ 与竖屏不同，横屏下**不开放用户改倍数/模式**（见 RG_DISPLAY_LOCK_SCALING）：
+ *   FULL 会拉满、FIT 会让按键压到画面上。
+ * ⚠ DEFAULT_CUSTOM_ZOOM 必须是**上限值 4.0**：锁定后它就是唯一入口，
+ *   填 3.0 会把 GB 的 4x 一路砍回 3x（"取最大整数倍"这件事靠 min(custom, max_zoom) 实现）。 */
+#define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 4.0
+#define RG_DISPLAY_MAX_CUSTOM_ZOOM     4.0
+/* 画面窗口最大高度 —— 横屏取 **576**：这是"无肩键行机型"可见区的高度（720-144），
+ * 让 GB/GBC 与 GG/SMS 能到 4x(640×576)；有肩键行的机型可见区只有 480 高，
+ * 倍数由 max_zoom_w/max_zoom_h 自己算小（GBA 240x160 → min(3, 3.6) = 3x，与 480 时相同）。
+ * 底边 144 是留给 SELECT/START/MENU 的（y622..698）。 */
+#define RG_DISPLAY_MAX_WINDOW_HEIGHT   576
+/* 横屏**锁定**缩放：设置里不出现 Scaling/Factor，且启动时强制回 ZOOM 3x
+ * （否则用户在竖屏存过 FULL、切到横屏就会把画面拉满、按键压到画面上）。 */
+#define RG_DISPLAY_LOCK_SCALING        1
+#else
+/* ──────────────── 竖屏：逻辑 720×1280（物理同向，线性 1:1 映射） ──────────────── */
+#define RG_SCREEN_DRIVER            3   // 3 = MIPI DSI 竖屏线性（无旋转）
 #define RG_SCREEN_BACKLIGHT         1
 /* 逻辑分辨率 = **面板原生方向**（720x1280 竖屏），驱动侧是线性 1:1 映射
  * （见 drivers/display/mipi_dsi_tab5_p.h）。
- * ⚠ 竖屏分支下这里是"竖着的那一组数"，不是横屏版 1280x720 的口径 ——
+ * ⚠ 竖屏下这里是"竖着的那一组数"，不是横屏版 1280x720 的口径 ——
  *   横屏版才需要"驱动 90° 映射 + 这里填横向数"。RG_SCREEN_ROTATE 保持 0。 */
 #define RG_SCREEN_WIDTH             720
 #define RG_SCREEN_HEIGHT            1280
@@ -71,6 +134,9 @@
 /* 【竖屏分支】游戏画面锚定顶部 y=0..480（720x480 顶满宽度），
  * 下方 800px 全给虚拟按键 —— 与 touch_layout.h 的分区一致。 */
 #define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 800}  // Left, Top, Right, Bottom
+/* 【无肩键行机型】竖屏不做区分：两档取同一个值 → rg_display_set_visible_area_for_console()
+ * 在竖屏下恒等（调了等于没调），行为与改动前逐字节一致。 */
+#define RG_SCREEN_VISIBLE_AREA_NO_SHLD {0, 0, 0, 800}  // Left, Top, Right, Bottom
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}  // Left, Top, Right, Bottom
 #define RG_SCREEN_PARTIAL_UPDATES   1
 /* 无 SPI 命令序列：面板初始化在驱动里走 Tab5 BSP（lcd_init 会调用本宏） */
@@ -99,6 +165,10 @@
  * 它是 ZOOM 的第二道闸，于是各机型的倍数都是**算出来的**：
  *   GB/GBC 160x144 → 4x(640x576，余 704)   GBA 240x160 → 3x(720x480，余 800)   NES 256x240 → 2x(512x480) */
 #define RG_DISPLAY_MAX_WINDOW_HEIGHT   620
+/* 竖屏**不锁**缩放：用户可以在设置里把倍数调小、或改 Scaling 模式
+ * （控制区在下方，按键不会被画面压到，所以允许）。横屏则必须锁 —— 见上面那段。 */
+#define RG_DISPLAY_LOCK_SCALING        0
+#endif /* RG_TAB5_ORIENTATION */
 
 
 /****************************************************************************
@@ -132,8 +202,14 @@
  * 再加上 48KB 的片内 SRAM 暂存（驱动里的 tab5_stage），合计约 138KB 静态片内 SRAM。 */
 /* 2026-09-28：16→32 行/块。真机实测每 16 行推一次 → 一帧 30 次推送，
  * DMA2D 大量丢弃(ESP_ERR_INVALID_STATE)、重试烧掉 224ms/秒。
- * 32 行一块 = 46KB，正好装进 48KB 的片内 SRAM 暂存(tab5_stage)，推送次数减半。 */
+ * 32 行一块 = 46KB，正好装进 48KB 的片内 SRAM 暂存(tab5_stage)，推送次数减半。
+ * ⚠ 横屏不能用 32：块大小 = 宽×行数×2B，1280×32×2B = 80KB **超过 48KB 暂存**；
+ *   横屏取 16 行 = 40KB（老线就是这个值）。 */
+#if RG_TAB5_ORIENTATION == 1
+#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 16)
+#else
 #define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 32)
+#endif
 
 /* GUI 字体放大倍数：默认字体 VeraBold11 渲染高度 13px，在 1280x720 上太小（实机反馈）。
  * 3 倍 = 39px。改这里即可调整（2 = 26px，3 = 39px）。 */
@@ -143,16 +219,23 @@
 /* 键位表抽到 touch_layout.h —— 命中判定 / 可视层绘制 / PC 预览三方共用一份，
  * 抄成两份必然漂移（表现：画的和点的不是一回事）。改键位改那个文件。 */
 #include "touch_layout.h"
-/* 【竖屏分支】触摸坐标换算覆盖：
+#if RG_TAB5_ORIENTATION == 0
+/* 【竖屏】触摸坐标换算覆盖：
  * rg_input.c 默认实现是横屏的 90° 逆映射（lx=py, ly=phys_w-1-px）。
  * 竖屏下显示驱动的映射是恒等的（px=lx, py=ly），触摸必须同向，否则
  * 手指位置会被换算到旋转后的逻辑点、落在命中区之外 —— 表现就是
  * 「按键画出来了但按不动」。 */
 #define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly) \
     do { (lx) = (px); (ly) = (py); } while (0)
+#else
+/* 【横屏】**不覆盖** —— 用 rg_input.c 的默认 90° 逆映射，与驱动写入方向同源
+ * （老线 0.2/0.3 就是这条路，真机验证过）。 */
+#endif
 
+/* 键位表按方向选（两张表的定义都在 touch_layout.h，单一数据源不拆文件） */
 #define RG_GAMEPAD_TOUCH_MAP RG_TAB5_TOUCH_MAP
-/* 若真机上触摸方向不对（点左选中右之类），改这个变换，不用动读点逻辑 */
+/* 若真机上触摸方向不对（点左选中右之类），改这个变换，不用动读点逻辑。
+ * 物理面板两种方向都一样：720×1280。 */
 #define RG_TOUCH_PHYS_W 720
 #define RG_TOUCH_PHYS_H 1280
 #endif /* RG_ENABLE_TOUCH_GAMEPAD */

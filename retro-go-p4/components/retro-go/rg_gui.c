@@ -629,13 +629,22 @@ void rg_gui_draw_icons(void)
 
 void rg_gui_draw_hourglass(void)
 {
+    /* ⚠ 横竖屏通用：只在**可见区**内居中，且必须夹进可见区。
+     * image_hourglass 是 720x720；横屏可见区只有 720x480 ⇒ 若照老写法按"屏幕居中"算，
+     * 得到 top = (480-720)/2 = **-120**，而 rg_display_write_rect 不裁负的 top ⇒ 驱动收到非法窗口
+     * （真机日志：`lcd_set_window: Bad lcd window (x0=280, y0=0, w=1280, h=720)`）⇒
+     * 一次 1280x720 的错位推送 ≈ 1.84MB 写到错误位置，是"蓝屏闪烁"和后续 panic 的头号嫌疑。
+     * 竖屏：可见区 720x1280 ⇒ w=720 h=720、x=0 y=280、源偏移 0 ⇒ 结果与改动前**逐字节相同**。 */
+    const int vw = rg_display_get_width(), vh = rg_display_get_height();
+    const int sw = image_hourglass.width, sh = image_hourglass.height;
+    const int w = RG_MIN(sw, vw), h = RG_MIN(sh, vh);
+    const int x = (vw - w) / 2, y = (vh - h) / 2;
+    const int sx = (sw - w) / 2, sy = (sh - h) / 2;   /* 超界时从图像正中取景，而不是取左上角 */
+
     rg_display_write_rect(
-        get_horizontal_position(RG_GUI_CENTER, image_hourglass.width),
-        get_vertical_position(RG_GUI_CENTER, image_hourglass.height),
-        image_hourglass.width,
-        image_hourglass.height,
-        image_hourglass.width * 2,
-        (uint16_t*)image_hourglass.pixel_data, 0);
+        x, y, w, h,
+        sw * 2,
+        (uint16_t*)image_hourglass.pixel_data + sy * sw + sx, 0);
 }
 
 void rg_gui_draw_status_bars(void)
@@ -1735,8 +1744,12 @@ void rg_gui_options_menu(void)
         RG_DIALOG_END,
     };
     const rg_gui_option_t game_options[] = {
+        /* 【锁缩放的 target 不出现这两项】横屏下画面必须恒定 ZOOM 3x（720×480 居中），
+         * 否则按键会压到游戏画面上 —— 见 targets/tab5/config.h 的 RG_DISPLAY_LOCK_SCALING。 */
+        #if !RG_DISPLAY_LOCK_SCALING
         {0, _("Scaling"),       "-", RG_DIALOG_FLAG_NORMAL, &scaling_update_cb},
         {0, _("Factor"),        "-", RG_DIALOG_FLAG_HIDDEN, &custom_zoom_cb},
+        #endif
         {0, _("Filter"),        "-", RG_DIALOG_FLAG_NORMAL, &filter_update_cb},
         {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},
         {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},

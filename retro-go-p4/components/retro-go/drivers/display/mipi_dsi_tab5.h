@@ -35,6 +35,11 @@
 #include "bsp/display.h"
 #include "driver/i2c_master.h"   /* IO 扩展器 PI4IOE 的 API 需要 i2c_master_bus_handle_t */
 #include "rg_touch_overlay.h"    /* 虚拟按键可视层（标签/透明度/按下反馈） */
+#include "tab5_power.h"          /* BSP I2C + IO 扩展器 + 充电使能（两份驱动共用一份）
+                                  * ⚠ 2026-10-08 修：本文件在竖屏线上漏了这一行 —— 竖屏线把
+                                  * 外围电源初始化抽成 tab5_power.h 时只改了 _p.h，
+                                  * 横屏这份留着 tab5_power_init() 的调用却没有 include，
+                                  * 谁切横屏构建就编不过（真机复现的后果是"充电使能漏修"）。 */
 /* 注意：不要 #include "bsp/m5stack_tab5.h" —— 它的 umbrella 头会拉 lvgl.h
  * （retro-go 不编 LVGL）。需要什么就手写 extern，见下。 */
 
@@ -468,8 +473,58 @@ static void tab5_ppa_frame_probe(void)
     heap_caps_free(src);
 }
 
+/* ── 电量圆灯（横屏）：写在**左下角留白**（用户 2026-10-08 指定："铭牌+圆灯放左下角"）──
+ * 与竖屏那份（mipi_dsi_tab5_p.h 的 tab5_batt_led_refresh）只有三处不同：
+ *   ① 像素索引走 90CW 映射（rg_batt_led_draw_cw90）—— 竖屏是"逻辑=物理"的线性写，
+ *      横屏直接线性写会落到完全错误的位置（所以这条不是"挪坐标"，是必须换绘制通路）；
+ *   ② 擦除区 = 灯的**逻辑矩形**映射到物理后的矩形（不是竖屏那种整行条带）；
+ *   ③ 写回（msync）只覆盖那几条物理行 —— 行号按 4 取整，让偏移/长度都是 128 的整数倍
+ *      （帧缓冲一行 1440B，128B 边界每 4 行落一次；同下面 FPS 数字那条带的处理）。
+ * 灯是状态指示、**不是按键**：不参与命中判定，且落在所有机型最大游戏窗之外。 */
+static void tab5_batt_led_refresh(void)
+{
+    if (!tab5_fb)
+        return;
+    static uint16_t *last_fb = NULL;
+    static int64_t last_write = 0;
+    const int64_t now = esp_timer_get_time();
+    /* 换帧缓冲（进出游戏会重挂显示）或超过 5s 强制重画一次 —— 与竖屏同规则：
+     * 否则"静止的灯"（纯绿）在应用切换后可能一直不重画。 */
+    const bool forced = (tab5_fb != last_fb) || (now - last_write > 5000000);
+    if (!rg_batt_led_refresh_needed() && !forced)
+        return;
+    last_fb = tab5_fb;
+    last_write = now;
+
+    /* 逻辑矩形 → 物理矩形：px = phys_w-1-ly、py = lx（与 rg_overlay_blit_cw90/全驱动同口径） */
+    int lx0, ly0, lx1, ly1;
+    rg_batt_led_get_rect(&lx0, &ly0, &lx1, &ly1);
+    const int py0 = lx0 & ~3, py1 = (lx1 + 3) & ~3;
+    const int px0 = TAB5_PHYS_W - ly1, px1 = TAB5_PHYS_W - ly0;
+    if (py0 < 0 || py1 > TAB5_PHYS_H || px0 < 0 || px1 > TAB5_PHYS_W)
+        return;                                  /* 越界就不画（几何写错时的兜底，不静默乱写） */
+
+    /* 先擦成背景：**面板底是皮肤色不是黑** —— 用纯黑会在这块留白里割裂画面（竖屏同款教训）。 */
+    const uint16_t bg = rg_batt_led_band_bg();
+    for (int py = py0; py < py1; ++py)
+    {
+        uint16_t *row = tab5_fb + (size_t)py * TAB5_PHYS_W;
+        for (int px = px0; px < px1; ++px)
+            row[px] = bg;
+    }
+    rg_batt_led_draw_cw90(tab5_fb, TAB5_PHYS_W, TAB5_PHYS_W);
+
+    const size_t off = (size_t)TAB5_PHYS_W * 2 * py0;
+    const size_t len = (size_t)TAB5_PHYS_W * 2 * (py1 - py0);
+    esp_cache_msync((void *)((uintptr_t)tab5_fb + off), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+}
+
 static void tab5_perf_report(void)
 {
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 电量圆灯跟着每秒的刷新判断（状态没变就是几次比较，可忽略）—— 与竖屏同一处位置。 */
+    tab5_batt_led_refresh();
+#endif
     /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。
      * 2026-09-25 结论：三种 scale 变体全部 err=0x102（ESP_ERR_INVALID_ARG），
      * 即使源与目的都已 128 对齐 —— 说明还有别的原因，且**那个 9.4ms 不能采信**。
@@ -513,6 +568,13 @@ static void tab5_perf_report(void)
      * 区域按 cw90 映射算：数字逻辑 y=44..76 → 物理 x=644..676（固定）；
      * 逻辑 x 随位数变化 → 物理 y 取一个够宽的带（1~3 位都盖得住）。
      * 黑底是刻意的：白字+黑投影本来就按深底设计，黑框还能让数字在亮场景里也看得清。 */
+#if RG_OVERLAY_SHOW_FPS
+    /* ⚠⚠ 这一整段是**开发调试专用**（屏幕帧率数字），必须被开关包住 ——
+     * 2026-10-08 真机事故：发布版 `RG_OVERLAY_SHOW_FPS=0`，但这段"每秒清底 + 合成 + msync"
+     * **没被包住**，于是每秒在画面里擦出一块黑矩形（物理 px640..680 / py584..696 → 经 cw90
+     * 映射回画布 = x584..696 / y39..79），横屏下正好落在 **GB 4x 画面顶部正中** ⇒
+     * 用户看到的现象是"画面正上方中间有个小黑长方形在闪烁"，而且永远没有数字补上（数字本身
+     * 在开关后面）。顺带也省掉了每秒一次的**全叠加层合成 + 161KB msync**。 */
     if (tab5_fb)
     {
         const int cx0 = 640, cx1 = 680, cy0 = 584, cy1 = 696;   /* 物理坐标，比数字本身略大一圈 */
@@ -529,6 +591,7 @@ static void tab5_perf_report(void)
         const size_t len = (size_t)TAB5_PHYS_W * 2 * 112;
         esp_cache_msync((void *)((uintptr_t)tab5_fb + off), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
+#endif  /* RG_OVERLAY_SHOW_FPS */
 
     tab5_pf_tr_us = tab5_pf_sub_us = 0;
     tab5_pf_xp_us = tab5_pf_ov_us = tab5_pf_dr_us = 0;
@@ -553,8 +616,12 @@ static void tab5_perf_flush(const char *app)
         (unsigned long long)(tab5_pf_tot_tr_us / 1000),
         (unsigned long long)(tab5_pf_tot_sub_us / 1000), (unsigned)tab5_pf_tot_blocks);
     fclose(f);
-    RG_LOGI("PERF: session summary written to /sd/perf.log (%llums display / %lldms total)\n",
-        (unsigned long long)disp_ms, (long long)total_ms);
+    /* ⚠ ESP-IDF 的 esp_log **不支持 %llu/%lld**（长度修饰符会被吃掉 → 数字打成垃圾，
+     * 后面还有参数的话会全部错位）。这里是毫秒级整数，先强转 int 再用 %d。
+     * （上面那句 fprintf 是标准 stdio，所以那里用 %llu 是对的 —— 两者别混。）
+     * 2026-10-08：本行原来写的是 %llu（竖屏线修过、横屏这份漏了），补上。 */
+    RG_LOGI("PERF: session summary written to /sd/perf.log (%dms display / %dms total)\n",
+        (int)disp_ms, (int)total_ms);
     tab5_pf_tot_tr_us = tab5_pf_tot_sub_us = 0;
     tab5_pf_tot_blocks = 0;
     tab5_pf_sess_start = 0;
@@ -711,16 +778,43 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length)
      * 范围就是本块自身（合成只写块内的像素），对齐到 cache 行；每块 2 次调用。 */
     if (done)
     {
+        /* 本次写入的字节范围：像素 (py,px) 在帧缓冲里的偏移 = (py*TAB5_PHYS_W + px) * 2。
+         * ⚠ **必须夹到帧缓冲内**：`x0+rows` / `y0+w` 由推送分块给出，续块的 rows 是定值，
+         *   不保证 x0+rows <= TAB5_PHYS_W ⇒ b1/a1 会落到帧缓冲之外 ⇒ IDF 的 cache 区间查询
+         *   (`esp_cache_msync` → cache_hal_vaddr_to_cache_level_id) 直接失败：
+         *   `E cache: esp_cache_msync(103): invalid addr or null pointer`
+         *   —— 后果不只是刷屏：这一块的**叠加层像素既没失效也没写回**（按键可能不更新）。
+         *   2026-10-08 真机日志：游戏进行中成串出现 7 条（与 `previous draw operation is not
+         *   finished` 交替）。a0/a1 必须保持 128 对齐（esp_cache_msync 的硬要求），所以夹的是
+         *   "128 对齐的最后一个整块"，而不是直接截断长度。 */
+        const size_t fb_bytes = (size_t)TAB5_PHYS_W * TAB5_PHYS_H * 2;
         const size_t b0 = ((size_t)y0 * TAB5_PHYS_W + x0) * 2;
         const size_t b1 = ((size_t)(y0 + w - 1) * TAB5_PHYS_W + (x0 + rows - 1)) * 2 + 1;
-        const size_t a0 = (b0 / 128) * 128;
-        const size_t a1 = ((b1 + 127) / 128) * 128;
-        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+        size_t a0 = (b0 / 128) * 128;
+        size_t a1 = ((b1 + 127) / 128) * 128;
+        if (a1 > fb_bytes)
+        {
+            /* 保留一次可见证据：下次真机日志里若还出现，就能立刻区分"夹住了"与"没夹住" */
+            static bool clamp_warned = false;
+            if (!clamp_warned)
+            {
+                clamp_warned = true;
+                RG_LOGW("overlay msync range clamped: block <%d,%d %dx%d> a1=%u > fb=%u\n",
+                        x0, y0, rows, w, (unsigned)a1, (unsigned)fb_bytes);
+            }
+            a1 = fb_bytes & ~(size_t)127;
+            if (a0 > a1)
+                a0 = a1;            /* 整块都在 fb 外：size=0，下面跳过 msync（合成仍要做） */
+        }
+        const bool sync_ok = (a0 < a1);
+        if (sync_ok)
+            esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
         /* ⚠ 这里传的是**整块帧缓冲**（不是本块的小缓冲），所以缓冲区原点必须是 (0,0)、
          * 裁剪区是整屏 —— 传 (x0,y0) 会让索引变成 (py-y0)*720+(px-x0)，画面整体写偏到左上角。
          * 按键自身的位置决定实际写哪儿，不需要外部裁剪。 */
         rg_overlay_blit_cw90(tab5_fb, TAB5_PHYS_W, 0, 0, TAB5_PHYS_W, TAB5_PHYS_H, TAB5_PHYS_W);
-        esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        if (sync_ok)
+            esp_cache_msync((void *)((uintptr_t)tab5_fb + a0), a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
 #endif
     int64_t t_tr2 = esp_timer_get_time();

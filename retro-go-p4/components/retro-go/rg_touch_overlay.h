@@ -184,5 +184,7 @@ bool rg_batt_led_refresh_needed(void);                          /* 样子变了�
 void rg_batt_led_get_band(int *x0, int *y0, int *x1, int *y1);   /* 逻辑坐标整行带（跟随灯位，行号按 4 取整） */
 uint16_t rg_batt_led_band_bg(void);                              /* 擦条带的背景色 = 当前皮肤面板底色 */
 void rg_batt_led_draw(uint16_t *buf, int stride);                /* 线性映射（物理=逻辑）直绘 */
+void rg_batt_led_draw_cw90(uint16_t *buf, int stride, int phys_w); /* 90CW 映射直绘（横屏驱动用） */
+void rg_batt_led_get_rect(int *x0, int *y0, int *x1, int *y1);    /* 灯的紧贴逻辑矩形（横屏算物理矩形用） */
 
 #endif /* RG_GAMEPAD_TOUCH_MAP && RG_TOUCH_OVERLAY */
