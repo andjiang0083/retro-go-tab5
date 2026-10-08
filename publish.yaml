@@ -14,4 +14,4 @@ platform_entries:
     cover: releases/cover-1280x720-retro-go-tab5-tab5.png
     project_link: "https://github.com/andjiang0083/retro-go-tab5"
     bin_external: true          # 本仓不携带产物（公开仓）→ 跳过 bin 存在性校验
-    readback: "2026-10-08 0.4.8 已上架（PUBLISHED/PUBLIC）；描述/封面二轮改稿（长板前置版）已提交，同批资料审核 PENDING（revision=2107448969954467842）"   # 登录态接口回读：0.4.8 已进审核队列（vid 可查 /api/v1/users/me/firmwares）
+    readback: "0.4.8 已上架（PUBLISHED/PUBLIC）；描述+封面长板前置版同批资料审核 PENDING（revision=2107448969954467842）；可复现已验：公开仓 tag v0.4.8 全新克隆重编译 == 发布包（分区表一致/入口点一致/3801088B 一致，2026-10-08）"   # 登录态接口回读：0.4.8 已进审核队列（vid 可查 /api/v1/users/me/firmwares）
