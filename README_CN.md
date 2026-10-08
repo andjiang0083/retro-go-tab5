@@ -2,8 +2,8 @@
 
 [English](README.md) · **中文**
 
-**把 [retro-go](https://github.com/ducalex/retro-go) 移植到 M5Stack Tab5（ESP32-P4），并为 GBA 实现 RISC-V 动态重编译（dynarec）。**
-**A port of [retro-go](https://github.com/ducalex/retro-go) to the M5Stack Tab5 (ESP32-P4), with a RISC-V dynamic recompiler for Game Boy Advance.**
+**Tab5 上首个满帧 GBA 模拟器（ESP32-P4）—— RISC-V 动态重编译，稳稳跑满 60 FPS；同一个固件里还装着 retro-go 的其余 10 个机种：GB · GBC · NES · SNES · SMS · Game Gear · ColecoVision · PC Engine · Lynx · Game & Watch。**
+**The first full-speed GBA emulator for the M5Stack Tab5 (ESP32-P4) — GBA at a solid 60 FPS with a RISC-V dynamic recompiler, plus the other 10 retro-go systems in the same firmware: GB · GBC · NES · SNES · SMS · Game Gear · ColecoVision · PC Engine · Lynx · Game & Watch.**
 
 Tab5 是一台 1280x720 的 MIPI-DSI 掌机，主控是 ESP32-P4 —— 双核 RISC-V、32MB PSRAM、**完全没有无线模块**。
 retro-go 是一个轻量多机种模拟器前端，本仓库是它的移植：板级点亮、显示通路、音频、输入，
