@@ -11,6 +11,7 @@ LOG_SECS="${2:-30}"
 # ⚠ 不要在这里写死个人路径 —— 别人机器上克隆下来会直接跑不起来。
 # 可覆盖的环境变量：IDF_ENV_SH（ESP-IDF 的 export.sh，默认 $HOME/esp/esp-idf-v5.5/export.sh）、
 #                  DEV_TREE（仓库根，默认 = 本脚本所在目录的上一级）、IDF_PYTHON_ENV_PATH（可选）。
+: "${DEV_PORT:=/dev/cu.usbmodem1101}"   # 显式端口：esptool 自动选会抓到 /dev/cu.debug-console，刷不上
 : "${IDF_ENV_SH:=$HOME/esp/esp-idf-v5.5/export.sh}"
 : "${DEV_TREE:=$(cd "$(dirname "$0")/.." && pwd)}"
 if [ -n "${IDF_PYTHON_ENV_PATH:-}" ]; then export IDF_PYTHON_ENV_PATH; fi
@@ -22,7 +23,7 @@ echo "=== FLASH START $(date '+%F %T')  $IMG ==="
 #   当作"设备重启"重试（最多 3 次），不要当成刷写失败。
 for attempt in 1 2 3; do
     echo "--- attempt $attempt ---"
-    python3 -m esptool --chip esp32p4 -b 921600 --before default_reset --after hard_reset \
+    python3 -m esptool --chip esp32p4 -p "$DEV_PORT" -b 921600 --before default_reset --after hard_reset \
         write_flash -z 0x0 "$IMG"
     rc=$?
     echo "--- attempt $attempt rc=$rc ---"
