@@ -1,4 +1,5 @@
 #include "rg_system.h"
+#include "rg_utils.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -619,6 +620,9 @@ bool rg_storage_write_file(const char *path, const void *data_ptr, size_t data_l
 #endif
 
 #define ZIP_MAGIC 0x04034b50
+#define ZIP_CD_MAGIC 0x02014b50
+#define ZIP_EOCD_MAGIC 0x06054b50
+
 typedef struct __attribute__((packed))
 {
     uint32_t magic;
@@ -637,96 +641,284 @@ typedef struct __attribute__((packed))
     // uint8_t compressed_data[];
 } zip_header_t;
 
+/* 解析结果：一个待解压条目（本地头或中央目录来的，语义统一） */
+typedef struct
+{
+    uint32_t data_offset;       // 压缩数据起始（绝对偏移）
+    uint32_t compressed_size;
+    uint32_t uncompressed_size;
+    uint32_t checksum;
+    uint16_t compression;       // 0=stored, 8=deflate
+    bool valid;
+} zip_entry_t;
+
+static inline uint16_t zip_le16(const uint8_t *p) { return p[0] | (p[1] << 8); }
+static inline uint32_t zip_le32(const uint8_t *p) { return p[0] | (p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
+
+/**
+ * 快路径：从第一个本地头取信息（上游原来的做法，对绝大多数 zip 有效）。
+ * 返回 false 时交给中央目录解析 —— 两种情况会走到这里：
+ *   1) data descriptor 模式（flags bit3，本地头里 size/CRC 全是 0）
+ *   2) 第一个条目是目录（size 为 0）
+ */
+static bool zip_parse_local(FILE *fp, zip_entry_t *e)
+{
+    zip_header_t header = {0};
+    int header_pos = 0;
+
+    for (header_pos = 0; !feof(fp) && header_pos < 0x10000; ++header_pos)
+    {
+        fseek(fp, header_pos, SEEK_SET);
+        if (fread(&header, sizeof(header), 1, fp) != 1)
+            break;
+        if (header.magic == ZIP_MAGIC)
+            break;
+    }
+    if (header.magic != ZIP_MAGIC)
+        return false;
+
+    header.filename[RG_MIN(header.filename_size, 225)] = 0;
+
+    if (!header.compressed_size || !header.uncompressed_size)
+        return false;                                    // 交给中央目录
+    if (header.compression != 0 && header.compression != 8)
+    {
+        RG_LOGE("zip: unsupported compression method %u", header.compression);
+        return false;
+    }
+
+    e->data_offset = header_pos + 30 + header.filename_size + header.extra_field_size;
+    e->compressed_size = header.compressed_size;
+    e->uncompressed_size = header.uncompressed_size;
+    e->checksum = header.checksum;
+    e->compression = header.compression;
+    e->valid = true;
+    RG_LOGI("zip: local header at %d, name '%s', %u -> %u bytes, method %u", header_pos,
+            header.filename, (unsigned)header.compressed_size, (unsigned)header.uncompressed_size,
+            header.compression);
+    return true;
+}
+
+/**
+ * 回退路径：读中央目录（EOCD 定位）。data descriptor / ZIP64 之外的大多数工具产出的 zip
+ * 都能靠这里拿到真实 size/CRC。跳过目录条目与 __MACOSX/ 垃圾条目，只认 stored/deflate。
+ */
+static bool zip_parse_central(FILE *fp, zip_entry_t *e)
+{
+    uint8_t *buf = NULL;
+    uint8_t hd[46];
+    bool found = false;
+
+    if (fseek(fp, 0, SEEK_END) != 0)
+        return false;
+    long file_size = ftell(fp);
+    if (file_size < 22)
+        return false;
+
+    size_t scan = RG_MIN((size_t)file_size, 65557u);     // EOCD + 最长 64KB 注释
+    buf = malloc(scan);
+    if (!buf)
+        return false;
+    long scan_off = file_size - (long)scan;
+    fseek(fp, scan_off, SEEK_SET);
+    if (fread(buf, 1, scan, fp) != scan)
+    {
+        free(buf);
+        return false;
+    }
+
+    long eocd = -1;
+    for (long i = (long)scan - 22; i >= 0; --i)
+    {
+        if (zip_le32(buf + i) == ZIP_EOCD_MAGIC)
+        {
+            eocd = i;
+            break;
+        }
+    }
+    if (eocd < 0)
+    {
+        RG_LOGE("zip: no EOCD found");
+        free(buf);
+        return false;
+    }
+
+    uint16_t n_entries = zip_le16(buf + eocd + 10);
+    uint32_t cd_offset = zip_le32(buf + eocd + 16);
+    free(buf);
+
+    if (cd_offset == 0xFFFFFFFFu || n_entries == 0xFFFFu)
+    {
+        RG_LOGE("zip: ZIP64 archives are not supported");
+        return false;
+    }
+
+    for (uint16_t i = 0; i < n_entries && !found; ++i)
+    {
+        uint16_t method, nlen, elen, clen;
+        uint32_t csz, usz, crc, lho;
+        char name[256] = {0};
+
+        fseek(fp, (long)cd_offset, SEEK_SET);
+        if (fread(hd, 1, 46, fp) != 46 || zip_le32(hd) != ZIP_CD_MAGIC)
+            break;
+
+        method = zip_le16(hd + 10);
+        crc = zip_le32(hd + 16);
+        csz = zip_le32(hd + 20);
+        usz = zip_le32(hd + 24);
+        nlen = zip_le16(hd + 28);
+        elen = zip_le16(hd + 30);
+        clen = zip_le16(hd + 32);
+        lho = zip_le32(hd + 42);
+
+        if (nlen && fread(name, 1, RG_MIN(nlen, (uint16_t)255), fp) == 0)
+            name[0] = 0;
+
+        bool is_dir = (nlen && name[nlen < 255 ? nlen - 1 : 254] == '/');
+        bool is_junk = (strncmp(name, "__MACOSX/", 9) == 0) || (name[0] == '.');
+        bool usable = !is_dir && !is_junk && usz && csz && (method == 0 || method == 8);
+
+        if (usable)
+        {
+            uint8_t lh[30];
+            fseek(fp, (long)lho, SEEK_SET);
+            if (fread(lh, 1, 30, fp) == 30 && zip_le32(lh) == ZIP_MAGIC)
+            {
+                uint16_t lnlen = zip_le16(lh + 26), lelen = zip_le16(lh + 28);
+                e->data_offset = lho + 30 + lnlen + lelen;
+                e->compressed_size = csz;
+                e->uncompressed_size = usz;
+                e->checksum = crc;
+                e->compression = method;
+                e->valid = true;
+                found = true;
+                RG_LOGI("zip: central entry '%s', %u -> %u bytes, method %u", name,
+                        (unsigned)csz, (unsigned)usz, method);
+            }
+        }
+        if (!found)
+            RG_LOGI("zip: skipping central entry '%s' (dir=%d junk=%d csz=%u usz=%u method=%u)",
+                    name, is_dir, is_junk, (unsigned)csz, (unsigned)usz, method);
+
+        cd_offset += 46 + nlen + elen + clen;
+    }
+
+    if (!found)
+        RG_LOGE("zip: no usable entry found");
+    return found;
+}
+
 bool rg_storage_unzip_file(const char *zip_path, const char *filter, void **data_out, size_t *data_len, uint32_t flags)
 {
     RG_ASSERT_ARG(data_out && data_len);
     CHECK_PATH(zip_path);
 
-    zip_header_t header = {0};
-    int header_pos = 0;
-
+    zip_entry_t entry = {0};
+    size_t output_buffer_align = RG_MAX(0x1000, (flags & 0xF) * 0x2000);
+    size_t output_buffer_size;
+    size_t output_buffer_pos = 0;
+    uint8_t *output_buffer = NULL;
+    uint8_t *read_buffer = NULL;
+    tinfl_decompressor *decomp = NULL;
+    tinfl_status status;
     FILE *fp = fopen(zip_path, "rb");
+
     if (!fp)
     {
         RG_LOGE("Fopen failed (%d): '%s'", errno, zip_path);
         return false;
     }
 
-    // Very inefficient, we should read a block at a time and search it for a header. But I'm lazy.
-    // Thankfully the header is usually found on the very first read :)
-    for (header_pos = 0; !feof(fp) && header_pos < 0x10000; ++header_pos)
+    if (!zip_parse_local(fp, &entry) && !zip_parse_central(fp, &entry))
     {
-        fseek(fp, header_pos, SEEK_SET);
-        fread(&header, sizeof(header), 1, fp);
-        if (header.magic == ZIP_MAGIC)
-            break;
-    }
-
-    if (header.magic != ZIP_MAGIC)
-    {
-        RG_LOGE("No valid header found: '%s'", zip_path);
+        RG_LOGE("No usable entry found: '%s'", zip_path);
         fclose(fp);
         return false;
     }
 
-    // Zero terminate or truncate filename just in case
-    header.filename[RG_MIN(header.filename_size, 225)] = 0;
-
-    RG_LOGI("Found file at %d, name: '%s', size: %d", header_pos, header.filename, (int)header.uncompressed_size);
-
-    size_t stream_offset = header_pos + 30 + header.filename_size + header.extra_field_size;
-    size_t stream_remaining = header.compressed_size;
-    size_t output_buffer_align = RG_MAX(0x1000, (flags & 0xF) * 0x2000);
-    size_t output_buffer_size;
-    size_t output_buffer_pos = 0;
-    uint8_t *output_buffer = NULL;
-
     if (flags & RG_FILE_USER_BUFFER)
     {
-        output_buffer_size = RG_MIN(*data_len, header.uncompressed_size);
+        output_buffer_size = RG_MIN(*data_len, entry.uncompressed_size);
         output_buffer = *data_out;
     }
     else
     {
-        output_buffer_size = header.uncompressed_size;
+        output_buffer_size = entry.uncompressed_size;
         output_buffer = malloc((output_buffer_size + (output_buffer_align - 1)) & ~(output_buffer_align - 1));
     }
 
-    size_t read_buffer_size = 0x8000;
-    uint8_t *read_buffer = malloc(read_buffer_size);
-    tinfl_decompressor *decomp = malloc(sizeof(tinfl_decompressor));
-
-    if (!read_buffer || !output_buffer || !decomp)
+    if (!output_buffer || !output_buffer_size)
     {
         RG_LOGE("Memory allocation failed: '%s'", zip_path);
         goto _fail;
     }
 
-    tinfl_status status;
-    tinfl_init(decomp);
-
-    do
+    if (entry.compression == 0)
     {
-        size_t input_size = RG_MIN(read_buffer_size, stream_remaining);
-        size_t output_size = output_buffer_size - output_buffer_pos;
-        if (fseek(fp, stream_offset, SEEK_SET) != 0 || fread(read_buffer, input_size, 1, fp) != 1)
+        /* stored：压缩数据就是原文，直接搬 */
+        size_t got = 0;
+        fseek(fp, (long)entry.data_offset, SEEK_SET);
+        while (got < output_buffer_size)
         {
-            RG_LOGE("Read error (%d): '%s'", errno, zip_path);
+            size_t want = RG_MIN(0x8000u, output_buffer_size - got);
+            if (fread(output_buffer + got, 1, want, fp) != want)
+            {
+                RG_LOGE("Read error (%d): '%s'", errno, zip_path);
+                goto _fail;
+            }
+            got += want;
+        }
+        output_buffer_pos = got;
+    }
+    else
+    {
+        size_t stream_offset = entry.data_offset;
+        size_t stream_remaining = entry.compressed_size;
+
+        read_buffer = malloc(0x8000);
+        decomp = malloc(sizeof(tinfl_decompressor));
+        if (!read_buffer || !decomp)
+        {
+            RG_LOGE("Memory allocation failed: '%s'", zip_path);
             goto _fail;
         }
-        stream_offset += input_size;
-        stream_remaining -= input_size;
-        status = tinfl_decompress(
-            decomp, read_buffer, &input_size, output_buffer, output_buffer + output_buffer_pos, &output_size,
-            TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF | (stream_remaining ? TINFL_FLAG_HAS_MORE_INPUT : 0));
-        output_buffer_pos += output_size;
-    } while (status == TINFL_STATUS_NEEDS_MORE_INPUT);
 
-    // With user-provided buffer we might not reach TINFL_STATUS_DONE, but it doesn't mean we've failed
-    if (status < TINFL_STATUS_DONE || output_buffer_pos != output_buffer_size) // (status != TINFL_STATUS_DONE)
+        tinfl_init(decomp);
+        do
+        {
+            size_t input_size = RG_MIN((size_t)0x8000, stream_remaining);
+            size_t output_size = output_buffer_size - output_buffer_pos;
+            if (fseek(fp, stream_offset, SEEK_SET) != 0 || fread(read_buffer, input_size, 1, fp) != 1)
+            {
+                RG_LOGE("Read error (%d): '%s'", errno, zip_path);
+                goto _fail;
+            }
+            stream_offset += input_size;
+            stream_remaining -= input_size;
+            status = tinfl_decompress(
+                decomp, read_buffer, &input_size, output_buffer, output_buffer + output_buffer_pos, &output_size,
+                TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF | (stream_remaining ? TINFL_FLAG_HAS_MORE_INPUT : 0));
+            output_buffer_pos += output_size;
+        } while (status == TINFL_STATUS_NEEDS_MORE_INPUT);
+
+        // With user-provided buffer we might not reach TINFL_STATUS_DONE, but it doesn't mean we've failed
+        if (status < TINFL_STATUS_DONE || output_buffer_pos != output_buffer_size)
+        {
+            RG_LOGE("Decompression failed (%d): %s", (int)status, zip_path);
+            goto _fail;
+        }
+    }
+
+    /* CRC 校验：有就比一下。宁可在这里报错，也不要让模拟器拿着坏 ROM 黑屏/崩溃。 */
+    if (entry.checksum)
     {
-        RG_LOGE("Decompression failed (%d): %s", (int)status, zip_path);
-        goto _fail;
+        uint32_t crc = rg_crc32(0, output_buffer, output_buffer_pos);
+        if (crc != entry.checksum)
+        {
+            RG_LOGE("CRC mismatch (%08X != %08X): '%s'", (unsigned)crc, (unsigned)entry.checksum, zip_path);
+            goto _fail;
+        }
     }
 
     free(read_buffer);
@@ -752,3 +944,4 @@ bool rg_storage_unzip_file(const char *zip_path, const char *filter, void **data
     return false;
 }
 #endif
+

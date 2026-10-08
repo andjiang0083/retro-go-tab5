@@ -20,6 +20,7 @@
 #include "common.h"
 #if defined(ESP_PLATFORM)
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #endif
 #include "streams/file_stream.h"
@@ -358,6 +359,11 @@ u32 gamepak_buffer_count;   /* Value between 1 and 32 */
 u32 gamepak_size;           /* Size of the ROM in bytes */
 // We allocate in 1MB chunks.
 const unsigned gamepak_buffer_blocksize = 1024*1024;
+
+/* 2026-10-08：zip ROM 用一个连续大块承载（见 load_gamepak_zipped）。
+ * 这种情况下 gamepak_buffers[1..n-1] 只是同一块的别名（让按块取址的换页路径自洽），
+ * 所以释放时只能 free 一次。 */
+static bool gamepak_buffer_single;
 
 // LRU queue with the loaded blocks and what they map to
 struct {
@@ -2259,8 +2265,12 @@ u8 *load_gamepak_page(u32 physical_index)
   // Fill in the entry
   gamepak_blk_queue[entry].phy_rom = physical_index;
 
-  fseek(gamepak_file_large, physical_index * (32 * 1024), SEEK_SET);
-  fread(swap_location, (32 * 1024), 1, gamepak_file_large);
+  // zip ROM：数据已在内存里，swap_location 本身指向 ROM 内正确位置，无需再读盘
+  if (gamepak_file_large)
+  {
+    fseek(gamepak_file_large, physical_index * (32 * 1024), SEEK_SET);
+    fread(swap_location, (32 * 1024), 1, gamepak_file_large);
+  }
 
   // Map it to the read handlers now
   map_rom_entry(read, physical_index, swap_location, gamepak_size >> 15);
@@ -2399,6 +2409,14 @@ void memory_term(void)
     fclose(gamepak_file_large);
     gamepak_file_large = NULL;
   }
+
+  // zip ROM 是一个连续大块（buffers[1..n-1] 只是别名），只能 free 一次
+  if (gamepak_buffer_single && gamepak_buffer_count)
+  {
+    free(gamepak_buffers[0]);
+    gamepak_buffer_count = 0;
+  }
+  gamepak_buffer_single = false;
 
   while (gamepak_buffer_count)
   {
@@ -2586,9 +2604,74 @@ unsigned memory_write_savestate(u8 *dst)
   return (unsigned int)(dst - startp);
 }
 
+/* 2026-10-08：GBA 的 zip 支持。
+ * 上游（ducalex/retro-go）的做法是「整份解压到内存再交给模拟器」；本核心本来就是「整份 ROM 常驻 PSRAM」，
+ * 所以这里直接把解压结果当作 ROM 缓冲本身 —— 内存增量 ≈ 0 块（对比与代价见 docs/ZIP-SUPPORT-ASSESSMENT.md）。
+ * 代价：进游戏时一次性解压（替代 16MB 的读盘），异常 zip（无条目/加密/超大）失败即返回 -1，由调用方报错。 */
+static s32 load_gamepak_zipped(const char *name)
+{
+  void *data = NULL;
+  size_t size = 0;
+  u32 rom_blocks, i;
+  int64_t t_zip0 = esp_timer_get_time();
+
+  /* 关键顺序：先把那套 1MB 块还给系统，再要一整块 —— 两者不能同时存在 */
+  while (gamepak_buffer_count)
+    free(gamepak_buffers[--gamepak_buffer_count]);
+
+  if (gamepak_file_large)
+  {
+    fclose(gamepak_file_large);
+    gamepak_file_large = NULL;
+  }
+
+  if (!rg_storage_unzip_file(name, NULL, &data, &size, 0) || !data)
+  {
+    RG_LOGE("zip: unpack failed: %s", name);
+    if (data) free(data);
+    return -1;
+  }
+  if (size < 32 * 1024 || size > (32u * 1024 * 1024))
+  {
+    RG_LOGE("zip: bad unpacked size %u: %s", (unsigned)size, name);
+    free(data);
+    return -1;
+  }
+
+  /* Round size to 32KB pages (与裸文件路径同口径) */
+  gamepak_size = (u32)((size + 0x7FFF) & ~0x7FFF);
+
+  /* 把整个 ROM 当作「1MB 块的连续序列」接进既有映射机制：
+   * 块数 = 页数/32，故 32*块数 == 页数 ⇒ 1024 项页表（=32MB）恰好够全量常驻，永不换页。 */
+  gamepak_buffer_single = true;
+  gamepak_buffers[0] = (u8 *)data;
+  gamepak_buffer_count = (gamepak_size + (1024 * 1024) - 1) / (1024 * 1024);
+  if (gamepak_buffer_count > 32)
+    gamepak_buffer_count = 32;
+  for (i = 1; i < gamepak_buffer_count; i++)
+    gamepak_buffers[i] = gamepak_buffers[0] + i * (1024 * 1024);
+
+  /* Unmap then map everything (与裸文件路径同一套，只是不再按需读盘) */
+  map_null(read, 0x8000000, 0xD000000);
+  rom_blocks = gamepak_size >> 15;
+  for (i = 0; i < rom_blocks; i++)
+  {
+    u32 entry = evict_gamepak_page();
+    gamepak_blk_queue[entry].phy_rom = (s16)i;
+    map_rom_entry(read, i, &gamepak_buffers[0][32 * 1024 * i], rom_blocks);
+  }
+
+  RG_LOGI("zip: %s -> %uKB resident (%u x 1MB, no swap) in %d ms",
+          name, (unsigned)(gamepak_size >> 10), (unsigned)gamepak_buffer_count,
+          (int)((esp_timer_get_time() - t_zip0) / 1000));
+  return 0;
+}
+
 static s32 load_gamepak_raw(const char *name)
 {
   unsigned i, j;
+  if (name && rg_extension_match(name, "zip"))
+    return load_gamepak_zipped(name);
   gamepak_file_large = fopen(name, "rb");
   if(gamepak_file_large)
   {
