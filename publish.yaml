@@ -12,6 +12,6 @@ platform_entries:
     version: "0.4.8"
     bin: dist/m5burner-0.4.8/retro-go-tab5-0.4.8-merged.bin
     cover: releases/cover-1280x720-retro-go-tab5-tab5.png
-    project_link: ""
+    project_link: "https://github.com/andjiang0083/retro-go-tab5"
     bin_external: true          # 本仓不携带产物（公开仓）→ 跳过 bin 存在性校验
-    readback: ""                # 0.4.8 提交后由登录态接口回读填写（/api/v1/users/me/firmwares）
+    readback: "2026-10-08 PENDING vid=2108030212017213442"   # 登录态接口回读：0.4.8 已进审核队列（vid 可查 /api/v1/users/me/firmwares）
