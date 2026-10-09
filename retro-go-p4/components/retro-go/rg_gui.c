@@ -918,6 +918,19 @@ void rg_gui_draw_message(const char *format, ...)
     rg_gui_draw_dialog(NULL, options, 0);
 }
 
+void rg_gui_draw_restart_notice(const char *text)
+{
+    /* 整屏黑底：**不能用主题底色** —— 主题 dialog.background = 0x0010 解出来是深蓝，
+     * 正是用户误认成"崩溃蓝屏"的那个颜色（见 rg_gui.h 声明处说明）。
+     * ⚠ 坐标一律按**可见区**算（rg_display_get_width/height），不要用画布尺寸
+     * （§232：横屏画布 1280x720 而可见区 720x480，按画布算会得到越界窗口）。 */
+    rg_display_clear(0x0000);
+    const int vw = rg_display_get_width(), vh = rg_display_get_height();
+    if (text && *text)
+        rg_gui_draw_text(0, vh / 2, vw, text, C_WHITE, C_BLACK, RG_TEXT_ALIGN_CENTER);
+    rg_display_sync(true);   /* 阻塞到真的送上面板：重启就在下一行，不能异步丢帧 */
+}
+
 intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, int selected_index)
 {
     size_t options_count = get_dialog_items_count(options_const);

@@ -18,6 +18,7 @@
 #include "esp_system.h"
 #include "rg_orient.h"
 #include "rg_settings.h"
+#include "rg_gui.h"      /* 重启过渡屏 rg_gui_draw_restart_notice() */
 #include "rg_system.h"
 
 #define ORIENT_SECTION  "ui"
@@ -161,7 +162,10 @@ bool rg_orient_restart_into(int value)
     rg_orient_set(value);   /* 槽切成功后才记录 */
 
     RG_LOGI("orient: restart into %s (slot %s)\n", rg_orient_name(value), target_label);
-    vTaskDelay(pdMS_TO_TICKS(120));   /* 让日志落盘/出串口再重启 */
+    /* 过渡屏：把"正在重启"这件事画出来（黑底+提示）。否则重启前最后一帧往往是主题底色
+     * （深蓝）⇒ 用户以为崩溃了（实测无 panic；见 rg_gui_draw_restart_notice 注释）。 */
+    rg_gui_draw_restart_notice("Restarting...");
+    vTaskDelay(pdMS_TO_TICKS(450));   /* 让过渡屏可见约 0.45 秒，也把日志送出串口 */
     esp_restart();
     return true;            /* 正常路径不会到达 */
 }
