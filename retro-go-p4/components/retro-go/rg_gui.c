@@ -1,5 +1,6 @@
 #include "rg_system.h"
 #include "rg_touch_overlay.h"    /* 虚拟手柄（触摸按键）可视层的运行时开关/透明度 */
+#include "rg_orient.h"
 #include "rg_gui.h"
 #include "rg_cjk.h"
 
@@ -645,6 +646,45 @@ void rg_gui_draw_hourglass(void)
         x, y, w, h,
         sw * 2,
         (uint16_t*)image_hourglass.pixel_data + sy * sw + sx, 0);
+}
+
+/* ---------------------------------------------------------------- 屏幕方向选择（S2）
+ * 用户要求（2026-10-09 逐字）："第一次使用，弹窗，让用户选择横还是竖，要说明设置哪里可以重选。
+ * 默认是竖屏。"  设计见 docs/SPEC-S2-ORIENTATION-SWITCH.md。
+ *
+ * 实现上**完全复用现成的对话框机制**（title + options + MESSAGE 信息行），因此没有任何新的绘制代码，
+ * 也就没有新的视觉风险。id 故意取 0/1 与 RG_ORIENT_PORTRAIT/LANDSCAPE 一致 —— 这样无论
+ * rg_gui_dialog 返回的是"选项 id"还是"行下标"，前两行的取值都相同，不存在口径歧义。 */
+
+int rg_gui_dialog_orientation(void)
+{
+    const rg_gui_option_t options[] = {
+        {RG_ORIENT_PORTRAIT,  _("Portrait (default)"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        {RG_ORIENT_LANDSCAPE, _("Landscape"),          NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        RG_DIALOG_SEPARATOR,
+        {0, _("You can change this later in"),   NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, _("Settings > Screen orientation"),  NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        RG_DIALOG_END,
+    };
+
+    intptr_t selected = rg_gui_dialog(_("Choose screen orientation"), options, 0);
+    return (selected == RG_ORIENT_LANDSCAPE) ? RG_ORIENT_LANDSCAPE : RG_ORIENT_PORTRAIT;
+}
+
+/* 二次选择时的重启确认（用户 2026-10-08 拍板②：必须告知会重启 / 请先存档 / 点 OK 才继续）。
+ * 返回 true = 用户点了"Restart & switch"。 */
+bool rg_gui_dialog_orientation_confirm(void)
+{
+    const rg_gui_option_t options[] = {
+        {0, _("Cancel"),            NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        {1, _("Restart & switch"),  NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        RG_DIALOG_SEPARATOR,
+        {0, _("The device will restart now."), NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, _("Save your game before continuing!"), NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        RG_DIALOG_END,
+    };
+
+    return rg_gui_dialog(_("Switching screen orientation"), options, 0) == 1;
 }
 
 void rg_gui_draw_status_bars(void)

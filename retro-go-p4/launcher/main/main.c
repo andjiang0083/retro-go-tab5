@@ -13,6 +13,7 @@
 #include "bookmarks.h"
 #include "browser.h"
 #include "gui.h"
+#include "rg_orient.h"            /* S2 屏幕方向：NVS 契约 + 引导槽切换 */
 #include "rg_touch_overlay.h"   /* 触摸覆盖层内容代际号（调换按钮 → 立刻重画，见 retro_loop） */
 #include "webui.h"
 #include "updater.h"
@@ -45,6 +46,34 @@ static rg_gui_event_t toggle_tabs_cb(rg_gui_option_t *option, rg_gui_event_t eve
 
         rg_gui_dialog(option->label, options, 0);
     }
+    return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t orientation_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_ENTER)
+    {
+        int current = rg_orient_get();
+        int chosen = rg_gui_dialog_orientation();
+
+        if (chosen == current)
+        {
+            rg_orient_set(chosen);   /* 重选同方向：只记录，不重启 */
+        }
+        else if (rg_gui_dialog_orientation_confirm())
+        {
+            if (!rg_orient_restart_into(chosen))
+                rg_gui_alert(_("Screen orientation"),
+                    _("The other orientation is not installed yet.\n"
+                      "Flash the dual-slot image first (see SPEC S2 §3)."));
+        }
+        /* 用户取消也不例外：下次进菜单还能再选，不在这里强行改状态 */
+    }
+
+    /* 名字直接取。注意 `rg_gui_option_t.value` 是**调用方提供的指针**（对话框内部按行分配缓冲），
+     * 所以只能用 strcpy/sprintf 往里写 —— 用 sizeof(option->value) 会当成 8 字节指针长度而被 -Werror 拦下
+     * （2026-10-09 实证）。不套 _() 翻译宏：宏只吃字面量，运行期字符串要进翻译表才能本地化。 */
+    strcpy(option->value, rg_orient_name(rg_orient_get()));
     return RG_DIALOG_VOID;
 }
 
@@ -211,6 +240,19 @@ static void retro_loop(void)
     applications_init();
     bookmarks_init();
     // browser_init();
+
+    /* S2 屏幕方向 · 首次使用弹窗（用户 2026-10-09 要求：第一次使用弹窗二选一 + 写明以后在哪儿重选 + 默认竖屏）。
+     * 默认竖屏是**结构性**的：没选择时设备跑的就是 factory 槽 = 竖屏；这里只负责"问一次并把选择记下来"，
+     * 选横屏则需要切到 ota_0 槽（双槽镜像落地后才真正生效，未落地时 rg_orient_restart_into 会安全失败）。 */
+    if (rg_orient_is_first_boot())
+    {
+        int chosen = rg_gui_dialog_orientation();
+        rg_orient_set(chosen);              /* 无论选哪个都记下 —— 弹窗只出现一次 */
+        if (!rg_orient_running_is(chosen) && rg_gui_dialog_orientation_confirm())
+            rg_orient_restart_into(chosen);
+        gui_update_theme();
+        rg_settings_commit();
+    }
 
 #ifdef RG_ENABLE_NETWORKING
     rg_network_init();
@@ -453,7 +495,9 @@ static void options_handler(rg_gui_option_t *dest)
         #ifdef RG_ENABLE_NETWORKING
         {0, _("File server"),  "-", RG_DIALOG_FLAG_NORMAL, &webui_switch_cb},
         #endif
-        {0, _("Startup app"),  "-", RG_DIALOG_FLAG_NORMAL, &startup_app_cb},
+        {0, _("Startup app"),   "-", RG_DIALOG_FLAG_NORMAL, &startup_app_cb},
+        /* S2 屏幕方向：用户要求"要说明设置哪里可以重选"—— 这一项就是那句提示指向的地方 */
+        {0, _("Screen orientation"), "-", RG_DIALOG_FLAG_NORMAL, &orientation_cb},
         RG_DIALOG_END,
     };
     memcpy(dest, options, sizeof(options));

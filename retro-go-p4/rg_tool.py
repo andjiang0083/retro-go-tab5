@@ -97,6 +97,21 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
         table_ota += 1
         image_data += data + b"\xFF" * (part_size - len(data))
 
+    # 横竖屏双槽（Tab5/ESP32-P4，2026-10-09）：追加"同名 + `_l` 后缀"的横屏槽**声明**。
+    # 表里必须有（app 按标签查找：rg_system.c:1133），但**不追加镜像数据** —— 横屏 app 由
+    # build-tab5-skin.sh 另一趟构建产出后按偏移单独写入（见 tools/flash-tab5-dual.sh），
+    # 这样 merged 镜像仍是 3.8MB（不会被撑到 7.5MB），常规刷机路径不变。
+    # ⚠ 必须在这里加，而不是改 partitions.csv：后者是本文件 build_image()/build_app()
+    #   每次构建重新生成的**产物**，手工编辑会被静默覆盖（ESP32-经验沉淀.md §233 实证）。
+    # ⚠ 槽尺寸/偏移必须与 tools/partitions-dual-tab5.csv 完全一致，否则设备端表与
+    #   parttool/otatool 看到的表会不一致。
+    if img_format == "esp32p4":
+        land_off = len(image_data)
+        for _app, _size in (("launcher", 0x100000), ("retro-core", 0x180000), ("gbsp", 0x140000)):
+            table_csv.append("%s_l, app, ota_%d, %d, %d" % (_app, table_ota, land_off, _size))
+            table_ota += 1
+            land_off += _size
+
     if fatsize:
         # Use "vfs" label, same as MicroPython, in case the storage is to be shared with a MicroPython install
         table_csv.append("vfs, data, fat, %d, %s" % (len(image_data), fatsize))

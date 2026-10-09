@@ -126,6 +126,10 @@ void rg_gui_draw_keyboard(const rg_keyboard_layout_t *map, size_t cursor);
 void rg_gui_draw_message(const char *format, ...);
 
 intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options, int selected_index);
+
+/* 屏幕方向选择（S2）—— 复用对话框机制，无新绘制代码。见 docs/SPEC-S2-ORIENTATION-SWITCH.md */
+int rg_gui_dialog_orientation(void);            /* 返回 RG_ORIENT_PORTRAIT / RG_ORIENT_LANDSCAPE */
+bool rg_gui_dialog_orientation_confirm(void);   /* true = 用户点了 "Restart & switch" */
 bool rg_gui_confirm(const char *title, const char *message, bool default_yes);
 void rg_gui_alert(const char *title, const char *message);
 char *rg_gui_file_picker(const char *title, const char *path, bool (*validator)(const char *path), bool none_option);
