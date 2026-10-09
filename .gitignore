@@ -42,3 +42,4 @@ backup/
 # 构建产物：rg_tool.py 为了绕过 esp-idf 的检查而生成的占位分区表（不属于源码）
 partitions.csv
 partitions.bin
+.buildlogs/
