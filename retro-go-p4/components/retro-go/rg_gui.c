@@ -668,6 +668,11 @@ int rg_gui_dialog_orientation(void)
     };
 
     intptr_t selected = rg_gui_dialog(_("Choose screen orientation"), options, 0);
+    /* ⚠ 取消必须原样传出去：早先写成 `(selected == LANDSCAPE) ? LANDSCAPE : PORTRAIT`，
+     * 于是"按返回键取消"会被伪装成"选了竖屏" ⇒ 横屏下取消会弹出"要切回竖屏吗"的确认框（2026-10-09 实机暴露）。
+     * 用 RG_ORIENT_UNSET(-1) 当取消信号，调用方一律按"什么都没做"处理。 */
+    if (selected == RG_DIALOG_CANCELLED)
+        return RG_ORIENT_UNSET;
     return (selected == RG_ORIENT_LANDSCAPE) ? RG_ORIENT_LANDSCAPE : RG_ORIENT_PORTRAIT;
 }
 
