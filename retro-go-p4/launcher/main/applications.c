@@ -687,6 +687,9 @@ void applications_init(void)
     application("Nintendo Gameboy", "gb", "gb gbc zip", "retro-core", 0);
     application("Nintendo Gameboy Color", "gbc", "gbc gb zip", "retro-core", 0);
     application("Nintendo Gameboy Advance", "gba", "gba zip", "gbsp", 0);
+    /* NDS core（M1：显示通路，尚未接卡带；选任意 .nds 文件即可进入自检画面）
+     * 分区存在性由 rg_system_have_app 运行时判断：单 app 安装形态下不会出现。 */
+    application("Nintendo DS", "nds", "nds zip", "nds", 0);
     application("Nintendo Game & Watch", "gw", "gw", "retro-core", 0);
     // application("Sega SG-1000", "sg1", "sms sg sg1", "retro-core", 0);
     application("Sega Master System", "sms", "sms sg zip", "retro-core", 0);

@@ -22,6 +22,9 @@ PROJECT_APPS = {
   'gwenesis':     [0, 0, 983040],
   'fmsx':         [0, 0, 589824],
   'gbsp':         [0, 0, 589824],
+  # NDS core（M1：双屏显示通路；卡带/BIOS 未接）。尺寸自动扩容：见 build_image() 的
+  # max(PROJECT_APPS[app][2], ceil(len(data)/0x10000)*0x10000)，故此处给最小值即可。
+  'nds':          [0, 0, 983040],
 }
 # PROJECT_APPS = {}
 # for t in glob.glob("*/CMakeLists.txt"):
