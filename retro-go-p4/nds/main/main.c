@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../components/nds-core/include/nds_core.h"
+#include "nds_core.h"   /* 核心是 IDF 组件（EXTRA_COMPONENT_DIRS 指向 tab5-nds/core），按组件头名引入 */
 
 #define NDS_AUDIO_RATE 32000 /* ES8388 I2S，与 gbsp 同管线（M4） */
 
