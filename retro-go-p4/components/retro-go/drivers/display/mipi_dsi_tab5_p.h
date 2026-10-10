@@ -88,8 +88,10 @@ static esp_lcd_panel_handle_t tab5_panel = NULL;
 /* ⚠ 这两个缓冲必须 128 字节对齐：PPA 硬件路径有硬性要求（见下方 lcd_send_buffer 的条件判断），
  * 不对齐时它会**静默**退回 CPU 转置 —— 2026-09-25 就是栽在这里：日志打了 "PPA SRM ready"，
  * 实际每次都在走 CPU 路径，白跑一整轮 A/B。链接后的地址是 0x...bbc（低 7 位非零），所以必须显式声明。 */
-static uint16_t tab5_line_buffer[LCD_BUFFER_LENGTH] __attribute__((aligned(128)));  /* retro-go 收集逻辑行用 */
-static uint16_t tab5_scratch[LCD_BUFFER_LENGTH] __attribute__((aligned(128)));      /* 转置后的物理块 */
+/* 0.4.9：长度必须编译期 ⇒ 按**两方向最大值**分配（LCD_BUFFER_LENGTH_MAX，见 targets/tab5/geom.h）。
+ * 实际使用长度仍按当前方向取（LCD_BUFFER_LENGTH / rg_geom()->lcd_rows）。 */
+static uint16_t tab5_line_buffer[LCD_BUFFER_LENGTH_MAX] __attribute__((aligned(128)));  /* retro-go 收集逻辑行用 */
+static uint16_t tab5_scratch[LCD_BUFFER_LENGTH_MAX] __attribute__((aligned(128)));  /* 转置后的物理块 */
 
 /* E3（2026-09-25）：源数据先**整块顺序读**进片内 SRAM，再从 SRAM 转置。
  * 依据 BW2 打点：同样的"每 1440B 碰 64B"模式，打在 PSRAM 上只有 28.2MB/s，

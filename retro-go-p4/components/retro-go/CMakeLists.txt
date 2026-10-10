@@ -63,6 +63,12 @@ if(NOT DEFINED RG_TAB5_ORIENTATION)
     set(RG_TAB5_ORIENTATION 0)
 endif()
 component_compile_options(-DRG_TAB5_ORIENTATION=${RG_TAB5_ORIENTATION})
+# PPA 传输模式实验开关（Tab5 横屏专用）：0 = 关（默认）1 = 非阻塞 2 = BLOCKING 对照。
+# ⚠ 同上一行：本组件不走 rg_setup_compile_options()，两处副本都要加（另一处在 base.cmake）。
+if(NOT DEFINED RG_TAB5_PPA_MODE)
+    set(RG_TAB5_PPA_MODE 0)
+endif()
+component_compile_options(-DRG_TAB5_PPA_MODE=${RG_TAB5_PPA_MODE})
 # ⚠ 本组件不走 rg_setup_compile_options()（那是个宏，只对调用它的组件生效），单 app 形态的
 # 宏必须在下面这组里单独加 —— 否则 rg_system.c 编进去的还是老版本，表现为菜单里游戏列表全空。
 if(RG_SINGLE_APP)

@@ -33,6 +33,18 @@
 /* 当前**实际**方向（读运行分区标签，不读 NVS）。 */
 int rg_orient_running(void);
 
+/* ── 单 app 形态（0.4.9）的方向真值 ─────────────────────────────────────────────
+ * 双 app 形态："实际方向"= 运行分区标签（上面那套）。
+ * 单 app 形态：**没有第二个分区可切**，方向改成运行时属性，权威值放 NVS（`rgapp/orient`）。
+ *   关键约束：它必须在**显示初始化之前**可读（显示要用它选后端与几何），
+ *   而 SD 上的 `ui/orient` 那时还没挂载 ⇒ 所以不能拿 SD 当真值。
+ *   于是分工：NVS = 权威；SD `ui/orient` = 设置界面的载体 + 老版本迁移源；
+ *   `rg_orient_set()` 两个都写，不会分叉。惰性初始化 + 缓存，任何时机调用都安全。 */
+int  rg_orient_active(void);             /* 当前生效方向（显示层/几何/driver 分发专用） */
+void rg_orient_active_set(int value);    /* 写 NVS（单 app）+ 缓存；不切分区、不重启 */
+void rg_orient_sync_from_settings(void); /* 单 app：把老版本的 SD 选择迁进 NVS（一次性，可能重启一次） */
+bool rg_orient_is_single_app(void);      /* 本二进制是不是单 app 形态（供日志/UI 判断） */
+
 /* 当前运行的 app 是不是这个方向。 */
 bool rg_orient_running_is(int value);
 

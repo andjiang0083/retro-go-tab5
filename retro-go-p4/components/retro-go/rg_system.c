@@ -668,6 +668,12 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     }
 
     rg_settings_init(enterRecoveryMode || showCrashDialog);
+
+    /* 单 app 方向的**一次性迁移**（0.4.9）：老版本把用户选择存在 SD（ui/orient），而单 app 在
+     * **显示初始化时**就要知道方向（显示层早于存储层）⇒ 那里只能读 NVS。所以在这里（存储层已起来）
+     * 把 SD 里的选择搬进 NVS；若与本次启动实际用的方向不一致，会重启一次让显示跟上
+     * （NVS 已写 ⇒ 只可能发生一次，不会重启循环）。双 app 形态下本函数是空操作。 */
+    rg_orient_sync_from_settings();
     app.configNs = rg_settings_get_string(NS_BOOT, SETTING_BOOT_NAME, app.configNs);
     app.bootArgs = rg_settings_get_string(NS_BOOT, SETTING_BOOT_ARGS, app.bootArgs);
     app.bootFlags = rg_settings_get_number(NS_BOOT, SETTING_BOOT_FLAGS, app.bootFlags);

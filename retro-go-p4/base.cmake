@@ -14,9 +14,16 @@ macro(rg_setup_compile_options)
         set(RG_TAB5_ORIENTATION 0)
     endif()
 
+    # PPA 传输模式实验开关（Tab5 横屏专用）：0 = 关（默认）1 = 非阻塞 2 = BLOCKING 对照。
+    # 同样必须每次显式传（理由同上）。⚠ 另一处副本在 components/retro-go/CMakeLists.txt。
+    if(NOT DEFINED RG_TAB5_PPA_MODE)
+        set(RG_TAB5_PPA_MODE 0)
+    endif()
+
     component_compile_options(
         -D${RG_BUILD_TARGET}=1
         -DRG_TAB5_ORIENTATION=${RG_TAB5_ORIENTATION}
+        -DRG_TAB5_PPA_MODE=${RG_TAB5_PPA_MODE}
         -DRETRO_GO=1
         -fjump-tables -ftree-switch-conversion
         ${ARGV}

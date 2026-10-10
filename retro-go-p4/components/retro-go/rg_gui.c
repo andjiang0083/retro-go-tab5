@@ -1801,33 +1801,52 @@ void rg_gui_options_menu(void)
         {0, _("Launcher options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},
         RG_DIALOG_END,
     };
-    const rg_gui_option_t game_options[] = {
-        /* 【锁缩放的 target 不出现这两项】横屏下画面必须恒定 ZOOM 3x（720×480 居中），
-         * 否则按键会压到游戏画面上 —— 见 targets/tab5/config.h 的 RG_DISPLAY_LOCK_SCALING。 */
-        #if !RG_DISPLAY_LOCK_SCALING
+    /* 0.4.9：Scaling/Factor 两项要不要出现，得**按当前方向**决定（横屏锁定缩放 ⇒ 不出现），
+     * 而同一个镜像要装两个方向 ⇒ 原来那个 `#if !RG_DISPLAY_LOCK_SCALING` 必须改成运行时选表。
+     * 写法：共享尾巴用宏只写一份（抄两份必然漂移），两张表各自动静态初始化，运行时选指针。 */
+    #define RG_GAME_OPTIONS_TAIL                                                                     \
+        {0, _("Filter"),        "-", RG_DIALOG_FLAG_NORMAL, &filter_update_cb},                      \
+        {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},                      \
+        {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},                     \
+        /* {0, _("Misc options"),  NULL, RG_DIALOG_FLAG_NORMAL, &misc_options_cb}, */                \
+        /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备               \
+         * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。     \
+         * 透明度仍可调，它不会让人失去输入。 */                                                      \
+        RG_GAME_OPTIONS_TOUCH                                                                        \
+        {0, _("Emulator options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},                    \
+        RG_DIALOG_END
+
+    #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    #define RG_GAME_OPTIONS_TOUCH                                                                 \
+        {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},                  \
+        {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
+    #else
+    #define RG_GAME_OPTIONS_TOUCH
+    #endif
+
+    /* 【锁缩放的 target 不出现这两项】横屏下画面必须恒定 ZOOM（按键不压画面）—— 见
+     * targets/tab5/geom.h 的 lock_scaling（横屏 1 / 竖屏 0）。
+     * ⚠ 这两个数组**不能加 static**：表里的 _("…") 是 rg_gettext() 调用，不是常量表达式，
+     *   而 C 要求静态初始化必须是常量 —— 原代码那个数组本来就不是 static（C99 允许非常量初始化）。 */
+    const rg_gui_option_t game_options_locked[] = {
+        RG_GAME_OPTIONS_TAIL,
+    };
+    const rg_gui_option_t game_options_free[] = {
         {0, _("Scaling"),       "-", RG_DIALOG_FLAG_NORMAL, &scaling_update_cb},
         {0, _("Factor"),        "-", RG_DIALOG_FLAG_HIDDEN, &custom_zoom_cb},
-        #endif
-        {0, _("Filter"),        "-", RG_DIALOG_FLAG_NORMAL, &filter_update_cb},
-        {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},
-        {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},
-        // {0, _("Misc options"),  NULL, RG_DIALOG_FLAG_NORMAL, &misc_options_cb},
-        #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-        /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备
-         * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
-         * 透明度仍可调，它不会让人失去输入。 */
-        {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
-        {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
-        #endif
-        {0, _("Emulator options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},
-        RG_DIALOG_END,
+        RG_GAME_OPTIONS_TAIL,
     };
+    const rg_gui_option_t *game_options = rg_geom()->lock_scaling ? game_options_locked : game_options_free;
+    /* 被锁定时少两项 ⇒ 条数不同，后面 memcpy 必须用运行时条数（不能再用 sizeof(game_options)）。 */
+    const size_t game_options_count = RG_COUNT(game_options_free) - (rg_geom()->lock_scaling ? 2 : 0);
+    #undef RG_GAME_OPTIONS_TAIL
+    #undef RG_GAME_OPTIONS_TOUCH
 
     const rg_app_t *app = rg_system_get_app();
     if (app->isLauncher)
         memcpy(options + get_dialog_items_count(options), misc_options, sizeof(misc_options));
     else
-        memcpy(options + get_dialog_items_count(options), game_options, sizeof(game_options));
+        memcpy(options + get_dialog_items_count(options), game_options, game_options_count * sizeof(rg_gui_option_t));
 
     rg_audio_set_mute(true);
 

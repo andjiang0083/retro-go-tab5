@@ -54,12 +54,120 @@ static void label_to_base(const char *label, char *out)
     out[len] = 0;
 }
 
-int rg_orient_running(void)
+/* ── 单 app 形态（0.4.9）：方向真值改放 NVS ────────────────────────────────────
+ * 为什么不用 rg_settings：显示初始化**早于**存储层 —— 那时 SD 还没挂载、ui.json 读不到，
+ * 而显示必须用方向来选后端与几何。nvs_flash_init() 幂等（与 rg_system.c 的 RG_SINGLE_APP
+ * 待续标志同一套做法），任何时机调用都安全。 */
+#if defined(ESP_PLATFORM)
+#include "nvs.h"
+#endif
+#define ORIENT_NVS_NS   "rgapp"
+#define ORIENT_NVS_KEY  "orient"
+
+static int orient_active_cache = -2;   /* -2 = 未读 */
+
+bool rg_orient_is_single_app(void)
 {
+#if defined(RG_SINGLE_APP)
+    return true;
+#else
+    return false;
+#endif
+}
+
+static bool orient_nvs_read(int *out)
+{
+#if defined(RG_SINGLE_APP) && defined(ESP_PLATFORM)
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(ORIENT_NVS_NS, NVS_READONLY, &h) != ESP_OK)
+        return false;
+    esp_err_t err = nvs_get_u8(h, ORIENT_NVS_KEY, &v);
+    nvs_close(h);
+    if (err != ESP_OK)
+        return false;
+    *out = (int)v;
+    return true;
+#else
+    (void)out;
+    return false;
+#endif
+}
+
+static void orient_nvs_write(int value)
+{
+#if defined(RG_SINGLE_APP) && defined(ESP_PLATFORM)
+    nvs_handle_t h;
+    if (nvs_open(ORIENT_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
+        return;
+    nvs_set_u8(h, ORIENT_NVS_KEY, (uint8_t)value);
+    nvs_commit(h);
+    nvs_close(h);
+#else
+    (void)value;
+#endif
+}
+
+int rg_orient_active(void)
+{
+    if (orient_active_cache != -2)
+        return orient_active_cache;
+#if defined(RG_SINGLE_APP)
+    /* 单 app：NVS 权威。没有记录 ⇒ 默认**竖屏**（用户 2026-10-09 定："默认是竖屏"；
+     * 首次开机的弹窗会调 rg_orient_set() 把它落进 NVS）。 */
+    int v;
+    if (orient_nvs_read(&v) && orient_valid(v))
+        return (orient_active_cache = v);
+    return (orient_active_cache = RG_ORIENT_PORTRAIT);
+#else
+    /* 双 app：运行分区标签就是真值（零依赖、不可能与事实不一致） */
     const esp_partition_t *running = esp_ota_get_running_partition();
     if (!running)
-        return RG_ORIENT_UNSET;
-    return label_is_landscape(running->label) ? RG_ORIENT_LANDSCAPE : RG_ORIENT_PORTRAIT;
+        return RG_ORIENT_UNSET;           /* 不缓存异常态 */
+    return (orient_active_cache = label_is_landscape(running->label) ? RG_ORIENT_LANDSCAPE : RG_ORIENT_PORTRAIT);
+#endif
+}
+
+void rg_orient_active_set(int value)
+{
+    if (!orient_valid(value))
+        return;
+    orient_active_cache = value;
+    orient_nvs_write(value);
+}
+
+/* 单 app 一次性迁移：老版本把用户选择存在 SD（ui/orient）上，NVS 里还没有值 ⇒ 搬过来。
+ * ⚠ 只能在**存储层起来之后**调用（rg_system_init 内），因为它要读 SD。 */
+void rg_orient_sync_from_settings(void)
+{
+#if defined(RG_SINGLE_APP)
+    int v;
+    if (orient_nvs_read(&v) && orient_valid(v))
+        return;                                  /* 已有权威值，什么都不做 */
+    int sd = rg_orient_get();                    /* 读 SD 的 ui/orient（-1 = 未选过） */
+    if (!orient_valid(sd))
+    {
+        orient_nvs_write(rg_orient_active());    /* 落一次默认值，以后不再进本分支 */
+        return;
+    }
+    orient_nvs_write(sd);
+    if (sd != rg_orient_active())
+    {
+        /* 迁来的选择与本次启动实际用的不一致 ⇒ 重启一次让显示跟上。
+         * NVS 已写好 ⇒ 只可能发生这一次（不会重启循环）。 */
+        RG_LOGI("orient: migrated choice %s from settings -> restart to apply\n", rg_orient_name(sd));
+        rg_gui_draw_restart_notice("Applying display orientation...");
+        vTaskDelay(pdMS_TO_TICKS(450));
+        esp_restart();
+    }
+    RG_LOGI("orient: migrated choice %s from settings (already active)\n", rg_orient_name(sd));
+#endif
+}
+
+int rg_orient_running(void)
+{
+    /* 语义统一：双 app = 运行分区标签；单 app = NVS 权威值（没有第二个分区可"运行在"）。 */
+    return rg_orient_active();
 }
 
 bool rg_orient_running_is(int value)
@@ -92,6 +200,13 @@ void rg_orient_set(int value)
     rg_settings_set_number(ORIENT_SECTION, ORIENT_KEY, value);
     rg_settings_commit();
     orient_cached = value;
+#if defined(RG_SINGLE_APP)
+    /* 单 app：NVS 才是显示层读的权威值 ⇒ 必须一起写，否则会出现"记录说横屏、显示还是竖屏"。
+     * ⚠ 双 app 形态**不能**碰 orient_active_cache：那里的"实际方向"是运行分区标签，
+     *   与"用户选择"是两个不同的东西（选择了横屏但还没重启时，实际仍跑竖屏）。 */
+    orient_nvs_write(value);
+    orient_active_cache = value;
+#endif
     RG_LOGI("orient: saved choice %s\n", rg_orient_name(value));
 }
 
@@ -121,7 +236,14 @@ void rg_orient_label_for(const char *base, int orient, char *out)
 
 void rg_orient_app_label(const char *base, char *out)
 {
+#if defined(RG_SINGLE_APP)
+    /* 单 app 形态（0.4.9）：**没有**第二个分区、也没有 `_l` 后缀分区 —— 两个方向共用同一个 app。
+     * 这里必须原样返回基名：加 `_l` 是找不到分区的（调用点虽有回退，但会刷 "not present" 告警，
+     * 也与"标签必须是真实存在的分区"这个前提相悖；见 rg_system.c 两处调用点的注释）。 */
+    snprintf(out, RG_ORIENT_LABEL_MAX, "%s", base);
+#else
     rg_orient_label_for(base, rg_orient_running(), out);
+#endif
 }
 
 bool rg_orient_restart_into(int value)
@@ -129,7 +251,25 @@ bool rg_orient_restart_into(int value)
     if (!orient_valid(value))
         return false;
 
+#if defined(RG_SINGLE_APP)
+    /* 单 app 形态（0.4.9）：**没有第二个分区可切** —— 把方向写进 NVS + 重启自己，
+     * 分发器（launcher/main/main.c 的 app_main）会在启动时按新方向初始化显示后端。
+     * 已经在目标方向时只记录、不重启（与双 app 形态返回值语义一致，调用方据此跳过重启确认）。 */
+    if (rg_orient_active() == value)
+    {
+        rg_orient_set(value);
+        return true;
+    }
+    rg_orient_active_set(value);   /* 先落权威值：重启后显示才会按新方向起 */
+    rg_orient_set(value);          /* 同时写设置（设置页/首启弹窗读它） */
+    RG_LOGI("orient: restart into %s (single app)\n", rg_orient_name(value));
+    rg_gui_draw_restart_notice("Restarting...");
+    vTaskDelay(pdMS_TO_TICKS(450));
+    esp_restart();
+    return true;                   /* 正常路径不会到达 */
+#else
     const esp_partition_t *running = esp_ota_get_running_partition();
+
     if (!running)
         return false;
 
@@ -169,4 +309,5 @@ bool rg_orient_restart_into(int value)
     vTaskDelay(pdMS_TO_TICKS(450));   /* 让过渡屏可见约 0.45 秒，也把日志送出串口 */
     esp_restart();
     return true;            /* 正常路径不会到达 */
+#endif  /* RG_SINGLE_APP */
 }

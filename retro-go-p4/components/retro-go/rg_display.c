@@ -40,9 +40,9 @@ static rg_surface_t *osd;
 static rg_surface_t *border;
 static bool border_foreign;   /* border 指向的是别人（rg_touch_skin.c）持有的内存面板 */
 static rg_display_t display;
-static int16_t map_viewport_to_source_x[RG_SCREEN_WIDTH + 1];
-static int16_t map_viewport_to_source_y[RG_SCREEN_HEIGHT + 1];
-static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
+static int16_t map_viewport_to_source_x[RG_GEOM_MAX_W + 1];   /* 0.4.9：按两方向最大值分配 */
+static int16_t map_viewport_to_source_y[RG_GEOM_MAX_H + 1];
+static uint32_t screen_line_checksum[RG_GEOM_MAX_H + 1];
 
 /* 驱动侧丢块的上报入口（在驱动里被调用）。丢块 = 这一块**没推到面板**，
  * 而行校验和是在推送之前就写好的 —— 不把校验和退回"未知"，这块就永久定格：
@@ -149,10 +149,11 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length);
 
 #if RG_SCREEN_DRIVER == 0 /* ILI9341/ST7789 */
 #include "drivers/display/ili9341.h"
-#elif RG_SCREEN_DRIVER == 2 /* MIPI DSI (M5Stack Tab5 / ST7123) */
-#include "drivers/display/mipi_dsi_tab5.h"
-#elif RG_SCREEN_DRIVER == 3
-#include "drivers/display/mipi_dsi_tab5_p.h"
+#elif RG_SCREEN_DRIVER == 2 || RG_SCREEN_DRIVER == 3 || RG_SCREEN_DRIVER == 4
+/* Tab5（含 0.4.9 单 app 双方向）：两份驱动同编，运行时按方向选一份。
+ * 契约：下面所有 lcd_* 调用点一字不改 —— 分发层把它们定义成 static inline 转发器。
+ * 单方向构建（双 app 形态 / 或单一方向的实验档）走的也是这里，结果与改造前逐字一致。 */
+#include "drivers/display/tab5_dispatch.h"
 #elif RG_SCREEN_DRIVER == 99
 #include "drivers/display/sdl2.h"
 #else
@@ -680,8 +681,8 @@ void rg_display_set_visible_area_for_console(const char *console_id)
 {
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
     /* 两档都是 4 个 int，用数组选档（margins 是匿名结构字段，没法整体赋值） */
-    static const int with_shld[4]    = RG_SCREEN_VISIBLE_AREA;
-    static const int without_shld[4] = RG_SCREEN_VISIBLE_AREA_NO_SHLD;
+    const int with_shld[4]    = RG_SCREEN_VISIBLE_AREA;   /* 0.4.9：可见区随方向变 ⇒ 不能 static */
+    const int without_shld[4] = RG_SCREEN_VISIBLE_AREA_NO_SHLD;   /* 0.4.9：可见区随方向变 ⇒ 不能 static */
     const int *m = rg_touch_has_shoulders(console_id) ? with_shld : without_shld;
 
     if (display.screen.margins.left == m[0] && display.screen.margins.top == m[1] &&
@@ -1042,13 +1043,15 @@ void rg_display_init(void)
         .border_file = rg_settings_get_string(NS_APP, SETTING_BORDER, NULL),
         .custom_zoom = rg_settings_get_number(NS_APP, SETTING_CUSTOM_ZOOM, RG_DISPLAY_DEFAULT_CUSTOM_ZOOM),
     };
-#if RG_DISPLAY_LOCK_SCALING
-    /* 【锁定缩放】忽略 NVS 里存过的 Scaling/Factor —— 见 targets/tab5/config.h。
-     * 横屏下"按键不压画面"完全依赖 ZOOM 3x：用户可能在上一个方向（竖屏）存过 FULL
-     * 或别的倍数，切过来若不强制回默认，画面就会被拉满、按键压到画面上。 */
-    config.scaling = RG_DISPLAY_DEFAULT_SCALING;
-    config.custom_zoom = RG_DISPLAY_DEFAULT_CUSTOM_ZOOM;
-#endif
+    /* 【锁定缩放】忽略 NVS 里存过的 Scaling/Factor —— 按**当前方向**判断（横屏锁、竖屏不锁）。
+     * 横屏下"按键不压画面"完全依赖 ZOOM：用户可能在上一个方向（竖屏）存过 FULL 或别的倍数，
+     * 切过来若不强制回默认，画面就会被拉满、按键压到画面上。
+     * 0.4.9：同一个镜像要装两个方向 ⇒ 这里是**运行时**判断（原来靠 #if 编译期分流）。 */
+    if (rg_geom()->lock_scaling)
+    {
+        config.scaling = RG_DISPLAY_DEFAULT_SCALING;
+        config.custom_zoom = RG_DISPLAY_DEFAULT_CUSTOM_ZOOM;
+    }
     display = (rg_display_t){
         .screen.real_width = RG_SCREEN_WIDTH,
         .screen.real_height = RG_SCREEN_HEIGHT,

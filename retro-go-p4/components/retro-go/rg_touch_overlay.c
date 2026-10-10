@@ -49,13 +49,11 @@
  *     在所有机型的最大游戏窗之外（GB 4x 左边界 320 / 下边界 696 都不进来），
  *     也不与右下角挪过去的系统键重叠。横屏是**定点**，不跟控制区走（见 rg_overlay_try_panel）。
  * 圆灯半径/圈宽两方向共用（12/3），横屏同样大小——面板物理像素密度一样。 */
-#if RG_SCREEN_WIDTH > RG_SCREEN_HEIGHT
-#define RG_BATT_LED_CX       140
-#define RG_BATT_LED_CY       675
-#else
-#define RG_BATT_LED_CX       360
-#define RG_BATT_LED_CY       1025    /* 兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
-#endif
+/* 0.4.9：灯位改成**运行时**表达式（同一个镜像两个方向），调用点一字不改。
+ * 判据 = 逻辑画面是不是横的（等价于原来那个 #if）。 */
+#define RG_BATT_LED_IS_LANDSCAPE (rg_geom()->w > rg_geom()->h)
+#define RG_BATT_LED_CX       (RG_BATT_LED_IS_LANDSCAPE ? 140 : 360)
+#define RG_BATT_LED_CY       (RG_BATT_LED_IS_LANDSCAPE ? 675 : 1025)    /* 竖屏兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
 #define RG_BATT_LED_R        12
 #define RG_BATT_LED_RING     3
 /* 灯条带 Y 范围不再写死：跟着 led_cy_cur 走（见 rg_batt_led_get_band），
@@ -211,7 +209,9 @@ static int skin_idx = 0;
 static char console_id[16] = "";
 /* 圆灯中心 y（物理像素）：面板与灯条带共用**同一个推导值** —— 两边各写常量必然漂移。
  * 面板装好/换皮肤时由 rg_touch_skin_led_cy() 更新。 */
-static int led_cy_cur = RG_BATT_LED_CY;
+/* 0.4.9：灯位是运行时值 ⇒ **不能在静态初始化里读**（C 要求静态初始化是常量表达式）。
+ * 先给竖屏兜底值，然后在 rg_overlay_init()（显示初始化时必被驱动调用）里按当前方向修正。 */
+static int led_cy_cur = 1025;
 
 /* ---------------------------------------------------------------- 颜色工具 */
 
@@ -619,6 +619,11 @@ void rg_overlay_init(void)
 {
     if (ready)
         return;
+
+    /* 0.4.9：灯位是运行时值（横竖各一套）⇒ 在这里按当前方向给初值 —— 静态初始化给不了
+     * （C 要求静态初始化是常量表达式）。竖屏后续会被 rg_touch_skin_led_cy() 的推导覆盖；
+     * 横屏是定点，就用这个值。 */
+    led_cy_cur = RG_BATT_LED_CY;
 
     /* ⚠ 先把用户设置读进来，再碰任何可能失败的分配：
      * 一旦下面某步失败（PSRAM 分配等）而这里没读到，visible 会停在默认 true

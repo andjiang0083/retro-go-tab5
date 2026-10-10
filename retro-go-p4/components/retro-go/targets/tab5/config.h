@@ -73,102 +73,72 @@
 #define RG_TAB5_ORIENTATION 0
 #endif
 
-#if RG_TAB5_ORIENTATION == 1
-/* ──────────────── 横屏：逻辑 1280×720（物理 720×1280，驱动 90° 映射） ──────────────── */
-#define RG_SCREEN_DRIVER            2   // 2 = MIPI DSI 横屏（mipi_dsi_tab5.h，90° 映射）
-#define RG_SCREEN_BACKLIGHT         1
-/* 逻辑分辨率 = 用户自然持机的**横向**视角；物理面板是 720×1280 竖屏，
- * 驱动按 90° 映射写入，所以这里必须是横向的那一组数。RG_SCREEN_ROTATE 保持 0。 */
-#define RG_SCREEN_WIDTH             1280
-#define RG_SCREEN_HEIGHT            720
-#define RG_SCREEN_ROTATE            0
-/* 可见区 = **GBA 游戏窗那块 720×480**（left/top/right/bottom 各 120/280）。
- * 于是 display.screen.* = 720×480：UI（启动器/菜单/模拟器 OSD）只在这块里画，
- * 四周 280/120 宽的留白专供虚拟按键 —— 与竖屏同构（竖屏也是"可见区 = 游戏带、下方留给按键"）。
- * 用户 2026-10-08 真机反馈原话："launcher 的面积大小不是全屏，应该是 gba 游戏屏幕的大小"。 */
-#define RG_SCREEN_VISIBLE_AREA      {280, 120, 280, 120}
-/* 【无肩键行机型】的画面可用区：**上边界 0、下边界 576** —— GB/GBC/NES/GG/SMS/COL/PCE/GW/Lynx
- * 这些真实手柄没有 L/R 的机型，顶部那条（L/R + L/R 调换键）本来就不存在，于是把那条空间
- * 让给画面（用户 2026-10-08 定："GB 显示框往上移就是，因为 GB 没有那个切换键"）。
- * 可见区 720×576：GB/GBC 4x(640×576) 正好吃满 → **x320..960 / y0..576**（与 rg_touch_skin.c
- * 里 GB 4x 的避让假设完全一致），底边 144 留给 SELECT/START/MENU（y622..698，留 46px 不重合）。
- * 由 rg_display_set_visible_area_for_console() 按机型选档；GBA/SNES/菜单 用上面那档。 */
-#define RG_SCREEN_VISIBLE_AREA_NO_SHLD {280, 0, 280, 144}
-#define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}
-#define RG_SCREEN_PARTIAL_UPDATES   1
-#define RG_SCREEN_INIT()
+/* 【PPA 传输模式实验开关】2026-10-10，横屏驱动（mipi_dsi_tab5.h）专用。
+ * 目的：回答"按块 PPA 慢 25 倍"里有多少是 blocking 的等待/提交成本、多少是硬件本体
+ * （方案与判据见 docs/SPEC-PPA-NONBLOCK-EXPERIMENT.md）。
+ *   0 = PPA 关（**默认，= 现状**，CPU 转置；发行/日常行为零变化）
+ *   1 = 按块 PPA **非阻塞**（事件回调 semaphore + 1 深流水线；叠加层推迟到收块之后合成）
+ *   2 = 按块 PPA **BLOCKING**（= 当年 25x 那个形态，用作"同配置对照"，把等待成本单独拆出来）
+ *   3 = 按块 PPA **BLOCKING + 叠加层合成到源缓冲**（P0 首版，2026-10-10）
+ *       ⛔ **实测失败，不要使用**：显示路径本身达标（稳态 0.91ms/块、叠加层混合只剩 44µs），
+ *          但**系统级崩塌** —— 240s 里模拟器只推进约 6 秒的量（对照档 ~225 行心跳、本档 6 行），
+ *          无 panic / 无 PPA 报错 / 无重启。已排除 UART 刷屏（SPAM=0 复现）、对齐、存储落点。
+ *          未解释的规律："每块不再碰帧缓冲"与崩塌强相关（当年 D 组同样掉到 ~2fps）。
+ *          失败注记与待验证假设见 `drivers/display/mipi_dsi_tab5.h` 里 `RG_TAB5_PPA_MODE == 3` 段。
+ *       —— 2 与 3 只差"叠加层在哪合成"这一个变量：
+ *          2 = 写面板帧缓冲（裁剪矩形=整屏 ⇒ 每块都混合全部 13 个按键，≈30.4ms/块，实测真身）
+ *          3 = 写本块的**暂存源缓冲**（原点=本块，只混合本块内的按键；随旋转被 PPA 转过去）
+ *       配套：mode 3 的暂存块换序成小端 ⇒ PPA 用 .byte_swap=false（由 src_le 自动推导）。
+ * ⚠ 只影响横屏驱动。竖屏驱动（mipi_dsi_tab5_p.h）的 PPA 路径不读这个开关。 */
+#ifndef RG_TAB5_PPA_MODE
+#define RG_TAB5_PPA_MODE 0
+#endif
 
-/* 游戏缩放：**锁定 ZOOM**，倍数由"放得下的最大整数倍"算出来（用户 2026-10-08 真机反馈：
- * "GB/GBC 可以用 4x，nes 可以放大一些，整数倍就 ok，GG/sms 也是，反正不能和按键重合就行"）。
- * 两道闸（见 rg_display.c 的 ZOOM 分支）：可用宽 = 可见区宽 720，可用高 = MAX_WINDOW_HEIGHT。
- *   GBA 240x160 → 3x(720x480)   可用宽把它限死在 3x
- *   GB/GBC/GG 160x144 → 4x(640x576)  ← 取 4 需要高度 ≥576，见下
- *   NES 256x240 → 2x(512x480)    3x 要 768 宽 > 720 → 被宽度挡死（要更大只能挪两侧按键）
- *   SMS 256x192 → 2x(512x384)    同上
- * ⚠ 与竖屏不同，横屏下**不开放用户改倍数/模式**（见 RG_DISPLAY_LOCK_SCALING）：
- *   FULL 会拉满、FIT 会让按键压到画面上。
- * ⚠ DEFAULT_CUSTOM_ZOOM 必须是**上限值 4.0**：锁定后它就是唯一入口，
- *   填 3.0 会把 GB 的 4x 一路砍回 3x（"取最大整数倍"这件事靠 min(custom, max_zoom) 实现）。 */
-#define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
-#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 4.0
-#define RG_DISPLAY_MAX_CUSTOM_ZOOM     4.0
-/* 画面窗口最大高度 —— 横屏取 **576**：这是"无肩键行机型"可见区的高度（720-144），
- * 让 GB/GBC 与 GG/SMS 能到 4x(640×576)；有肩键行的机型可见区只有 480 高，
- * 倍数由 max_zoom_w/max_zoom_h 自己算小（GBA 240x160 → min(3, 3.6) = 3x，与 480 时相同）。
- * 底边 144 是留给 SELECT/START/MENU 的（y622..698）。 */
-#define RG_DISPLAY_MAX_WINDOW_HEIGHT   576
-/* 横屏**锁定**缩放：设置里不出现 Scaling/Factor，且启动时强制回 ZOOM 3x
- * （否则用户在竖屏存过 FULL、切到横屏就会把画面拉满、按键压到画面上）。 */
-#define RG_DISPLAY_LOCK_SCALING        1
-#else
-/* ──────────────── 竖屏：逻辑 720×1280（物理同向，线性 1:1 映射） ──────────────── */
-#define RG_SCREEN_DRIVER            3   // 3 = MIPI DSI 竖屏线性（无旋转）
+/* 运行时几何表：**必须在这里 include** —— 下面这些宏（RG_SCREEN_WIDTH 等）展开成
+ * rg_geom()->…，而宏是在**调用方 TU** 展开的，所以每个用到它们的翻译单元都要先看到声明。
+ * （config.h 本身被所有 TU 经 rg_system.h 间接包含 ⇒ 挂在这里最省事。） */
+#include "geom.h"
+
+/* ════════════ 屏幕几何：**运行时按方向取**（0.4.9 单 app）════════════
+ * 原来这里是一对 `#if RG_TAB5_ORIENTATION == 1 … #else … #endif`：一次编译只装一个方向。
+ * 单 app 形态要一个镜像同时支持横竖 ⇒ 几何改成运行时值（两行表在 targets/tab5/geom.h）。
+ *
+ * 手法（关键）：下面把宏**定义成"读运行时几何的表达式"**（如 RG_SCREEN_WIDTH = rg_geom()->w），
+ * 于是所有既有调用点**一字不改**就变成运行时取值；只有少数"必须是编译期常量"的地方
+ * （数组长度 / 静态初始化）需要单独处理 —— 编译器会把它们全部报出来，不靠人找。
+ * 值本身没变：横屏那套值原样搬进 geom.h 的 [1] 行、竖屏搬进 [0] 行。
+ * 双 app 形态下 rg_orient_active() 返回运行分区标签 ⇒ 取到的值 = 改造前的编译期宏（零回归）。 */
+
+/* —— 两方向**相同**的部分，保持普通宏 —— */
 #define RG_SCREEN_BACKLIGHT         1
-/* 逻辑分辨率 = **面板原生方向**（720x1280 竖屏），驱动侧是线性 1:1 映射
- * （见 drivers/display/mipi_dsi_tab5_p.h）。
- * ⚠ 竖屏下这里是"竖着的那一组数"，不是横屏版 1280x720 的口径 ——
- *   横屏版才需要"驱动 90° 映射 + 这里填横向数"。RG_SCREEN_ROTATE 保持 0。 */
-#define RG_SCREEN_WIDTH             720
-#define RG_SCREEN_HEIGHT            1280
 #define RG_SCREEN_ROTATE            0
-/* 【竖屏分支】游戏画面锚定顶部 y=0..480（720x480 顶满宽度），
- * 下方 800px 全给虚拟按键 —— 与 touch_layout.h 的分区一致。 */
-#define RG_SCREEN_VISIBLE_AREA      {0, 0, 0, 800}  // Left, Top, Right, Bottom
-/* 【无肩键行机型】竖屏不做区分：两档取同一个值 → rg_display_set_visible_area_for_console()
- * 在竖屏下恒等（调了等于没调），行为与改动前逐字节一致。 */
-#define RG_SCREEN_VISIBLE_AREA_NO_SHLD {0, 0, 0, 800}  // Left, Top, Right, Bottom
-#define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}  // Left, Top, Right, Bottom
+#define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0}
 #define RG_SCREEN_PARTIAL_UPDATES   1
 /* 无 SPI 命令序列：面板初始化在驱动里走 Tab5 BSP（lcd_init 会调用本宏） */
 #define RG_SCREEN_INIT()
-
-/* 游戏缩放的默认值：3x 整数缩放（240x160 -> 720x480，**锚定顶部**）。
- * 这是"触摸按键不压画面"的前提：游戏区占满宽度、位于 y[0,480)，
- * 控制区是下方 y[480,1280)（键位表里所有命中区都在 y>=500）。
- * ⚠ 必须用 ZOOM：FULL 会把画面拉到满屏、FIT 会另算比例，两者都会让按键压到画面上。
- *   custom_zoom 上限也要放开（上游硬夹 2.0）。 */
+/* 游戏缩放两方向都用 ZOOM（是否锁死在设置里由 rg_geom()->lock_scaling 决定；
+ * 倍数上限两方向不同，见下）。 */
 #define RG_DISPLAY_DEFAULT_SCALING     RG_DISPLAY_SCALING_ZOOM
-/* 默认倍数与上限（用户 2026-10-07 定："所有机种都尽量用满屏幕"）。
- * ⚠ 这两个值**不是**"实际倍数"——实际倍数一律由 rg_display.c 的 ZOOM 分支算出来：
- *     max_zoom = min(屏宽/源宽, RG_DISPLAY_MAX_WINDOW_HEIGHT/源高), zoom = min(custom_zoom, max_zoom)
- *   所以把它们设大（= 不设限）才能让小屏机型用满屏（GW 96x64 → 7x = 672x448；
- *   以前卡在 4.0，它只能到 4x = 384x256，白白浪费半屏）。
- *   它们的用处只剩"用户想主动调小"这一条路径（设置里可选）。 */
-#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM 16.0
-#define RG_DISPLAY_MAX_CUSTOM_ZOOM     16.0
-/* 画面窗口的**最大高度**（px）。它 = 物理屏高 1280 − 必须留给触摸控制区的最小高度 660。
- * 换算是：底排按键底 = 1232（targets/tab5/touch_layout.h），再留 ~48px 呼吸 → 窗口底最下
- * 只到 1280-660 = 620。
- * ⚠ 必须用**物理屏高**（RG_SCREEN_HEIGHT=1280）算，不能用逻辑屏高（display.screen.height=480）
- *   —— 480 是"GBA 满宽画面"的高度，控制区长在 1280 那块屏上。拿 480 去减会得出"控制区只有
- *   48px"的荒谬结论，把 4x 一路砍到 1x（2026-10-07 的真实翻车）。
- * 它是 ZOOM 的第二道闸，于是各机型的倍数都是**算出来的**：
- *   GB/GBC 160x144 → 4x(640x576，余 704)   GBA 240x160 → 3x(720x480，余 800)   NES 256x240 → 2x(512x480) */
-#define RG_DISPLAY_MAX_WINDOW_HEIGHT   620
-/* 竖屏**不锁**缩放：用户可以在设置里把倍数调小、或改 Scaling 模式
- * （控制区在下方，按键不会被画面压到，所以允许）。横屏则必须锁 —— 见上面那段。 */
-#define RG_DISPLAY_LOCK_SCALING        0
-#endif /* RG_TAB5_ORIENTATION */
+
+/* —— 按方向变化的 9 项：值在 targets/tab5/geom.h —— */
+/* ⚠ RG_SCREEN_DRIVER **必须保持编译期常量** —— 它被 rg_display.c 用 `#if` 选"包含哪份驱动头"。
+ * 双 app：2 = 横 / 3 = 竖（与改造前逐字相同）；单 app：4 = "两份都编、运行时由分发层选"。
+ * 运行时想知道"当前生效的是哪份后端"，用 rg_geom()->driver（= 2 或 3）。 */
+#if defined(RG_SINGLE_APP)
+#define RG_SCREEN_DRIVER               4
+#elif RG_TAB5_ORIENTATION == 1
+#define RG_SCREEN_DRIVER               2
+#else
+#define RG_SCREEN_DRIVER               3
+#endif
+#define RG_SCREEN_WIDTH                (rg_geom()->w)
+#define RG_SCREEN_HEIGHT               (rg_geom()->h)
+#define RG_SCREEN_VISIBLE_AREA         {rg_geom()->vis.l, rg_geom()->vis.t, rg_geom()->vis.r, rg_geom()->vis.b}
+#define RG_SCREEN_VISIBLE_AREA_NO_SHLD {rg_geom()->vis_ns.l, rg_geom()->vis_ns.t, rg_geom()->vis_ns.r, rg_geom()->vis_ns.b}
+#define RG_DISPLAY_DEFAULT_CUSTOM_ZOOM (rg_geom()->def_custom_zoom)
+#define RG_DISPLAY_MAX_CUSTOM_ZOOM     (rg_geom()->max_custom_zoom)
+#define RG_DISPLAY_MAX_WINDOW_HEIGHT   (rg_geom()->max_window_h)
+#define RG_DISPLAY_LOCK_SCALING        (rg_geom()->lock_scaling)
 
 
 /****************************************************************************
@@ -205,11 +175,13 @@
  * 32 行一块 = 46KB，正好装进 48KB 的片内 SRAM 暂存(tab5_stage)，推送次数减半。
  * ⚠ 横屏不能用 32：块大小 = 宽×行数×2B，1280×32×2B = 80KB **超过 48KB 暂存**；
  *   横屏取 16 行 = 40KB（老线就是这个值）。 */
-#if RG_TAB5_ORIENTATION == 1
-#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 16)
-#else
-#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * 32)
-#endif
+/* 每帧"算一块推一块"的块大小（像素）= 宽 × 行数，行数按方向取（竖 32 / 横 16；值在 geom.h）。
+ * 为什么横屏不能 32：块 = 宽×行数×2B，1280×32×2B = 80KB **超过 48KB 片内暂存**（竖屏 720×32×2B
+ * = 46KB 才正好装下）；横屏取 16 行 = 40KB。历史上 16 行块导致重试风暴（DMA2D 丢包、224ms/秒），
+ * 所以竖屏保持 32、横屏保持 16 —— 与改造前逐字相同。
+ * ⚠ 驱动里两个缓冲是**静态数组**（长度必须编译期已知）⇒ 按两方向最大值分配
+ *   （LCD_BUFFER_LENGTH_MAX，见 geom.h），实际使用长度由这里按方向给。 */
+#define LCD_BUFFER_LENGTH (RG_SCREEN_WIDTH * rg_geom()->lcd_rows)
 
 /* GUI 字体放大倍数：默认字体 VeraBold11 渲染高度 13px，在 1280x720 上太小（实机反馈）。
  * 3 倍 = 39px。改这里即可调整（2 = 26px，3 = 39px）。 */
@@ -219,21 +191,37 @@
 /* 键位表抽到 touch_layout.h —— 命中判定 / 可视层绘制 / PC 预览三方共用一份，
  * 抄成两份必然漂移（表现：画的和点的不是一回事）。改键位改那个文件。 */
 #include "touch_layout.h"
-#if RG_TAB5_ORIENTATION == 0
-/* 【竖屏】触摸坐标换算覆盖：
- * rg_input.c 默认实现是横屏的 90° 逆映射（lx=py, ly=phys_w-1-px）。
- * 竖屏下显示驱动的映射是恒等的（px=lx, py=ly），触摸必须同向，否则
- * 手指位置会被换算到旋转后的逻辑点、落在命中区之外 —— 表现就是
- * 「按键画出来了但按不动」。 */
-#define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly) \
-    do { (lx) = (px); (ly) = (py); } while (0)
-#else
-/* 【横屏】**不覆盖** —— 用 rg_input.c 的默认 90° 逆映射，与驱动写入方向同源
- * （老线 0.2/0.3 就是这条路，真机验证过）。 */
-#endif
+/* 触摸坐标换算：改成**运行时按方向分支**（0.4.9 单 app 一个镜像要装两个方向）。
+ * 两个分支的算式分别与原实现逐字相同：
+ *   横屏 = rg_input.c 的默认 90° 逆映射（lx=py, ly=phys_w-1-px，与驱动写入方向同源，
+ *          老线 0.2/0.3 真机验证过）；
+ *   竖屏 = 恒等映射（显示驱动就是线性的）—— 不同向的话手指会被换算到旋转后的逻辑点、
+ *          落在命中区之外，表现就是「按键画出来了但按不动」。
+ * 调用点（rg_input.c 的 4 处）一字不改。 */
+#define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly)                                  \
+    do {                                                                            \
+        if (rg_orient_active() == RG_ORIENT_LANDSCAPE) {                            \
+            (lx) = (py);                                                            \
+            (ly) = (RG_TOUCH_PHYS_W - 1) - (px);                                    \
+        } else {                                                                    \
+            (lx) = (px);                                                            \
+            (ly) = (py);                                                            \
+        }                                                                           \
+    } while (0)
 
-/* 键位表按方向选（两张表的定义都在 touch_layout.h，单一数据源不拆文件） */
-#define RG_GAMEPAD_TOUCH_MAP RG_TAB5_TOUCH_MAP
+/* 键位表：两张表的定义都在 touch_layout.h（单一数据源不拆文件）。
+ * ⚠ 0.4.9：选表从编译期改成**运行时**（单 app 一个镜像两个方向）——
+ *   RG_GAMEPAD_TOUCH_MAP     = 主表（= 本次编译方向那张，双 app 形态行为逐字不变）
+ *   RG_GAMEPAD_TOUCH_MAP_ALT = 备表（另一个方向）
+ *   rg_input.c 在启动时按 rg_orient_active() 把对应那张装进可变数组 keymap_touch[]，
+ *   之后所有既有调用点（含按数组名展开的 UPDATE_GLOBAL_MAP 宏）都不用改。 */
+#if RG_TAB5_ORIENTATION == 1
+#define RG_GAMEPAD_TOUCH_MAP     RG_TAB5_TOUCH_MAP_LANDSCAPE
+#define RG_GAMEPAD_TOUCH_MAP_ALT RG_TAB5_TOUCH_MAP_PORTRAIT
+#else
+#define RG_GAMEPAD_TOUCH_MAP     RG_TAB5_TOUCH_MAP_PORTRAIT
+#define RG_GAMEPAD_TOUCH_MAP_ALT RG_TAB5_TOUCH_MAP_LANDSCAPE
+#endif
 /* 若真机上触摸方向不对（点左选中右之类），改这个变换，不用动读点逻辑。
  * 物理面板两种方向都一样：720×1280。 */
 #define RG_TOUCH_PHYS_W 720
@@ -295,12 +283,20 @@
 /* 2026-10-06 验证完成：关闭自动按键脚本（空字符串 = 关闭），恢复真机手动输入 */
 #define RG_TEST_KEYS_DEVICE ""
 #define RG_TEST_NO_AUTOSAVE 0   /* 恢复常规存档行为 */
+/* 2026-10-10 PPA 非阻塞实验用过的静音钩子：**默认 0**（实验期曾置 1）。
+ * 保留定义而非删除，是因为 rg_audio.c 里有 `#if RG_TEST_MUTE` 引用 —— 宏不存在会变成
+ * 隐式 0，读代码的人分不清"故意的"还是"漏了的"。 */
+#ifndef RG_TEST_MUTE
+#define RG_TEST_MUTE 0
+#endif
 #define RG_TEST_FLUSH_CACHE 0
 
 /* 2026-10-06 临时：真机"输入 vs 显示"分辨探针（DIAG_CURSOR/DIR/FB）。验证后删除。 */
 /* 2026-10-06 无人值守测试用的诊断探针，验证完毕，默认关闭（要复现再打开）。 */
+/* 2026-10-10 PPA 非阻塞实验：临时打开过（实验已结束，改回 0） */
 #ifndef RG_GBA_DIAG
-#define RG_GBA_DIAG 0   /* 验证完成：关闭诊断探针与脚本按键，出干净发行版 */
+#define RG_GBA_DIAG 0   /* 验证完成：关闭诊断探针与脚本按键，出干净发行版。
+                         * （2026-10-10 晚二轮 P0 测量期临时开过 1，测完已改回 0。） */
 #endif
 
 #ifndef RG_GBA_INPUT_TRACE
@@ -323,7 +319,10 @@
  * 量横条时必须关掉：每帧几十行 UART 会把核心拖慢、污染显示侧测量。
  * 默认 1（行为不变），横条 A/B 时设 0 ⇒ 只留每秒一行的 DIAG_TEAR。 */
 #ifndef RG_GBA_DIAG_SPAM
-#define RG_GBA_DIAG_SPAM 1
+#define RG_GBA_DIAG_SPAM 1   /* 默认 1（行为不变）。2026-10-10 P0 测量期临时设 0：每帧几十行 UART
+                              * 会拖慢核心、污染显示侧测量；两轮测量都已跑完，已改回 1。
+                              * （附：SPAM=1 下 E2 那轮曾出现"f=15 后日志断流"；SPAM=0 复测
+                              *   **仍卡死** ⇒ 卡死不是 UART 造成的。） */
 #endif
 
 #define RG_BATTERY_CALC_VOLTAGE(raw) ((raw) * 0.001f)/* 充电判定阈值（mA，取分流电流绝对值）：小于这个充电电流不算"在充电"，

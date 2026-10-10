@@ -13,6 +13,8 @@
 /* ───────────────────────── 竖屏：逻辑 720×1280 ─────────────────────────
  * 游戏画面 720×480 占满宽度、贴顶 y[0,480)；控制区 = 下方 y[480,1280)（800px 高）。
  * (x,y) = 命中区中心。所有命中区都在 y>=500，与游戏区之间留大片空白。 */
+#include "rg_orient.h"   /* 下面的 RG_TAB5_SWAP_X/Y 展开成 rg_orient_active() ⇒ 声明必须在本头文件可见（宏在调用方 TU 展开）*/
+
 #define RG_TAB5_TOUCH_MAP_PORTRAIT { \
     /* 十字键：左下，中心 (170,780)，菱形 ±85。
      * 2026-09-28 修「上下串键」：参照 gywan94/tab5-vgbanext 的 odroid_vpad.c
@@ -79,11 +81,12 @@
 }
 
 /* 按方向选表（切换方向 = 换这一行，不需要动上面两张表） */
-#if RG_TAB5_ORIENTATION == 1
-#define RG_TAB5_TOUCH_MAP RG_TAB5_TOUCH_MAP_LANDSCAPE
-#else
+/* ⚠ 0.4.9：选表改成**运行时**（单 app 一个镜像要装两个方向）——
+ * rg_input.c 会把当前方向那张表在启动时装进一份可变数组（keymap_touch[]）。
+ * 这里保留 RG_TAB5_TOUCH_MAP 这个名字不变（= 竖屏那张），因为**外部工具/预览脚本还在引用它**
+ * （画皮肤预览、生成底图都要按同一份数据），去掉会静默影响那些工具。
+ * 两张表本身就是成对的具名宏，运行时靠 config.h 的 RG_GAMEPAD_TOUCH_MAP(_ALT) 传进去。 */
 #define RG_TAB5_TOUCH_MAP RG_TAB5_TOUCH_MAP_PORTRAIT
-#endif
 
 
 /* ----------------------------------------------------------------------------
@@ -106,13 +109,13 @@
 #define RG_TAB5_SWAP_Y_LANDSCAPE   60
 #define RG_TAB5_SWAP_X_PORTRAIT   360
 #define RG_TAB5_SWAP_Y_PORTRAIT   545
-#if RG_TAB5_ORIENTATION == 1
-#define RG_TAB5_SWAP_X  RG_TAB5_SWAP_X_LANDSCAPE
-#define RG_TAB5_SWAP_Y  RG_TAB5_SWAP_Y_LANDSCAPE
-#else
-#define RG_TAB5_SWAP_X  RG_TAB5_SWAP_X_PORTRAIT
-#define RG_TAB5_SWAP_Y  RG_TAB5_SWAP_Y_PORTRAIT
-#endif
+/* ⚠ 0.4.9：切换键位置改成**运行时**按方向取（单 app 一个镜像要装两个方向）。
+ * 原来这里是 `#if RG_TAB5_ORIENTATION == 1` 编译期选表 ⇒ 单 app 里横屏会把这颗键画到
+ * **竖屏坐标 (360,545)** 上，而横屏该在 (640,60) = L 与 R 的正中
+ * （用户 2026-10-10 真机反馈："横屏的 x/y 切换键的位置错了，应该 l 与 r 中间的"）。
+ * 用点（rg_touch_skin.c / rg_touch_overlay.c）全在函数体内、无静态初始化 ⇒ 直接写表达式即可。 */
+#define RG_TAB5_SWAP_X (rg_orient_active() == RG_ORIENT_LANDSCAPE ? RG_TAB5_SWAP_X_LANDSCAPE : RG_TAB5_SWAP_X_PORTRAIT)
+#define RG_TAB5_SWAP_Y (rg_orient_active() == RG_ORIENT_LANDSCAPE ? RG_TAB5_SWAP_Y_LANDSCAPE : RG_TAB5_SWAP_Y_PORTRAIT)
 #define RG_TAB5_SWAP_W  180
 #define RG_TAB5_SWAP_H  84
 
