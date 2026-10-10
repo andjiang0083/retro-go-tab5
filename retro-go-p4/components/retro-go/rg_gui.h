@@ -124,8 +124,17 @@ void rg_gui_draw_hourglass(void); // This should be moved to system or display..
 void rg_gui_draw_status_bars(void);
 void rg_gui_draw_keyboard(const rg_keyboard_layout_t *map, size_t cursor);
 void rg_gui_draw_message(const char *format, ...);
+/* 重启过渡屏（S2 方向切换用）：整屏黑底 + 一行居中提示，然后立即同步到面板。
+ * 为什么需要：esp_restart() 前若最后一帧是**主题底色**（themes/default 的 dialog.background
+ * = 0x0010 ⇒ RGB565 是深蓝），用户会以为崩溃了（实测无 panic，复位原因 rst:0xc SW_CPU_RESET）。
+ * ⇒ 主动画一屏黑 + 提示，让"正在重启"看起来是有意的。 */
+void rg_gui_draw_restart_notice(const char *text);
 
 intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options, int selected_index);
+
+/* 屏幕方向选择（S2）—— 复用对话框机制，无新绘制代码。见 docs/SPEC-S2-ORIENTATION-SWITCH.md */
+int rg_gui_dialog_orientation(void);            /* 返回 RG_ORIENT_PORTRAIT / RG_ORIENT_LANDSCAPE */
+bool rg_gui_dialog_orientation_confirm(void);   /* true = 用户点了 "Restart & switch" */
 bool rg_gui_confirm(const char *title, const char *message, bool default_yes);
 void rg_gui_alert(const char *title, const char *message);
 char *rg_gui_file_picker(const char *title, const char *path, bool (*validator)(const char *path), bool none_option);

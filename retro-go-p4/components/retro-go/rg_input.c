@@ -62,7 +62,36 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #define RG_TOUCH_LOGICAL_FROM_PHYS(px, py, lx, ly) \
     do { (lx) = (py); (ly) = (RG_TOUCH_PHYS_W - 1) - (px); } while (0)
 #endif
+/* 0.4.9：两张表按**运行时方向**选一张装进来。
+ * 为什么装进可变数组而不是直接用指针：本文件里有按数组名展开的宏（UPDATE_GLOBAL_MAP）和多处
+ * keymap_touch_count，改成指针会牵动 6 处调用点；装表只改 3 处（ensure + 初始化）且更稳。
+ * ⚠ 表里的坐标是**物理/逻辑 720x1280 空间**，与显示方向无关（方向只决定选哪张）—— 见 touch_layout.h。 */
+#ifdef RG_GAMEPAD_TOUCH_MAP_ALT
+static const rg_keymap_touch_t keymap_touch_main[] = RG_GAMEPAD_TOUCH_MAP;
+static const rg_keymap_touch_t keymap_touch_alt[]  = RG_GAMEPAD_TOUCH_MAP_ALT;
+static rg_keymap_touch_t keymap_touch[16];      /* 实际使用的那张（容量由下面的断言兜底） */
+static size_t keymap_touch_count;
+_Static_assert(RG_COUNT(keymap_touch_main) <= RG_COUNT(keymap_touch) &&
+               RG_COUNT(keymap_touch_alt) <= RG_COUNT(keymap_touch),
+               "keymap_touch 容量不够：touch_layout.h 加键了要一起把 16 调大");
+_Static_assert(RG_COUNT(keymap_touch_main) == RG_COUNT(keymap_touch_alt),
+               "两张键位表条数必须一致（rg_input.c 按同一个 count 搬表）");
+
+/* 按当前方向把该用的那张搬进来（幂等；方向在显示初始化时已锁定 ⇒ 只可能选到一张）。 */
+static void touch_keymap_ensure(void)
+{
+    if (keymap_touch_count)
+        return;
+    const rg_keymap_touch_t *src = (rg_orient_active() == RG_ORIENT_LANDSCAPE)
+                                       ? keymap_touch_alt : keymap_touch_main;
+    keymap_touch_count = RG_COUNT(keymap_touch_main);
+    memcpy(keymap_touch, src, keymap_touch_count * sizeof(rg_keymap_touch_t));
+}
+#else
 static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
+static const size_t keymap_touch_count = RG_COUNT(keymap_touch);
+#define touch_keymap_ensure()  do {} while (0)   /* 单表目标：无表可装 */
+#endif
 
 /* 虚拟按键隐藏时的恢复入口 = 左上角那个可见的开关（几何由可视层提供：
  * rg_overlay_get_toggle_rect()，别在这里再写一份坐标）。
@@ -76,7 +105,7 @@ static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
 const rg_keymap_touch_t *rg_input_get_touch_keymap(size_t *count)
 {
     if (count)
-        *count = RG_COUNT(keymap_touch);
+        *count = keymap_touch_count;
     return keymap_touch;
 }
 
@@ -381,8 +410,9 @@ static bool dpad_was_diag;          /* 上一轮是否斜向（滞回状态） *
 
 static void rg_dpad_geom_update(void)
 {
+    touch_keymap_ensure();
     const rg_keymap_touch_t *up = NULL, *down = NULL, *left = NULL, *right = NULL;
-    for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
+    for (size_t i = 0; i < keymap_touch_count; ++i)
     {
         rg_key_t k = keymap_touch[i].key;
         if (k == RG_KEY_UP)         up = &keymap_touch[i];
@@ -644,7 +674,7 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
                     dpad_touched = true;
                     continue;
                 }
-                for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
+                for (size_t i = 0; i < keymap_touch_count; ++i)
                 {
                     const rg_keymap_touch_t *mapping = &keymap_touch[i];
                     /* 半开区间 [x-w/2, x+w/2)：右/下侧用 `<` 而不是 `<=`。
@@ -1017,6 +1047,7 @@ void rg_input_init(void)
     /* 只登记"这些虚拟按键存在"，真正的触摸 IC 创建推迟到第一次读手柄时（懒加载）：
      * 此刻 TP_RST 还没释放（扩展器在显示初始化里才初始化），现在创建必然失败。 */
     RG_LOGI("Virtual touch gamepad registered (ST7123 @0x55, lazy init).\n");
+    touch_keymap_ensure();
     UPDATE_GLOBAL_MAP(keymap_touch);
 #endif
 #if defined(RG_GAMEPAD_TOUCH_MAP) && defined(ESP_PLATFORM)

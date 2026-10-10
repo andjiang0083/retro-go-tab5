@@ -100,6 +100,12 @@ void rg_audio_init(int sampleRate)
     audio.filter = (int)rg_settings_get_number(NS_GLOBAL, SETTING_FILTER, 0);
     audio.volume = (int)rg_settings_get_number(NS_GLOBAL, SETTING_VOLUME, 50);
     audio.sampleRate = sampleRate;
+#if defined(RG_TEST_MUTE) && RG_TEST_MUTE
+    /* 2026-10-10 临时钩子（PPA 非阻塞实验，无人值守测试必须静音）。
+     * 只改内存状态、**不调 rg_audio_set_volume/settings 写入** ⇒ 不动用户存的音量。
+     * 实验跑完把 config.h 里的 RG_TEST_MUTE 改回 0（保留开关本身，与 RG_TEST_NO_AUTOSAVE 同款）。 */
+    audio.muted = true;
+#endif
     audio.driver = audio.sink->driver;
 
     if (audio.driver->init(audio.sink->device, sampleRate))

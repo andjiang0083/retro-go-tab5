@@ -3,6 +3,7 @@
 /* 屏幕帧率数字要推给叠加层（见 update_statistics）。本头文件自包含（内部已 include
  * rg_system.h 拿目标配置），重复包含无副作用。 */
 #include "rg_touch_overlay.h"
+#include "rg_orient.h"      /* S2 横竖屏：app 标签按当前方向解析 */
 
 /* 强制重推某些逻辑行（实现在 rg_display.c）。这里直接声明，避免动 rg_display.h
  * 的包含顺序（那个头文件对 config.h 的可见性有要求）。 */
@@ -261,6 +262,21 @@ static bool update_boot_config(const char *partition, const char *name, const ch
     // Check if the OTA settings are already correct, and if so do not call esp_ota_set_boot_partition
     // This is simply to avoid an unecessary flash write...
     const esp_partition_t *current = esp_ota_get_boot_partition();
+    /* 横竖屏双槽（S2）：app 是按标签查找的（同文件 rg_system_have_app），所以要把基名解析成
+     * **当前方向**的标签：竖屏 `retro-core` / 横屏 `retro-core_l`。
+     * 解析出的标签若不存在（如 updater 这类只烧一份的 app）就回退用原标签
+     * —— 方向功能绝不因为一个边缘 app 引入新故障。 */
+    char part_label[RG_ORIENT_LABEL_MAX];
+    if (partition && partition[0])
+    {
+        rg_orient_app_label(partition, part_label);
+        if (!esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, part_label))
+        {
+            RG_LOGW("orient: app '%s' not present in current orientation, falling back to '%s'", part_label, partition);
+            snprintf(part_label, sizeof(part_label), "%s", partition);
+        }
+        partition = part_label;
+    }
     if (partition && (!current || strncmp(current->label, partition, 16) != 0))
     {
         esp_err_t err = esp_ota_set_boot_partition(esp_partition_find_first(
@@ -652,6 +668,12 @@ rg_app_t *rg_system_init(int sampleRate, const rg_handlers_t *handlers, void *_u
     }
 
     rg_settings_init(enterRecoveryMode || showCrashDialog);
+
+    /* 单 app 方向的**一次性迁移**（0.4.9）：老版本把用户选择存在 SD（ui/orient），而单 app 在
+     * **显示初始化时**就要知道方向（显示层早于存储层）⇒ 那里只能读 NVS。所以在这里（存储层已起来）
+     * 把 SD 里的选择搬进 NVS；若与本次启动实际用的方向不一致，会重启一次让显示跟上
+     * （NVS 已写 ⇒ 只可能发生一次，不会重启循环）。双 app 形态下本函数是空操作。 */
+    rg_orient_sync_from_settings();
     app.configNs = rg_settings_get_string(NS_BOOT, SETTING_BOOT_NAME, app.configNs);
     app.bootArgs = rg_settings_get_string(NS_BOOT, SETTING_BOOT_ARGS, app.bootArgs);
     app.bootFlags = rg_settings_get_number(NS_BOOT, SETTING_BOOT_FLAGS, app.bootFlags);
@@ -1130,6 +1152,14 @@ bool rg_system_have_app(const char *app)
         return false;
     return !strcmp(app, RG_SINGLE_APP_CORE_STR) || !strcmp(app, "retro-core");
 #else
+    /* 横竖屏双槽（S2）：菜单条目拿的是**基名**（"retro-core"/"gbsp"），横屏下分区叫 `_l`。
+     * 两边都查不到才算"没有" —— 否则横屏下所有核心条目会集体消失（菜单一片空）。 */
+    {
+        char label[RG_ORIENT_LABEL_MAX];
+        rg_orient_app_label(app, label);
+        if (esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label) != NULL)
+            return true;
+    }
     return esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, app) != NULL;
 #endif
 #elif defined(RG_TARGET_SDL2)

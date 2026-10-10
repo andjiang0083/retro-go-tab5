@@ -13,16 +13,22 @@ Built and tested on real hardware. Contributions very welcome — see [Contribut
 
 ## Download & install — pick the right file
 
-Two firmware builds are published. **Installing the wrong one gives you a menu whose games never start.**
+Since v0.4.9 there is **only one build**: the single-app form — the menu and all 11 emulator cores compile
+into one app. Pick one file per channel, and **there is no wrong build to install any more** (that was a
+problem of the old two-app packaging).
 
 | Where you install from | File | Why |
 |---|---|---|
-| **M5Burner** (recommended) or esptool | `retro-go-tab5-<version>-merged.bin` | Full image (bootloader@0x2000 + partition table@0x8000 + launcher@0x10000 + gbsp@0x100000), written from 0x0. Most complete — keeps the in-menu "Check for updates" |
-| **[M5Launcher](https://github.com/bmorcelli/Launcher)** | `retro-go-tab5-<version>-launcher-singleapp.bin` | That platform can only install a **single app image**. This firmware ships as two apps (menu + emulator core in separate partitions), so installing the full image there installs only the menu. The single-app build compiles the core into the same image |
+| **M5Burner** (recommended) or esptool | `retro-go-tab5-<version>-merged.bin` | Full image (bootloader@0x2000 + partition table@0x8000 + launcher@0x10000), written from 0x0 |
+| **[M5Launcher](https://github.com/bmorcelli/Launcher)** | `retro-go-tab5-<version>-launcher-singleapp.bin` | That platform can only install a **single app image**; this is the app-only image of the very same build (menu + every core) |
 
-**从 M5Launcher 安装请用单 app 包** —— 该平台只能装单个 app 镜像，装完整版只会装上菜单、进不了游戏。
-单 app 包的唯一差异：菜单里没有 "Check for updates"（它需要一个额外的 app 分区来落新固件），
-以后升级请用 M5Burner / esptool 整包刷。
+**This release is the single-app form**: the in-menu `Check for updates` is gone (it needs a second app
+partition to stage a new firmware) — same trade-off as v0.4.7. Upgrade with a full M5Burner / esptool
+write of the merged image.
+
+**Upgrading from 0.4.8: flash the whole merged image.** The partition table changed in 0.4.9 (three app slots
+→ one 1984K slot); a full M5Burner / esptool write updates the table as well. Do not flash the app partition
+alone — the old 960K slot does not fit.
 
 Both files are attached to each [release](../../releases).
 
@@ -34,6 +40,16 @@ automatically but cannot revive a card that is already wedged. The same applies 
 using a third-party launcher (e.g. M5Launcher).
 
 ## Screenshots
+
+**Landscape on real hardware (v0.4.9)** — game centred, D-pad on the left, A/B/X/Y on the right, L / R in the
+top corners, and the **X/Y ↔ L/R swap key centred between L and R**:
+
+![GBA running on a real Tab5 in landscape: game centred, D-pad left, A/B/X/Y right, X/Y swap key between L and R](docs/images/tab5-landscape-game.jpg)
+
+*Landscape mode, v0.4.9 build, photographed on real hardware on 2026-10-10 (M5Stack Tab5 / ESP32-P4 /
+native 720x1280 panel). Every label and position in this shot comes from the firmware's own landscape layout
+table (`retro-go-p4/components/retro-go/targets/tab5/touch_layout.h`) — it is not an illustration.*
+*横屏模式、v0.4.9 构建，2026-10-10 真机拍摄；图中按键名称与位置均出自固件自己的横屏布局表，不是示意画。*
 
 **Portrait layout (v0.4.1)** — this image is rendered from the firmware's own drawing rules (same touch
 layout table, same key colours, same bitmap font), so it is exactly what the device draws:
@@ -104,12 +120,13 @@ Note: the ESP32-P4 has **no Wi-Fi and no Bluetooth**. Anything network-related i
 # 1. Get ESP-IDF v5.5 and export it (see BUILDING.md for the exact pitfalls)
 . ~/esp/esp-idf-v5.5/export.sh
 
-# 2. Build both apps (launcher + GBA) into one flashable image
+# 2. Release form — single app (menu + every core in one app; both orientations supported)
 cd retro-go-p4
-python3 rg_tool.py --target tab5 --no-networking build-img launcher gbsp
+python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher gbsp
+#    one-shot wrapper with the image-shape gates: bash tools/build-tab5-skin.sh single-app
 
-# 2b. Single-app build — for M5Launcher, which can only install one app image
-python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher
+# 2b. Legacy two-app form (menu and cores in separate partitions; kept for regression comparison)
+python3 rg_tool.py --target tab5 --no-networking build-img launcher gbsp retro-core
 
 # 3. Flash
 python3 -m esptool --chip esp32p4 -p /dev/cu.usbmodemXXXX -b 921600 \
@@ -123,8 +140,12 @@ Full details, the `--no-networking` trap, and serial-monitor caveats: **[BUILDIN
 
 ## Controls
 
-The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch screen, in the control area
-below the game (the game viewport is 720x480 anchored to the top of the portrait panel):
+The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch screen — and its position
+**follows the orientation** (the game viewport is 720x480 and is never overlapped).
+**Since v0.4.9 one image supports both orientations**: asked at first boot, changeable later in
+`Options → Screen orientation` (the choice is stored in NVS and the device reboots into it).
+
+**Portrait** — game pinned to the top, pad in the control area below:
 
 ```
 +----------------------------------+
@@ -140,7 +161,23 @@ below the game (the game viewport is 720x480 anchored to the top of the portrait
 +----------------------------------+
 ```
 
-- **D-pad** — control area, bottom-left
+**Landscape** — game centred, pad split to the two sides (where the thumbs already are):
+
+```
++----------------------------------------------------------------+
+| [L]                    [ X/Y ]                          [R]    |   <- X/Y centred between L and R
+|                                                                |
+|    [^]                                                         |
+| [<]   [>]       game screen 720x480 (centred)         [X]      |
+|    [v]                                          [Y]       [A]  |
+|                                                                |
+|                  [MENU]          [SELECT]   [START]   (LED)    |
++----------------------------------------------------------------+
+```
+
+- **Orientation** — `Options → Screen orientation` switches portrait / landscape (asked at first boot;
+  the choice persists in NVS and the device reboots into it)
+- **D-pad** — portrait: control area, bottom-left; landscape: left side of the screen
 - **A / B / X / Y** — control area, bottom-right, diamond layout, each key its own colour
 - **L / R** — top corners of the control area (consoles that have shoulder buttons: **GBA and SNES**)
 - **Swap L/R with X/Y** — GBA only

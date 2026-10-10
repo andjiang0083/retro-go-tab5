@@ -6,8 +6,24 @@ list(APPEND EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../vendor/managed_components")
 
 macro(rg_setup_compile_options)
+    # 屏幕方向（Tab5 专用；其它 target 定义了也不引用）：0 = 竖屏（默认）1 = 横屏。
+    # 见 components/retro-go/targets/tab5/config.h 的 RG_TAB5_ORIENTATION。
+    # ⚠ 必须**每次显式传**（rg_tool.py 保证）—— CMake 缓存变量是"粘"的，漏传会沿用上一次的值，
+    #   症状：本该竖屏的构建实际编成了横屏。
+    if(NOT DEFINED RG_TAB5_ORIENTATION)
+        set(RG_TAB5_ORIENTATION 0)
+    endif()
+
+    # PPA 传输模式实验开关（Tab5 横屏专用）：0 = 关（默认）1 = 非阻塞 2 = BLOCKING 对照。
+    # 同样必须每次显式传（理由同上）。⚠ 另一处副本在 components/retro-go/CMakeLists.txt。
+    if(NOT DEFINED RG_TAB5_PPA_MODE)
+        set(RG_TAB5_PPA_MODE 0)
+    endif()
+
     component_compile_options(
         -D${RG_BUILD_TARGET}=1
+        -DRG_TAB5_ORIENTATION=${RG_TAB5_ORIENTATION}
+        -DRG_TAB5_PPA_MODE=${RG_TAB5_PPA_MODE}
         -DRETRO_GO=1
         -fjump-tables -ftree-switch-conversion
         ${ARGV}

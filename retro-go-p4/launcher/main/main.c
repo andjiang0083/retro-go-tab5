@@ -13,6 +13,7 @@
 #include "bookmarks.h"
 #include "browser.h"
 #include "gui.h"
+#include "rg_orient.h"            /* S2 屏幕方向：NVS 契约 + 引导槽切换 */
 #include "rg_touch_overlay.h"   /* 触摸覆盖层内容代际号（调换按钮 → 立刻重画，见 retro_loop） */
 #include "webui.h"
 #include "updater.h"
@@ -45,6 +46,42 @@ static rg_gui_event_t toggle_tabs_cb(rg_gui_option_t *option, rg_gui_event_t eve
 
         rg_gui_dialog(option->label, options, 0);
     }
+    return RG_DIALOG_VOID;
+}
+
+static rg_gui_event_t orientation_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event == RG_DIALOG_ENTER)
+    {
+        /* ⚠ 必须拿**设备实际方向**（rg_orient_running，读运行分区标签）来比，
+         * 不能用 rg_orient_get()（那是"用户的选择"）。两者可能不一致：比如已选横屏但设备还在竖屏，
+         * 此时再点横屏若用 get() 比较就会走"同方向"分支 ⇒ **静默不切换**（2026-10-09 实机日志暴露）。 */
+        int current = rg_orient_running();
+        int chosen = rg_gui_dialog_orientation();
+
+        if (chosen < 0)
+        {
+            /* 用户直接返回/取消：什么都不改，不落盘（避免"记录≠事实"）。 */
+        }
+        else if (chosen == current)
+        {
+            rg_orient_set(chosen);   /* 与实际方向一致：顺手把记录对齐事实，不重启 */
+        }
+        else if (rg_gui_dialog_orientation_confirm())
+        {
+            if (!rg_orient_restart_into(chosen))
+                rg_gui_alert(_("Screen orientation"),
+                    _("The other orientation is not installed yet.\n"
+                      "Flash the dual-slot image first (see SPEC S2 §3)."));
+            /* 取消确认框 ⇒ 不落盘：下次进菜单仍是"未改变"，不会出现设置显示与实际不符 */
+        }
+    }
+
+    /* 名字直接取实际方向（不是"用户的选择"）—— 设置项应当显示设备**现在是什么方向**。
+     * 注意 `rg_gui_option_t.value` 是**调用方提供的指针**（对话框内部按行分配缓冲），
+     * 所以只能用 strcpy/sprintf 往里写 —— 用 sizeof(option->value) 会当成 8 字节指针长度而被 -Werror 拦下
+     * （2026-10-09 实证）。不套 _() 翻译宏：宏只吃字面量，运行期字符串要进翻译表才能本地化。 */
+    strcpy(option->value, rg_orient_name(rg_orient_running()));
     return RG_DIALOG_VOID;
 }
 
@@ -211,6 +248,24 @@ static void retro_loop(void)
     applications_init();
     bookmarks_init();
     // browser_init();
+
+    /* S2 屏幕方向 · 首次使用弹窗（用户 2026-10-09 要求：第一次使用弹窗二选一 + 写明以后在哪儿重选 + 默认竖屏）。
+     * 默认竖屏是**结构性**的：没选择时设备跑的就是 factory 槽 = 竖屏；这里只负责"问一次并把选择记下来"，
+     * 选横屏则需要切到 ota_0 槽（双槽镜像落地后才真正生效，未落地时 rg_orient_restart_into 会安全失败）。 */
+    if (rg_orient_is_first_boot())
+    {
+        int chosen = rg_gui_dialog_orientation();
+        if (chosen >= 0)
+        {
+            rg_orient_set(chosen);              /* 记下 —— 弹窗只出现一次 */
+            if (!rg_orient_running_is(chosen) && rg_gui_dialog_orientation_confirm())
+                rg_orient_restart_into(chosen);
+        }
+        /* chosen < 0 = 用户在首次弹窗上就返回/取消 ⇒ 什么都不做、不落盘，下次开机再问一次
+         * （默认竖屏是结构性的：没记录时设备本来就跑竖屏槽，所以"不选"= 保持默认）。 */
+        gui_update_theme();
+        rg_settings_commit();
+    }
 
 #ifdef RG_ENABLE_NETWORKING
     rg_network_init();
@@ -453,7 +508,9 @@ static void options_handler(rg_gui_option_t *dest)
         #ifdef RG_ENABLE_NETWORKING
         {0, _("File server"),  "-", RG_DIALOG_FLAG_NORMAL, &webui_switch_cb},
         #endif
-        {0, _("Startup app"),  "-", RG_DIALOG_FLAG_NORMAL, &startup_app_cb},
+        {0, _("Startup app"),   "-", RG_DIALOG_FLAG_NORMAL, &startup_app_cb},
+        /* S2 屏幕方向：用户要求"要说明设置哪里可以重选"—— 这一项就是那句提示指向的地方 */
+        {0, _("Screen orientation"), "-", RG_DIALOG_FLAG_NORMAL, &orientation_cb},
         RG_DIALOG_END,
     };
     memcpy(dest, options, sizeof(options));

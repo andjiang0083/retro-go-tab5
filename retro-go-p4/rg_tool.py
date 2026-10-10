@@ -82,7 +82,7 @@ def build_firmware(output_file, apps, fw_format="odroid-go", fatsize=0):
     run(args)
 
 
-def build_image(output_file, apps, img_format="esp32", fatsize=0):
+def build_image(output_file, apps, img_format="esp32", fatsize=0, single_app=False):
     print("Building image with: %s\n" % " ".join(apps))
     image_data = bytearray(b"\xFF" * 0x10000)
     table_ota = 0
@@ -99,6 +99,27 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
         table_csv.append("%s, app, ota_%d, %d, %d" % (app, table_ota, len(image_data), part_size))
         table_ota += 1
         image_data += data + b"\xFF" * (part_size - len(data))
+
+    # 横竖屏双槽（Tab5/ESP32-P4，2026-10-09）：追加"同名 + `_l` 后缀"的横屏槽**声明**。
+    # 表里必须有（app 按标签查找：rg_system.c:1133），但**不追加镜像数据** —— 横屏 app 由
+    # build-tab5-skin.sh 另一趟构建产出后按偏移单独写入（见 tools/flash-tab5-dual.sh），
+    # 这样 merged 镜像仍是 3.8MB（不会被撑到 7.5MB），常规刷机路径不变。
+    # ⚠ 必须在这里加，而不是改 partitions.csv：后者是本文件 build_image()/build_app()
+    #   每次构建重新生成的**产物**，手工编辑会被静默覆盖（ESP32-经验沉淀.md §233 实证）。
+    # ⚠ 槽尺寸/偏移必须与 tools/partitions-dual-tab5.csv 完全一致，否则设备端表与
+    #   parttool/otatool 看到的表会不一致。
+    #
+    # ⚠⚠ 单 app 形态（2026-10-10，0.4.9）**不声明 `_l` 槽**：单 app 里两个方向共用同一个 app，
+    #   没有第二个分区可切；方向的权威值是 NVS（rg_orient_active()），切换 = 写 NVS + 重启。
+    #   这也让历史 0.4.8 单 app 表（nvs/otadata/phy + 一个按体积自动扩容的 app 槽）与本次一致，
+    #   刷机路径不变。此前 build_image() 不收 single_app ⇒ 单 app 镜像里混进了双 app 表，
+    #   app 槽被钉死在 1984K（余量仅 35KB）—— 这就是 SPEC 记的 P3 隐患，此处修掉。
+    if img_format == "esp32p4" and not single_app:
+        land_off = len(image_data)
+        for _app, _size in (("launcher", 0x100000), ("retro-core", 0x180000), ("gbsp", 0x140000)):
+            table_csv.append("%s_l, app, ota_%d, %d, %d" % (_app, table_ota, land_off, _size))
+            table_ota += 1
+            land_off += _size
 
     if fatsize:
         # Use "vfs" label, same as MicroPython, in case the storage is to be shared with a MicroPython install
@@ -168,6 +189,15 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     # ⚠ 必须每次都显式传 0/1：CMake 缓存变量是"粘"的，上一次留在 build 目录里的 1 会影响后续
     # 所有构建（症状：双 app 构建里混进单 app 的产物、体积对不上）。
     args.append(f"-DRG_SINGLE_APP={1 if single_app else 0}")
+    # 屏幕方向（Tab5 专用：0 = 竖屏默认，1 = 横屏）。⚠ 每次都显式传：CMake 缓存变量是"粘"的，
+    # 漏传会沿用上一次构建留在 build 目录里的值 —— 症状是"改了方向却没变"或"竖屏构建实际是横屏"。
+    # 用法：RG_TAB5_ORIENTATION=1 tools/build-tab5-skin.sh
+    args.append(f"-DRG_TAB5_ORIENTATION={os.getenv('RG_TAB5_ORIENTATION', '0')}")
+    # PPA 传输模式实验开关（Tab5 横屏专用：0 = 关/默认，1 = 非阻塞，2 = BLOCKING 对照）。
+    # 同上一行：每次都显式传（CMake 缓存变量是"粘"的），且**把开关值写进构建日志**，
+    # 这样"这趟构建到底是哪一档"有据可查（见证 docs/SPEC-PPA-NONBLOCK-EXPERIMENT.md）。
+    # 用法：RG_TAB5_PPA_MODE=1 RG_TAB5_ORIENTATION=1 tools/build-tab5-skin.sh
+    args.append(f"-DRG_TAB5_PPA_MODE={os.getenv('RG_TAB5_PPA_MODE', '0')}")
     with open("partitions.csv", "w") as f:
         f.write("# This table isn't used, it's just needed to avoid esp-idf build failures.\n")
         f.write("dummy, app, ota_0, 65536, 3145728\n")
@@ -284,7 +314,7 @@ try:
         print("=== Step: Packing ===\n")
         img_file = ("%s_%s_%s%s.img" % (PROJECT_NAME, PROJECT_VER, args.target,
                     "-single" if args.single_app else "")).lower()
-        build_image(img_file, apps, IDF_TARGET, args.fatsize)
+        build_image(img_file, apps, IDF_TARGET, args.fatsize, args.single_app)
 
     if command in ["install"]:
         print("=== Step: Flashing entire image to device ===\n")

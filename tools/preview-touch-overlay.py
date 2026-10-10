@@ -30,20 +30,33 @@ OVERLAY_H = ROOT / "retro-go-p4/components/retro-go/rg_touch_overlay.h"
 FONT_C = ROOT / "retro-go-p4/components/retro-go/fonts/basic8x8.c"
 OUT_DIR = ROOT / "docs"
 
-SCR_W, SCR_H = 720, 1280          # 【竖屏分支】逻辑空间 720x1280（横屏 1280x720 是旧版）
-GAME_W, GAME_H = 720, 480          # 240x160 @ 3x 整数缩放，贴顶
-GAME_X, GAME_Y = 0, 0
+SCR_W, SCR_H = 720, 1280          # 【竖屏】逻辑空间 720x1280；横屏 1280x720，由 --orientation 切
+GAME_W, GAME_H = 720, 480          # 240x160 @ 3x 整数缩放（两种方向都一样大）
+GAME_X, GAME_Y = 0, 0              # 竖屏贴顶；横屏居中于 x[280,1000) y[120,600)
 SS = 4                              # 超采样倍数（固件预渲染用同一倍数）
+
+ORIENT = "portrait"                 # 由 --orientation 设置
+ORIENT_SUFFIX = ""                  # 输出文件名后缀（横屏 = "-landscape"）
+
+
+def orient_params(name):
+    """两套几何。游戏窗都是 240x160 @3x = 720x480，差的只是落点：
+       竖屏 720x1280：游戏贴顶 y[0,480)，控制区在下方 800px
+       横屏 1280x720：游戏居中 x[280,1000) y[120,600)，四周留白 = 按键区"""
+    if name == "landscape":
+        return 1280, 720, 720, 480, 280, 120
+    return 720, 1280, 720, 480, 0, 0
 
 ALPHA_FILL, ALPHA_BORDER, ALPHA_LABEL = 0.50, 0.90, 1.00
 
 # ---------------------------------------------------------------- 键位表解析
-def parse_keymap(path):
+def parse_keymap(path, suffix="PORTRAIT"):
     text = path.read_text(encoding="utf-8")
-    # P2.5 起键位表在 touch_layout.h（单一数据源）；config.h 只是 include 它
-    block = re.search(r"#define RG_TAB5_TOUCH_MAP\s*\{(.*?)\n\}", text, re.S)
+    # 键位表在 touch_layout.h（单一数据源）；两种方向各一张，按名字取。
+    block = re.search(rf"#define RG_TAB5_TOUCH_MAP_{suffix}\s*\{{(.*?)\n\}}", text, re.S)
     if not block:
-        raise SystemExit("找不到 RG_TAB5_TOUCH_MAP（键位表已移到 targets/tab5/touch_layout.h）")
+        raise SystemExit(f"找不到 RG_TAB5_TOUCH_MAP_{suffix}"
+                         "（键位表在 targets/tab5/touch_layout.h，宏改名字了？）")
     pat = re.compile(r"\{\s*(RG_KEY_\w+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}")
     return [
         dict(key=m.group(1), x=int(m.group(2)), y=int(m.group(3)),
@@ -79,7 +92,7 @@ def parse_font(path):
     return glyphs
 
 
-KEYMAP = parse_keymap(LAYOUT_H)
+KEYMAP = parse_keymap(LAYOUT_H, "PORTRAIT")
 GLYPHS = parse_font(FONT_C)
 
 
@@ -87,14 +100,26 @@ GLYPHS = parse_font(FONT_C)
 OVERLAY_C = ROOT / "retro-go-p4/components/retro-go/rg_touch_overlay.c"
 
 
-def parse_led(path):
+def parse_led(path, suffix="PORTRAIT"):
     """电量圆灯的几何与配色 —— **从固件源码解析**，不再手工抄一份。
+
     ⚠ 2026-09-29 走查 P2-18：这里原来是手抄的常量（LED_CX/LED_R + 三个色值），
     和固件各存一份、靠人工同步；结果灯的改动（充电由硬闪改呼吸）没反映到图里，
-    图注还在写"充电时闪的就是它"。改成解析后就和键位表一样是单一数据源。"""
+    图注还在写"充电时硬闪的就是它"。改成解析后就和键位表一样是单一数据源。
+
+    ⚠ 0.4.9：灯位改成"按方向取值"后，宏的值不再是整数，而是
+    `(RG_BATT_LED_IS_LANDSCAPE ? 横屏值 : 竖屏值)`（见 rg_touch_overlay.c 头部）。
+    两种写法都接受：纯整数（老写法）、三元表达式（新写法，按 suffix 选一侧）。"""
     text = path.read_text(encoding="utf-8")
 
+    want_land = (suffix == "LANDSCAPE")
+
     def num(name):
+        # 新写法：(RG_BATT_LED_IS_LANDSCAPE ? 140 : 360)
+        m = re.search(rf"#define\s+{name}\s+\(RG_BATT_LED_IS_LANDSCAPE\s*\?\s*(\d+)\s*:\s*(\d+)\)", text)
+        if m:
+            return int(m.group(1) if want_land else m.group(2))
+        # 老写法：纯整数（对两种方向相同）
         m = re.search(rf"#define\s+{name}\s+(\d+)", text)
         if not m:
             raise SystemExit(f"解析固件失败：找不到 {name}（rg_touch_overlay.c 的圆灯宏改名字了？）")
@@ -115,7 +140,7 @@ def parse_led(path):
                 red=tuple(int(v, 0) for v in cols[2]))
 
 
-LED = parse_led(OVERLAY_C)
+LED = parse_led(OVERLAY_C, "PORTRAIT")   # 默认竖屏；set_orientation() 会带方向重解析
 LED_CX, LED_CY, LED_R, LED_RING = LED["cx"], LED["cy"], LED["r"], LED["ring"]
 LED_GREEN, LED_ORANGE, LED_RED = LED["green"], LED["orange"], LED["red"]
 # 充电呼吸的 4 档亮度（固件 batt_led_state() 里的 breath[4]，周期 340ms/档 ≈1.4s 一圈）
@@ -164,8 +189,9 @@ LABELS = {
 
 
 # ---------------------------------------------------------------- X/Y ↔ L/R 调换
-def parse_swap(path):
-    """L/R 之间那颗调换按钮的几何 —— 从键位表解析（与圆灯同规矩：不手抄一份）。"""
+def parse_swap(path, orient="PORTRAIT"):
+    """L/R 之间那颗调换按钮的几何 —— 从键位表解析（与圆灯同规矩：不手抄一份）。
+    两种方向各一组值，宏名带 _LANDSCAPE/_PORTRAIT 后缀，按后缀取。"""
     text = path.read_text(encoding="utf-8")
 
     def num(name):
@@ -174,11 +200,11 @@ def parse_swap(path):
             raise SystemExit(f"解析键位表失败：找不到 {name}（touch_layout.h 的调换按钮宏改名字了？）")
         return int(m.group(1))
 
-    return dict(x=num("RG_TAB5_SWAP_X"), y=num("RG_TAB5_SWAP_Y"),
+    return dict(x=num(f"RG_TAB5_SWAP_X_{orient}"), y=num(f"RG_TAB5_SWAP_Y_{orient}"),
                 w=num("RG_TAB5_SWAP_W"), h=num("RG_TAB5_SWAP_H"))
 
 
-SWAP = parse_swap(LAYOUT_H)
+SWAP = parse_swap(LAYOUT_H, "PORTRAIT")
 SWAP_COLOR = hx("#E8A22C")     # = MENU 琥珀：调色板里专属于"系统/UI 控件"，不是游戏键
 
 
@@ -203,6 +229,20 @@ SWAP_PAIRS = parse_swap_pairs()
 
 def swap_key(k):
     return SWAP_PAIRS.get(k, k)
+
+
+def set_orientation(name):
+    """切到某个方向的几何/键位表（portrait | landscape）。
+    渲染函数读的都是模块级全局量，所以这里改完全局 = 换了方向。"""
+    global ORIENT, ORIENT_SUFFIX, SCR_W, SCR_H, GAME_W, GAME_H, GAME_X, GAME_Y, KEYMAP, SWAP
+    if name not in ("portrait", "landscape"):
+        raise SystemExit(f"未知方向：{name}（只有 portrait / landscape）")
+    suffix = "PORTRAIT" if name == "portrait" else "LANDSCAPE"
+    ORIENT = name
+    ORIENT_SUFFIX = "" if name == "portrait" else "-" + name
+    SCR_W, SCR_H, GAME_W, GAME_H, GAME_X, GAME_Y = orient_params(name)
+    KEYMAP = parse_keymap(LAYOUT_H, suffix)
+    SWAP = parse_swap(LAYOUT_H, suffix)
 
 
 def shade(c, k):
@@ -679,8 +719,9 @@ def dpad_zone_figure():
 
 def swap_figure():
     """X/Y ↔ L/R 调换：两个状态对照（默认 / 已调换）。
-    裁控制区上半段 —— 肩键那一排（含中间的切换按钮）+ ABXY 菱形，只看标签与配色怎么变。"""
-    crop = (0, 490, SCR_W, 920)
+    裁"肩键那一排（含中间的切换按钮）+ 菱形键"看标签与配色怎么变。
+    竖屏：控制区在下方（肩键 y=545，裁 490~920）；横屏：肩键那排在顶部 y=60。"""
+    crop = (0, 0, SCR_W, 200) if ORIENT == "landscape" else (0, 490, SCR_W, 920)
     rows = [
         label_row(render(100, PALETTE_A).convert("RGB").crop(crop),
                   "默认：菱形位 X/Y、肩键位 L/R；中间那颗切换按钮显示 X/Y"),
@@ -688,70 +729,78 @@ def swap_figure():
                   "调换后：菱形位变 R/L（蓝/绿→浅灰）、肩键位变 X/Y；切换按钮显示 L/R"),
     ]
     out = stack(rows, gap=6)
-    out.save(OUT_DIR / "swap-yx-lr.png")
-    print("wrote", OUT_DIR / "swap-yx-lr.png", out.size)
+    out.save(OUT_DIR / f"swap-yx-lr{ORIENT_SUFFIX}.png")
+    print("wrote", OUT_DIR / f"swap-yx-lr{ORIENT_SUFFIX}.png", out.size)
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--orientation", choices=("portrait", "landscape"), default="portrait",
+                    help="屏幕方向（默认 portrait = 现状；横屏出 -landscape 后缀的图）")
     ap.add_argument("--alpha", type=int, default=None, help="只出这一档透明度")
     ap.add_argument("--scale", type=float, default=1.0, help="整体缩放（默认 1:1）")
-    ap.add_argument("--led", action="store_true", help="只出电量圆灯的位置/样式对比图")
+    ap.add_argument("--led", action="store_true", help="只出电量圆灯的位置/样式对比图（仅竖屏）")
     ap.add_argument("--dpad", action="store_true",
-                    help="只出方向键判定对比图（现状 4 矩形 vs 矢量扇区提案）")
+                    help="只出方向键判定对比图（现状 4 矩形 vs 矢量扇区提案，仅竖屏）")
     ap.add_argument("--swap", action="store_true",
                     help="只出 X/Y ↔ L/R 调换的两个状态对照图")
     args = ap.parse_args()
     OUT_DIR.mkdir(exist_ok=True)
+    set_orientation(args.orientation)
+    sfx = ORIENT_SUFFIX
 
     if args.swap:
         swap_figure()
         return
 
-    if args.dpad:
-        dpad_zone_figure()
-        return
-
-    if args.led:
-        led_variants()
-        led_breath_variants()
+    if args.dpad or args.led:
+        if ORIENT != "portrait":
+            raise SystemExit(f"{'--dpad' if args.dpad else '--led'} 是竖屏专用图"
+                             "（几何按竖屏控制区裁的，横屏没有对应物）")
+        if args.dpad:
+            dpad_zone_figure()
+        else:
+            led_variants()
+            led_breath_variants()
         return
 
     if args.alpha is not None:
-        out = OUT_DIR / f"touch-overlay-a{args.alpha}.png"
+        out = OUT_DIR / f"touch-overlay-a{args.alpha}{sfx}.png"
         render(args.alpha, PALETTE_A, (), scale=args.scale).save(out)
         print("wrote", out)
         return
 
     # 1) 主图：α=100%，调和配色 A，游戏中
     hero = render(100, PALETTE_A)
-    hero.save(OUT_DIR / "touch-overlay-hero.png")
+    hero.save(OUT_DIR / f"touch-overlay-hero{sfx}.png")
 
     # 2) 调色板 A / B 对比（缩到 0.58 便于同屏对比）
     pal = stack([render(100, PALETTE_A, scale=0.58), render(100, PALETTE_B, scale=0.58)])
-    pal.save(OUT_DIR / "touch-overlay-palettes.png")
+    pal.save(OUT_DIR / f"touch-overlay-palettes{sfx}.png")
 
     # 3) 按下反馈：D-pad 左 + A + START 同时按下
     pressed = render(100, PALETTE_A, ("RG_KEY_LEFT", "RG_KEY_A", "RG_KEY_START"))
-    pressed.save(OUT_DIR / "touch-overlay-pressed.png")
+    pressed.save(OUT_DIR / f"touch-overlay-pressed{sfx}.png")
 
     # 4) 透明度 5 档（100/80/60/40/20），缩到 0.5
     rows = [render(a, PALETTE_A, scale=0.5) for a in (100, 80, 60, 40, 20)]
-    stack(rows).save(OUT_DIR / "touch-overlay-opacity.png")
+    stack(rows).save(OUT_DIR / f"touch-overlay-opacity{sfx}.png")
 
     # 5) 可读性：launcher 全屏 UI 背景 + 20% 最低档（最坏情况）
     leg = stack([render(100, PALETTE_A, bg="menu", scale=0.5),
                  render(20, PALETTE_A, bg="menu", scale=0.5)])
-    leg.save(OUT_DIR / "touch-overlay-legibility.png")
+    leg.save(OUT_DIR / f"touch-overlay-legibility{sfx}.png")
 
-    # 6) 电量圆灯：电量三色 + 低电告警暗相位 + **充电呼吸四档**（v0.4.1 起充电是呼吸）
-    led_variants()
-    led_breath_variants()
+    if ORIENT == "portrait":
+        # 6) 电量圆灯：电量三色 + 低电告警暗相位 + **充电呼吸四档**（v0.4.1 起充电是呼吸）
+        #    ⚠ 只有竖屏驱动有这颗灯（横屏驱动 rg_batt_led_refresh 是竖屏线新增的）。
+        led_variants()
+        led_breath_variants()
 
     # 7) X/Y ↔ L/R 调换：两个状态对照（那颗切换按钮的标签 + 四个键的标签/配色）
     swap_figure()
 
-    for f in sorted(OUT_DIR.glob("touch-overlay-*.png")):
+    for f in sorted(OUT_DIR.glob(f"touch-overlay-*{sfx}.png")):
         print("wrote", f)
 
 
