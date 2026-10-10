@@ -143,7 +143,7 @@ Full details, the `--no-networking` trap, and serial-monitor caveats: **[BUILDIN
 The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch screen — and its position
 **follows the orientation** (the game viewport is 720x480 and is never overlapped).
 **Since v0.4.9 one image supports both orientations**: asked at first boot, changeable later in
-`Options → Screen orientation` (the choice is stored in NVS and the device reboots into it).
+`Settings → Screen orientation` (the choice is stored in NVS and the device reboots into it).
 
 **Portrait** — game pinned to the top, pad in the control area below:
 
@@ -175,7 +175,7 @@ The Tab5 has almost no physical buttons, so the gamepad is drawn on the touch sc
 +----------------------------------------------------------------+
 ```
 
-- **Orientation** — `Options → Screen orientation` switches portrait / landscape (asked at first boot;
+- **Orientation** — `Settings → Screen orientation` switches portrait / landscape (asked at first boot;
   the choice persists in NVS and the device reboots into it)
 - **D-pad** — portrait: control area, bottom-left; landscape: left side of the screen
 - **A / B / X / Y** — control area, bottom-right, diamond layout, each key its own colour

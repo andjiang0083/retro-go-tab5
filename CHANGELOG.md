@@ -10,7 +10,7 @@ See [CHANGELOG_CN.md](CHANGELOG_CN.md) for the Chinese version.
 ### New: orientation switching
 
 - **One image supports both portrait and landscape**: the first boot asks which one you want, and you can change
-  it any time in `Options → Screen orientation`. The choice is stored in NVS and the device reboots into it.
+  it any time in `Settings → Screen orientation`. The choice is stored in NVS and the device reboots into it.
 - **Orientation is a runtime value, not two separately built firmwares**: the geometry table
   (`targets/tab5/geom.h`), the touch layout tables and the X/Y ↔ L/R swap key coordinates are all resolved at
   runtime for the active orientation. The whole tree was swept — no third place is left that picks a variant at

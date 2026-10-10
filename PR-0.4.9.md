@@ -6,7 +6,7 @@ Closes: 无对应 issue（本版按发布计划推进）。
 ## Why
 
 横竖屏此前是"编两份固件"（`#if RG_TAB5_ORIENTATION` 选表）⇒ 两份镜像、两套皮肤、装错就错。
-本版把方向变成**运行时真值**：一份镜像两个方向，首次开机询问，之后在 `Options → Screen orientation` 改，
+本版把方向变成**运行时真值**：一份镜像两个方向，首次开机询问，之后在 `Settings → Screen orientation` 改，
 选择存 NVS、写后自动重启生效。
 
 - 几何表（`targets/tab5/geom.h`）改为按方向取；宏仍以 `rg_geom()` 形式暴露 ⇒ 40 处调用点一字未改。
