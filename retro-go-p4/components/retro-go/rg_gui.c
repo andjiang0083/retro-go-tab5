@@ -1,5 +1,6 @@
 #include "rg_system.h"
 #include "rg_touch_overlay.h"    /* 虚拟手柄（触摸按键）可视层的运行时开关/透明度 */
+#include "rg_orient.h"
 #include "rg_gui.h"
 #include "rg_cjk.h"
 
@@ -629,13 +630,66 @@ void rg_gui_draw_icons(void)
 
 void rg_gui_draw_hourglass(void)
 {
+    /* ⚠ 横竖屏通用：只在**可见区**内居中，且必须夹进可见区。
+     * image_hourglass 是 720x720；横屏可见区只有 720x480 ⇒ 若照老写法按"屏幕居中"算，
+     * 得到 top = (480-720)/2 = **-120**，而 rg_display_write_rect 不裁负的 top ⇒ 驱动收到非法窗口
+     * （真机日志：`lcd_set_window: Bad lcd window (x0=280, y0=0, w=1280, h=720)`）⇒
+     * 一次 1280x720 的错位推送 ≈ 1.84MB 写到错误位置，是"蓝屏闪烁"和后续 panic 的头号嫌疑。
+     * 竖屏：可见区 720x1280 ⇒ w=720 h=720、x=0 y=280、源偏移 0 ⇒ 结果与改动前**逐字节相同**。 */
+    const int vw = rg_display_get_width(), vh = rg_display_get_height();
+    const int sw = image_hourglass.width, sh = image_hourglass.height;
+    const int w = RG_MIN(sw, vw), h = RG_MIN(sh, vh);
+    const int x = (vw - w) / 2, y = (vh - h) / 2;
+    const int sx = (sw - w) / 2, sy = (sh - h) / 2;   /* 超界时从图像正中取景，而不是取左上角 */
+
     rg_display_write_rect(
-        get_horizontal_position(RG_GUI_CENTER, image_hourglass.width),
-        get_vertical_position(RG_GUI_CENTER, image_hourglass.height),
-        image_hourglass.width,
-        image_hourglass.height,
-        image_hourglass.width * 2,
-        (uint16_t*)image_hourglass.pixel_data, 0);
+        x, y, w, h,
+        sw * 2,
+        (uint16_t*)image_hourglass.pixel_data + sy * sw + sx, 0);
+}
+
+/* ---------------------------------------------------------------- 屏幕方向选择（S2）
+ * 用户要求（2026-10-09 逐字）："第一次使用，弹窗，让用户选择横还是竖，要说明设置哪里可以重选。
+ * 默认是竖屏。"  设计见 docs/SPEC-S2-ORIENTATION-SWITCH.md。
+ *
+ * 实现上**完全复用现成的对话框机制**（title + options + MESSAGE 信息行），因此没有任何新的绘制代码，
+ * 也就没有新的视觉风险。id 故意取 0/1 与 RG_ORIENT_PORTRAIT/LANDSCAPE 一致 —— 这样无论
+ * rg_gui_dialog 返回的是"选项 id"还是"行下标"，前两行的取值都相同，不存在口径歧义。 */
+
+int rg_gui_dialog_orientation(void)
+{
+    const rg_gui_option_t options[] = {
+        {RG_ORIENT_PORTRAIT,  _("Portrait (default)"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        {RG_ORIENT_LANDSCAPE, _("Landscape"),          NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        RG_DIALOG_SEPARATOR,
+        {0, _("You can change this later in"),   NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, _("Settings > Screen orientation"),  NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        RG_DIALOG_END,
+    };
+
+    intptr_t selected = rg_gui_dialog(_("Choose screen orientation"), options, 0);
+    /* ⚠ 取消必须原样传出去：早先写成 `(selected == LANDSCAPE) ? LANDSCAPE : PORTRAIT`，
+     * 于是"按返回键取消"会被伪装成"选了竖屏" ⇒ 横屏下取消会弹出"要切回竖屏吗"的确认框（2026-10-09 实机暴露）。
+     * 用 RG_ORIENT_UNSET(-1) 当取消信号，调用方一律按"什么都没做"处理。 */
+    if (selected == RG_DIALOG_CANCELLED)
+        return RG_ORIENT_UNSET;
+    return (selected == RG_ORIENT_LANDSCAPE) ? RG_ORIENT_LANDSCAPE : RG_ORIENT_PORTRAIT;
+}
+
+/* 二次选择时的重启确认（用户 2026-10-08 拍板②：必须告知会重启 / 请先存档 / 点 OK 才继续）。
+ * 返回 true = 用户点了"Restart & switch"。 */
+bool rg_gui_dialog_orientation_confirm(void)
+{
+    const rg_gui_option_t options[] = {
+        {0, _("Cancel"),            NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        {1, _("Restart & switch"),  NULL, RG_DIALOG_FLAG_NORMAL, NULL},
+        RG_DIALOG_SEPARATOR,
+        {0, _("The device will restart now."), NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, _("Save your game before continuing!"), NULL, RG_DIALOG_FLAG_MESSAGE, NULL},
+        RG_DIALOG_END,
+    };
+
+    return rg_gui_dialog(_("Switching screen orientation"), options, 0) == 1;
 }
 
 void rg_gui_draw_status_bars(void)
@@ -867,6 +921,19 @@ void rg_gui_draw_message(const char *format, ...)
     };
     // FIXME: Should rg_display_force_redraw() be called? Before? After? Both?
     rg_gui_draw_dialog(NULL, options, 0);
+}
+
+void rg_gui_draw_restart_notice(const char *text)
+{
+    /* 整屏黑底：**不能用主题底色** —— 主题 dialog.background = 0x0010 解出来是深蓝，
+     * 正是用户误认成"崩溃蓝屏"的那个颜色（见 rg_gui.h 声明处说明）。
+     * ⚠ 坐标一律按**可见区**算（rg_display_get_width/height），不要用画布尺寸
+     * （§232：横屏画布 1280x720 而可见区 720x480，按画布算会得到越界窗口）。 */
+    rg_display_clear(0x0000);
+    const int vw = rg_display_get_width(), vh = rg_display_get_height();
+    if (text && *text)
+        rg_gui_draw_text(0, vh / 2, vw, text, C_WHITE, C_BLACK, RG_TEXT_ALIGN_CENTER);
+    rg_display_sync(true);   /* 阻塞到真的送上面板：重启就在下一行，不能异步丢帧 */
 }
 
 intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, int selected_index)
@@ -1734,29 +1801,52 @@ void rg_gui_options_menu(void)
         {0, _("Launcher options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},
         RG_DIALOG_END,
     };
-    const rg_gui_option_t game_options[] = {
+    /* 0.4.9：Scaling/Factor 两项要不要出现，得**按当前方向**决定（横屏锁定缩放 ⇒ 不出现），
+     * 而同一个镜像要装两个方向 ⇒ 原来那个 `#if !RG_DISPLAY_LOCK_SCALING` 必须改成运行时选表。
+     * 写法：共享尾巴用宏只写一份（抄两份必然漂移），两张表各自动静态初始化，运行时选指针。 */
+    #define RG_GAME_OPTIONS_TAIL                                                                     \
+        {0, _("Filter"),        "-", RG_DIALOG_FLAG_NORMAL, &filter_update_cb},                      \
+        {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},                      \
+        {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},                     \
+        /* {0, _("Misc options"),  NULL, RG_DIALOG_FLAG_NORMAL, &misc_options_cb}, */                \
+        /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备               \
+         * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。     \
+         * 透明度仍可调，它不会让人失去输入。 */                                                      \
+        RG_GAME_OPTIONS_TOUCH                                                                        \
+        {0, _("Emulator options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},                    \
+        RG_DIALOG_END
+
+    #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    #define RG_GAME_OPTIONS_TOUCH                                                                 \
+        {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},                  \
+        {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
+    #else
+    #define RG_GAME_OPTIONS_TOUCH
+    #endif
+
+    /* 【锁缩放的 target 不出现这两项】横屏下画面必须恒定 ZOOM（按键不压画面）—— 见
+     * targets/tab5/geom.h 的 lock_scaling（横屏 1 / 竖屏 0）。
+     * ⚠ 这两个数组**不能加 static**：表里的 _("…") 是 rg_gettext() 调用，不是常量表达式，
+     *   而 C 要求静态初始化必须是常量 —— 原代码那个数组本来就不是 static（C99 允许非常量初始化）。 */
+    const rg_gui_option_t game_options_locked[] = {
+        RG_GAME_OPTIONS_TAIL,
+    };
+    const rg_gui_option_t game_options_free[] = {
         {0, _("Scaling"),       "-", RG_DIALOG_FLAG_NORMAL, &scaling_update_cb},
         {0, _("Factor"),        "-", RG_DIALOG_FLAG_HIDDEN, &custom_zoom_cb},
-        {0, _("Filter"),        "-", RG_DIALOG_FLAG_NORMAL, &filter_update_cb},
-        {0, _("Border"),        "-", RG_DIALOG_FLAG_NORMAL, &border_update_cb},
-        {0, _("Speed"),         "-", RG_DIALOG_FLAG_NORMAL, &speedup_update_cb},
-        // {0, _("Misc options"),  NULL, RG_DIALOG_FLAG_NORMAL, &misc_options_cb},
-        #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
-        /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备
-         * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
-         * 透明度仍可调，它不会让人失去输入。 */
-        {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
-        {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
-        #endif
-        {0, _("Emulator options"), NULL, RG_DIALOG_FLAG_NORMAL, &app_options_cb},
-        RG_DIALOG_END,
+        RG_GAME_OPTIONS_TAIL,
     };
+    const rg_gui_option_t *game_options = rg_geom()->lock_scaling ? game_options_locked : game_options_free;
+    /* 被锁定时少两项 ⇒ 条数不同，后面 memcpy 必须用运行时条数（不能再用 sizeof(game_options)）。 */
+    const size_t game_options_count = RG_COUNT(game_options_free) - (rg_geom()->lock_scaling ? 2 : 0);
+    #undef RG_GAME_OPTIONS_TAIL
+    #undef RG_GAME_OPTIONS_TOUCH
 
     const rg_app_t *app = rg_system_get_app();
     if (app->isLauncher)
         memcpy(options + get_dialog_items_count(options), misc_options, sizeof(misc_options));
     else
-        memcpy(options + get_dialog_items_count(options), game_options, sizeof(game_options));
+        memcpy(options + get_dialog_items_count(options), game_options, game_options_count * sizeof(rg_gui_option_t));
 
     rg_audio_set_mute(true);
 

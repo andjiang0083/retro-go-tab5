@@ -12,6 +12,14 @@ LOG_SECS="${2:-30}"
 # 可覆盖的环境变量：IDF_ENV_SH（ESP-IDF 的 export.sh，默认 $HOME/esp/esp-idf-v5.5/export.sh）、
 #                  DEV_TREE（仓库根，默认 = 本脚本所在目录的上一级）、IDF_PYTHON_ENV_PATH（可选）。
 : "${DEV_PORT:=/dev/cu.usbmodem1101}"   # 显式端口：esptool 自动选会抓到 /dev/cu.debug-console，刷不上
+# 刷写参数可覆盖 —— USB-Serial/JTAG 偶发
+#   "A fatal error occurred: Failed to leave compressed flash mode (result was C900: Too much data)"
+# （握手阶段就失败，**一个字节都没写进 flash**，设备状态不会被改坏）。降速+关压缩是标准兜底：
+#   FLASH_BAUD=460800 FLASH_NO_COMPRESS=1 tools/flash-tab5.sh <merged.bin> [日志秒数]
+: "${FLASH_BAUD:=921600}"
+: "${FLASH_NO_COMPRESS:=}"              # 非空 = 用 --no-compress（esptool 5.x 的 -u）
+COMPRESS_FLAG="-z"
+[ -n "$FLASH_NO_COMPRESS" ] && COMPRESS_FLAG="--no-compress"
 : "${IDF_ENV_SH:=$HOME/esp/esp-idf-v5.5/export.sh}"
 : "${DEV_TREE:=$(cd "$(dirname "$0")/.." && pwd)}"
 if [ -n "${IDF_PYTHON_ENV_PATH:-}" ]; then export IDF_PYTHON_ENV_PATH; fi
@@ -23,8 +31,8 @@ echo "=== FLASH START $(date '+%F %T')  $IMG ==="
 #   当作"设备重启"重试（最多 3 次），不要当成刷写失败。
 for attempt in 1 2 3; do
     echo "--- attempt $attempt ---"
-    python3 -m esptool --chip esp32p4 -p "$DEV_PORT" -b 921600 --before default_reset --after hard_reset \
-        write_flash -z 0x0 "$IMG"
+    python3 -m esptool --chip esp32p4 -p "$DEV_PORT" -b "$FLASH_BAUD" --before default_reset --after hard_reset \
+        write_flash $COMPRESS_FLAG 0x0 "$IMG"
     rc=$?
     echo "--- attempt $attempt rc=$rc ---"
     [ $rc -eq 0 ] && break

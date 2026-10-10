@@ -43,8 +43,17 @@
 /* 电量圆灯几何（逻辑像素）。提到文件头部的原因：建层时机（rg_overlay_init）也要用它 ——
  * 皮肤面板的机型铭牌锚在"菱形键底 ~ 圆灯顶"的正中，所以面板生成需要这两个数。
  * 原来定义在文件后段，只能被后面的函数引用。 */
-#define RG_BATT_LED_CX       360
-#define RG_BATT_LED_CY       1025    /* 兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
+/* 灯位（两种方向各一套）：
+ *   竖屏：控制区中部，x 360 = 逻辑屏半宽；y 由皮肤布局推导（rg_touch_skin_led_cy），下面的值只是兜底。
+ *   横屏：**左下角留白**（用户 2026-10-08："铭牌+圆灯放左下角"）—— 那块 x[0,280) y[547,720)
+ *     在所有机型的最大游戏窗之外（GB 4x 左边界 320 / 下边界 696 都不进来），
+ *     也不与右下角挪过去的系统键重叠。横屏是**定点**，不跟控制区走（见 rg_overlay_try_panel）。
+ * 圆灯半径/圈宽两方向共用（12/3），横屏同样大小——面板物理像素密度一样。 */
+/* 0.4.9：灯位改成**运行时**表达式（同一个镜像两个方向），调用点一字不改。
+ * 判据 = 逻辑画面是不是横的（等价于原来那个 #if）。 */
+#define RG_BATT_LED_IS_LANDSCAPE (rg_geom()->w > rg_geom()->h)
+#define RG_BATT_LED_CX       (RG_BATT_LED_IS_LANDSCAPE ? 140 : 360)
+#define RG_BATT_LED_CY       (RG_BATT_LED_IS_LANDSCAPE ? 675 : 1025)    /* 竖屏兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
 #define RG_BATT_LED_R        12
 #define RG_BATT_LED_RING     3
 /* 灯条带 Y 范围不再写死：跟着 led_cy_cur 走（见 rg_batt_led_get_band），
@@ -200,7 +209,9 @@ static int skin_idx = 0;
 static char console_id[16] = "";
 /* 圆灯中心 y（物理像素）：面板与灯条带共用**同一个推导值** —— 两边各写常量必然漂移。
  * 面板装好/换皮肤时由 rg_touch_skin_led_cy() 更新。 */
-static int led_cy_cur = RG_BATT_LED_CY;
+/* 0.4.9：灯位是运行时值 ⇒ **不能在静态初始化里读**（C 要求静态初始化是常量表达式）。
+ * 先给竖屏兜底值，然后在 rg_overlay_init()（显示初始化时必被驱动调用）里按当前方向修正。 */
+static int led_cy_cur = 1025;
 
 /* ---------------------------------------------------------------- 颜色工具 */
 
@@ -609,6 +620,11 @@ void rg_overlay_init(void)
     if (ready)
         return;
 
+    /* 0.4.9：灯位是运行时值（横竖各一套）⇒ 在这里按当前方向给初值 —— 静态初始化给不了
+     * （C 要求静态初始化是常量表达式）。竖屏后续会被 rg_touch_skin_led_cy() 的推导覆盖；
+     * 横屏是定点，就用这个值。 */
+    led_cy_cur = RG_BATT_LED_CY;
+
     /* ⚠ 先把用户设置读进来，再碰任何可能失败的分配：
      * 一旦下面某步失败（PSRAM 分配等）而这里没读到，visible 会停在默认 true
      * → 叠加层什么都不画（看起来"按键已关闭"）但触摸命中照旧生效 —— 这就是
@@ -847,7 +863,10 @@ static void rg_overlay_try_panel(void)
     panel_vp_x = win_x_cur; panel_vp_w = win_w_cur; panel_vp_top = ctrl_top_cur;
     dirty_panel_strip = true;   /* 让下一帧把整条控制区重铺一遍（见 dirty_panel_strip 的说明） */
     /* 灯位从布局推导（与面板同源）。条带跟着它走，所以灯动条带也动。 */
-    led_cy_cur = rg_touch_skin_led_cy(ctrl_top_cur, RG_BATT_LED_R);
+    /* 灯位从布局推导（与面板同源）。**横屏例外**：横屏的灯钉在左下角（RG_BATT_LED_CY），
+     * 套竖屏那套"在控制区里居中"的推导会把它算到游戏画面附近去（用户 2026-10-08 指定左下角）。 */
+    if (RG_SCREEN_WIDTH <= RG_SCREEN_HEIGHT)
+        led_cy_cur = rg_touch_skin_led_cy(ctrl_top_cur, RG_BATT_LED_R);
     /* 这一行是"面板到底装上了没"的唯一判据（真机日志）：装上=控制区有底图；
      * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。
      * 中间三个数是**本次安装用的视口**：GBA x=0 w=720 top=480 / GB x=120 w=480 top=456 /
@@ -1162,7 +1181,12 @@ int rg_overlay_take_dirty_rects(int *out_xywh, int max)
         out_xywh[0] = 0;
         out_xywh[1] = ctrl_top_cur;                       /* 跟视口走（GBA 480 / GB 456 / NES 480） */
         out_xywh[2] = RG_SCREEN_WIDTH;
-        out_xywh[3] = RG_OVERLAY_PANEL_H - ctrl_top_cur;
+        /* ⚠ 必须是**画布高度**（横屏 720 / 竖屏 1280），不能写死 1280：
+         * 2026-10-08 夜真机日志 —— 横屏下写死 1280 得到 (0,480,1280,800)，
+         * 显示层再按"画布→可见区"归一后越界 → `lcd_set_window: Bad lcd window
+         * (x0=280, y0=600, w=1280, h=240)`（同一条日志里还跟着一次 msync 报错）。
+         * 竖屏下 RG_SCREEN_HEIGHT 就是 1280，故竖屏行为逐字节不变。 */
+        out_xywh[3] = RG_SCREEN_HEIGHT - ctrl_top_cur;
         return 1;
     }
 
@@ -1595,7 +1619,13 @@ uint16_t rg_batt_led_band_bg(void)
     return rg_touch_skin_panel_bg565(skin_idx);
 }
 
-void rg_batt_led_draw(uint16_t *buf, int stride)
+/* 圆灯像素算法（**唯一一份**）：竖屏线性写、横屏 90CW 映射写，只有索引不同。
+ *   cw90=false：物理 = 逻辑，写 buf[ly*stride + lx]（竖屏驱动用，字节与改前完全一致）
+ *   cw90=true ：物理 px = phys_w-1-ly、py = lx（横屏驱动用）——
+ *               口径必须与 rg_overlay_blit_cw90() / mipi_dsi_tab5.h 的映射完全一致。
+ * 横屏不套"灯条带"裁剪（那是竖屏整行擦写用的），只受画布边界约束：
+ * 灯本身就是一个小方块，物理侧由调用方按 rg_batt_led_get_rect()+映射算出矩形来擦/写回。 */
+static void batt_led_draw_impl(uint16_t *buf, int stride, bool cw90, int phys_w)
 {
     if (!buf || stride <= 0)
         return;
@@ -1626,9 +1656,17 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
     for (int dy = -R; dy <= R; ++dy)
     {
         const int ly = led_cy_cur + dy;
-        if (ly < by0 || ly >= by1)
-            continue;
-        uint16_t *row = buf + (size_t)ly * stride;
+        uint16_t *row = NULL;                 /* 线性路径的整行基址；cw90 路径不用它 */
+        if (!cw90)
+        {
+            if (ly < by0 || ly >= by1)
+                continue;
+            row = buf + (size_t)ly * stride;
+        }
+        else if (ly < 0 || ly >= RG_SCREEN_HEIGHT)
+        {
+            continue;                          /* cw90 下 ly 决定**物理列**，受逻辑高约束 */
+        }
         for (int dx = -R; dx <= R; ++dx)
         {
             const int lx = RG_BATT_LED_CX + dx;
@@ -1651,9 +1689,35 @@ void rg_batt_led_draw(uint16_t *buf, int stride)
             /* 圈与芯同源（芯 = 键色*0.55）→ 合成一次缩放：分子 = Σ α*覆盖率*色深%
              * 再乘充电呼吸的亮度系数 bright/255（硬闪时 bright=255，行为与以前一致）。 */
             const int num = (a_ring * (cov_out - cov_in) * ring_pct + a_fill * cov_in * fill_pct) * bright / 255;
-            row[lx] = c565_scale(base, num, 4 * 255 * 100);
+            if (cw90)
+                buf[(size_t)lx * stride + (phys_w - 1 - ly)] = c565_scale(base, num, 4 * 255 * 100);
+            else
+                row[lx] = c565_scale(base, num, 4 * 255 * 100);
         }
     }
+}
+
+/* 竖屏入口：线性写（逻辑 = 物理）。签名不变 —— 竖屏驱动那一处调用不用动。 */
+void rg_batt_led_draw(uint16_t *buf, int stride)
+{
+    batt_led_draw_impl(buf, stride, false, 0);
+}
+
+/* 横屏入口：90CW 映射写。phys_w = 物理面板宽（= 逻辑屏高，720），一路传给索引换算。 */
+void rg_batt_led_draw_cw90(uint16_t *buf, int stride, int phys_w)
+{
+    batt_led_draw_impl(buf, stride, true, phys_w);
+}
+
+/* 灯的**紧贴逻辑矩形**（含 BAND_PAD 余量）：横屏驱动用它按映射算出物理矩形，
+ * 再做"擦底 + 定点 msync"（竖屏不用它 —— 竖屏擦的是跟随灯位的整行条带，见 rg_batt_led_get_band）。 */
+void rg_batt_led_get_rect(int *x0, int *y0, int *x1, int *y1)
+{
+    const int p = RG_BATT_LED_R + RG_BATT_LED_BAND_PAD;
+    if (x0) *x0 = RG_BATT_LED_CX - p;
+    if (y0) *y0 = led_cy_cur - p;
+    if (x1) *x1 = RG_BATT_LED_CX + p + 1;
+    if (y1) *y1 = led_cy_cur + p + 1;
 }
 
 /* tab5 专用（**横屏版驱动专用**；竖屏线性分支不再调用它 —— 那份走下面的

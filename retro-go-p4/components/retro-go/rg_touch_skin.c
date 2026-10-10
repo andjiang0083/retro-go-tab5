@@ -523,16 +523,35 @@ rg_surface_t *rg_touch_panel_get(int skin_idx, const char *console_id, int ctrl_
                     to565(cluster_fill), cluster_fill != 0, to565(cluster_line), cluster_line != 0);
     }
 
-    /* ⑤ 机型铭牌（文案随核心变） */
+    /* ⑤ 机型铭牌（文案随核心变）—— **横屏搬到左下角**（用户 2026-10-08 真机反馈：
+     * "铭牌+圆灯放左下角"，那块留白在所有机型最大游戏窗之外：x[0,280) y[547,720)，
+     * 左边界离 GB 4x 游戏窗（x320）还有 20px+，下边界离画布底 720 有 20px）。
+     *
+     * 竖屏口径**逐字节不变**：x 居中 360（= 逻辑屏半宽）、y 用 layout_compute 推的 badge_cy、
+     * 字距/底板沿用上面那组宏（RG_TOUCH_PANEL_BADGE_*）。
+     * 横屏只改三件事：x 居中 150、y 钉 600、**字距收紧到 1** ——
+     *   最长文案 "GAME BOY COLOR"（14 字）@scale2 + track3 = 263px，加底板 56 = 319px，
+     *   在 280 宽的留白里居中会顶出左边界（x 从 -9 起）并贴住游戏窗；track1 = 237px + 56 = 293px ✓。
+     * ⚠ 位置/字距做成**局部量**而不是改上面那些宏：那几个宏被 tools/preview-skin.py 解析，
+     *   包进 #if 会让 PC 预览解析到另一个分支的值（同一个数两处来源 = 必然漂移）。 */
+    const bool land = RG_SCREEN_WIDTH > RG_SCREEN_HEIGHT;
+    const int badge_cx = land ? 140 : 360;
+    const int badge_track = land ? 1 : RG_TOUCH_PANEL_BADGE_TRACK;
+    /* 横屏底板两侧各收 12px（56 → 24）：最长文案 "GAME BOY COLOR" 的底板从 293 收到 261，
+     * 居中在 140 → x[9,270)，离 GBA 游戏窗左边界 280 留 10px。
+     * （首版用 56 算出来 x[4,296) —— 硬核验发现右边缘戳进游戏窗 16×23px。） */
+    const int badge_pad_x = land ? 24 : RG_TOUCH_PANEL_BADGE_PAD_X;
+    if (land)
+        badge_cy = 600;
     const char *badge = console_entry(cid)->badge;
     const int tw = (int)strlen(badge) * 8 * RG_TOUCH_PANEL_BADGE_SCALE +
-                   ((int)strlen(badge) - 1) * RG_TOUCH_PANEL_BADGE_TRACK;
-    const int pw = tw + RG_TOUCH_PANEL_BADGE_PAD_X;
+                   ((int)strlen(badge) - 1) * badge_track;
+    const int pw = tw + badge_pad_x;
     const int ph = 8 * RG_TOUCH_PANEL_BADGE_SCALE + RG_TOUCH_PANEL_BADGE_PAD_Y;
     if (badge_fill)
-        panel_rrect(panel, 360 - pw / 2, badge_cy - ph / 2, pw, ph, RG_TOUCH_PANEL_BADGE_R,
+        panel_rrect(panel, badge_cx - pw / 2, badge_cy - ph / 2, pw, ph, RG_TOUCH_PANEL_BADGE_R,
                     to565(badge_fill), true, to565(badge_line), true);
-    panel_text(panel, 360, badge_cy, RG_TOUCH_PANEL_BADGE_SCALE, RG_TOUCH_PANEL_BADGE_TRACK,
+    panel_text(panel, badge_cx, badge_cy, RG_TOUCH_PANEL_BADGE_SCALE, badge_track,
                badge, to565(badge_text));
 
     RG_LOGI("touch skin: panel rebuilt for skin %s / console '%s' (ctrl_top=%d, badge_y=%d, %d ms)\n",

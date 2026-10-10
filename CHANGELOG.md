@@ -5,6 +5,36 @@ See [CHANGELOG_CN.md](CHANGELOG_CN.md) for the Chinese version.
 
 ---
 
+## v0.4.9 — Portrait or landscape: one image, both orientations
+
+### New: orientation switching
+
+- **One image supports both portrait and landscape**: the first boot asks which one you want, and you can change
+  it any time in `Options → Screen orientation`. The choice is stored in NVS and the device reboots into it.
+- **Orientation is a runtime value, not two separately built firmwares**: the geometry table
+  (`targets/tab5/geom.h`), the touch layout tables and the X/Y ↔ L/R swap key coordinates are all resolved at
+  runtime for the active orientation. The whole tree was swept — no third place is left that picks a variant at
+  compile time.
+- **Landscape has its own pad layout**: game centred, D-pad on the left, A/B/X/Y diamond on the right, L/R in the
+  top corners, and the **X/Y ↔ L/R swap key centred between L and R**; hit areas are re-laid out for landscape
+  and never cover the game.
+
+### Improved
+
+- **Back to a single-app release** (v0.4.8 shipped two apps): the menu and all 11 cores compile into one app, so
+  no "single app image only" installer can produce a menu whose games never start. Same trade-off as v0.4.7: the
+  in-menu `Check for updates` is gone (it needs a second app partition).
+- **Image-shape gate before packaging**: a stale partition layout or incomplete app data is caught before the
+  package is produced (`tools/check-single-app-image.py`).
+- The flash script falls back to a lower baud / `--no-compress` when the USB-Serial/JTAG handshake fails.
+
+### Docs
+
+- README and the screenshot section now carry a **real-hardware landscape photo** (every label and position in it
+  was checked against the firmware's own landscape layout table).
+- New `docs/SPEC-0.4.9-SINGLE-APP.md` (design) and `docs/HANDOFF-0.4.9-SINGLE-APP.md` (handoff + on-device
+  acceptance record).
+
 ## v0.4.7 — multi-core expansion, four touch skins, and per-console controls
 
 The big one: the port stops being "a GBA machine" and becomes an 11-console retro handheld.

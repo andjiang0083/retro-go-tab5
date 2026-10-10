@@ -2,6 +2,7 @@
 #include "rg_display.h"
 #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
 #include "rg_touch_overlay.h"   /* 叠加层改内容后请求"整屏重推"（见 write_update） */
+#include "rg_touch_skin.h"      /* rg_touch_has_shoulders：按机型选"画面可用区"档位 */
 #endif
 
 #include <stdlib.h>
@@ -39,9 +40,9 @@ static rg_surface_t *osd;
 static rg_surface_t *border;
 static bool border_foreign;   /* border 指向的是别人（rg_touch_skin.c）持有的内存面板 */
 static rg_display_t display;
-static int16_t map_viewport_to_source_x[RG_SCREEN_WIDTH + 1];
-static int16_t map_viewport_to_source_y[RG_SCREEN_HEIGHT + 1];
-static uint32_t screen_line_checksum[RG_SCREEN_HEIGHT + 1];
+static int16_t map_viewport_to_source_x[RG_GEOM_MAX_W + 1];   /* 0.4.9：按两方向最大值分配 */
+static int16_t map_viewport_to_source_y[RG_GEOM_MAX_H + 1];
+static uint32_t screen_line_checksum[RG_GEOM_MAX_H + 1];
 
 /* 驱动侧丢块的上报入口（在驱动里被调用）。丢块 = 这一块**没推到面板**，
  * 而行校验和是在推送之前就写好的 —— 不把校验和退回"未知"，这块就永久定格：
@@ -148,10 +149,11 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length);
 
 #if RG_SCREEN_DRIVER == 0 /* ILI9341/ST7789 */
 #include "drivers/display/ili9341.h"
-#elif RG_SCREEN_DRIVER == 2 /* MIPI DSI (M5Stack Tab5 / ST7123) */
-#include "drivers/display/mipi_dsi_tab5.h"
-#elif RG_SCREEN_DRIVER == 3
-#include "drivers/display/mipi_dsi_tab5_p.h"
+#elif RG_SCREEN_DRIVER == 2 || RG_SCREEN_DRIVER == 3 || RG_SCREEN_DRIVER == 4
+/* Tab5（含 0.4.9 单 app 双方向）：两份驱动同编，运行时按方向选一份。
+ * 契约：下面所有 lcd_* 调用点一字不改 —— 分发层把它们定义成 static inline 转发器。
+ * 单方向构建（双 app 形态 / 或单一方向的实验档）走的也是这里，结果与改造前逐字一致。 */
+#include "drivers/display/tab5_dispatch.h"
 #elif RG_SCREEN_DRIVER == 99
 #include "drivers/display/sdl2.h"
 #else
@@ -228,7 +230,13 @@ static inline void write_update(const rg_surface_t *update)
                     dirty_count, draw_left, draw_top, draw_width, draw_height);
         for (int i = 0; i < dirty_count; ++i)
         {
-            const int rx = rects[i * 4 + 0], ry = rects[i * 4 + 1];
+            /* ⚠ 坐标口径：这些矩形来自触摸键位表 → 是**画布坐标**（横屏 1280x720，
+             * 按键本来就落在可见区外的留白里）；而本函数往下（视口比较 / rg_display_clear_rect）
+             * 一律用**可见区坐标**。所以先减 margins 归一，否则会像 2026-10-08 夜那样
+             * 把 margins 加第二遍（真机：Bad lcd window (280,600,1280,240)）。
+             * 竖屏 margins=0，此处恒等，行为逐字节不变。 */
+            const int rx = rects[i * 4 + 0] - display.screen.margins.left;
+            const int ry = rects[i * 4 + 1] - display.screen.margins.top;
             const int rw = rects[i * 4 + 2], rh = rects[i * 4 + 3];
             if (rx >= draw_left && ry >= draw_top &&
                 rx + rw <= draw_left + draw_width && ry + rh <= draw_top + draw_height)
@@ -663,6 +671,41 @@ double rg_display_get_custom_zoom(void)
     return config.custom_zoom;
 }
 
+/* 按机型切换"画面可用区"：横屏下"没有肩键行"的机型（GB/GBC/NES/GG/SMS/COL/PCE/GW/Lynx）
+ * 把上边界抬到 0、下边界放到 576 —— 顶部那条本来就没键，让 4x 画面（640×576）吃满它；
+ * 有肩键行的机型（GBA/SNES/菜单）沿用 {280,120,280,120}（顶部留给 L/R + L/R 调换键）。
+ * 谁调用：retro-core/main/main.c 的 app_main()（每个核心二进制都会经过），紧随 rg_system_init()。
+ * ⚠ 时机：必须在核心第一帧之前 —— 视口（display.viewport）是在那时按可见区算出来的。
+ * 竖屏两个档位同值 → 本函数恒等，行为与改动前逐字节一致。 */
+void rg_display_set_visible_area_for_console(const char *console_id)
+{
+#if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
+    /* 两档都是 4 个 int，用数组选档（margins 是匿名结构字段，没法整体赋值） */
+    const int with_shld[4]    = RG_SCREEN_VISIBLE_AREA;   /* 0.4.9：可见区随方向变 ⇒ 不能 static */
+    const int without_shld[4] = RG_SCREEN_VISIBLE_AREA_NO_SHLD;   /* 0.4.9：可见区随方向变 ⇒ 不能 static */
+    const int *m = rg_touch_has_shoulders(console_id) ? with_shld : without_shld;
+
+    if (display.screen.margins.left == m[0] && display.screen.margins.top == m[1] &&
+        display.screen.margins.right == m[2] && display.screen.margins.bottom == m[3])
+        return;     /* 已经是这一档，别白重算一遍视口 */
+
+    RG_LOGI("visible area: console '%s' → margins %d,%d,%d,%d (was %d,%d,%d,%d)\n",
+            console_id ? console_id : "?", m[0], m[1], m[2], m[3],
+            display.screen.margins.left, display.screen.margins.top,
+            display.screen.margins.right, display.screen.margins.bottom);
+
+    display.screen.margins.left = m[0];
+    display.screen.margins.top = m[1];
+    display.screen.margins.right = m[2];
+    display.screen.margins.bottom = m[3];
+    display.screen.width  = display.screen.real_width  - (m[0] + m[2]);
+    display.screen.height = display.screen.real_height - (m[1] + m[3]);
+    display.changed = true;     /* 让显示任务重算视口（与 set_scaling 同一个触发器） */
+#else
+    (void)console_id;           /* 无触摸叠加层 = 只有一档，无需切换 */
+#endif
+}
+
 void rg_display_set_filter(display_filter_t filter)
 {
     config.filter = RG_MIN(RG_MAX(0, filter), RG_DISPLAY_FILTER_COUNT - 1);
@@ -728,6 +771,18 @@ char *rg_display_get_border(void)
  * ⚠ 只在用户没手选 Border 图时生效（用户的选择优先）。 */
 void rg_display_set_border_surface(rg_surface_t *surface)
 {
+    /* ⚠ 横屏（画布 1280x720）：皮肤的"面板底图"**内容仍是竖屏布局**画的 ——
+     * 分区框 / 凹槽 / "画面-控制区分界线"全按"画面上、控制区下"的竖屏关系算，
+     * 塞进横屏画布后散成几根无来源的细线、短刻度（用户 2026-10-08 真机照片原话：
+     * "皮肤的边框都乱了"；拍照可见：START/MENU 之间一条细横线、画面左侧一条窄竖带带两短刻度）。
+     * 这块艺术要真正横屏化 = 一次 GUI 改动（按用户规矩须**先出图确认**），所以今晚先**不接管**：
+     * 画面干净，按键/铭牌照常显示（它们走叠加层，与本底图无关）。
+     * 回退方式：删掉下面这个分支即可恢复接管。 */
+    if (RG_SCREEN_WIDTH > RG_SCREEN_HEIGHT)
+    {
+        RG_LOGW("display: 横屏下暂不接管内存面板底图（皮肤底图尚未横屏化），保持画面干净\n");
+        return;
+    }
     if (config.border_file)
     {
         RG_LOGI("display: 用户已选边框图 (%s)，内存面板不接管\n", config.border_file);
@@ -903,10 +958,38 @@ void rg_display_write_rect(int left, int top, int width, int height, int stride,
 void rg_display_clear_rect(int left, int top, int width, int height, uint16_t color_le)
 {
     const uint16_t color_be = (color_le << 8) | (color_le >> 8);
+
+    /* 负坐标 / 越界矩形裁剪 —— 与 rg_display_write_rect 同款防御（上游 write_rect 一直有，
+     * clear_rect 一直没有）。不裁的话 lcd_set_window 会收到负的窗口，真机上只打一行
+     * "Bad lcd window" 然后照旧按错坐标推送（且像素数按未裁的算）。GBA/SNES 清黑框时会传出
+     * 负坐标；losoco/retro-go-majula-pulic 也在同一处补了同样的裁剪（2026-10-08 对照）。
+     *
+     * ⚠ 顺序：**先加 margins 再裁剪**。rg_display_clear() 就是靠 left = -margins.left 把窗口
+     *   拉到 (0,0) 的，提前裁剪会把整屏清屏切错位（Tab5 上 margins.left/top 都是 0，
+     *   所以这条目前只在别的 target 上起作用，但契约必须写对）。 */
+    left += display.screen.margins.left;
+    top += display.screen.margins.top;
+    if (left < 0)
+    {
+        width += left;
+        left = 0;
+    }
+    if (top < 0)
+    {
+        height += top;
+        top = 0;
+    }
+    if (left >= display.screen.real_width || top >= display.screen.real_height)
+        return;
+    width = RG_MIN(width, display.screen.real_width - left);
+    height = RG_MIN(height, display.screen.real_height - top);
+    if (width <= 0 || height <= 0)
+        return;
+
     int pixels_remaining = width * height;
     if (pixels_remaining > 0)
     {
-        lcd_set_window(left + display.screen.margins.left, top + display.screen.margins.top, width, height);
+        lcd_set_window(left, top, width, height);
         while (pixels_remaining > 0)
         {
             uint16_t *buffer = lcd_get_buffer(LCD_BUFFER_LENGTH);
@@ -960,6 +1043,15 @@ void rg_display_init(void)
         .border_file = rg_settings_get_string(NS_APP, SETTING_BORDER, NULL),
         .custom_zoom = rg_settings_get_number(NS_APP, SETTING_CUSTOM_ZOOM, RG_DISPLAY_DEFAULT_CUSTOM_ZOOM),
     };
+    /* 【锁定缩放】忽略 NVS 里存过的 Scaling/Factor —— 按**当前方向**判断（横屏锁、竖屏不锁）。
+     * 横屏下"按键不压画面"完全依赖 ZOOM：用户可能在上一个方向（竖屏）存过 FULL 或别的倍数，
+     * 切过来若不强制回默认，画面就会被拉满、按键压到画面上。
+     * 0.4.9：同一个镜像要装两个方向 ⇒ 这里是**运行时**判断（原来靠 #if 编译期分流）。 */
+    if (rg_geom()->lock_scaling)
+    {
+        config.scaling = RG_DISPLAY_DEFAULT_SCALING;
+        config.custom_zoom = RG_DISPLAY_DEFAULT_CUSTOM_ZOOM;
+    }
     display = (rg_display_t){
         .screen.real_width = RG_SCREEN_WIDTH,
         .screen.real_height = RG_SCREEN_HEIGHT,

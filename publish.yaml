@@ -9,9 +9,9 @@ platform_entries:
   - name: retro-go Tab5
     device: Tab5
     category: Games
-    version: "0.4.8"
-    bin: dist/m5burner-0.4.8/retro-go-tab5-0.4.8-merged.bin
+    version: "0.4.9"
+    bin: dist/m5burner-0.4.9/retro-go-tab5-0.4.9-merged.bin
     cover: releases/cover-1280x720-retro-go-tab5-tab5.png
     project_link: "https://github.com/andjiang0083/retro-go-tab5"
     bin_external: true          # 本仓不携带产物（公开仓）→ 跳过 bin 存在性校验
-    readback: "0.4.8 已上架（PUBLISHED/PUBLIC）；描述+封面长板前置版同批资料审核 PENDING（revision=2107448969954467842）；可复现已验：公开仓 tag v0.4.8 全新克隆重编译 == 发布包（分区表一致/入口点一致/3801088B 一致，2026-10-08）"   # 登录态接口回读：0.4.8 已进审核队列（vid 可查 /api/v1/users/me/firmwares）
+    readback: "0.4.9 待上传（单 app 形态：一份镜像支持横竖屏切换；分区表与此前多 app 形态不同，M5Burner 从 0x0 整包写入会把分区表一并更新）"   # 登录态接口回读：0.4.8 已进审核队列（vid 可查 /api/v1/users/me/firmwares）

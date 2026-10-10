@@ -1,0 +1,162 @@
+diff --git a/retro-go-p4/components/retro-go/drivers/display/mipi_dsi_tab5.h b/retro-go-p4/components/retro-go/drivers/display/mipi_dsi_tab5.h
+index 97e703b..d58fa02 100644
+--- a/retro-go-p4/components/retro-go/drivers/display/mipi_dsi_tab5.h
++++ b/retro-go-p4/components/retro-go/drivers/display/mipi_dsi_tab5.h
+@@ -291,7 +291,15 @@ static void lcd_init(void)
+          * 真正的差别在**调用方式**：R8T5 是「一帧一次 PPA」（整个画面一次转完），
+          * 我们是「一块一次 PPA」—— 每条 25.6 行的带子都单独发一次**阻塞** op，
+          * 每秒几十次，每次都有固定开销 + 目的地是"720 行各写 51 字节"的跨行零碎写。
+-         * 结论：PPA 要用就**整帧一次**用，绝不能按块用。先关掉，别再挡路。 */
++         * 结论：PPA 要用就**整帧一次**用，绝不能按块用。先关掉，别再挡路。
++         *
++         * ★ 2026-10-08 复核（重开这条线之前先读这段）：
++         *   · 上面那句"DSI 拒收报错归零 ⇒ PPA 确实在执行"**不可靠**：后来在回滚后的 CPU 路径上
++         *     也抓到过 0 条报错。硬证据只有"每 block 从 0.6~0.9ms 变成 ~25ms"这种耗时特征的剧变。
++         *   · 整帧一次这条形态**至今从未真正跑起来过**：探针三轮 0x102 是它自己漏给
++         *     `.out.buffer_size`（IDF 在 scale/rotation 校验之前先查这一项），不是硬件判死。
++         *     详见本文件 tab5_ppa_frame_probe 上方的完整复核（含 A/B 测法与判据）。
++         *   · 那个"按块导致慢 25 倍"的归因仍是**假设**（与 DPI 抢 PSRAM 带宽），没有隔离验证过。 */
+         bool ppa_allowed = false;
+         /* 无论 PPA 开不开都要缓存帧缓冲指针：每秒一次的叠加层刷新（屏幕帧率数字）要直接写它。
+          * 原先只在 PPA 分支里赋值，导致 PPA 关着时 tab5_fb 是 NULL，叠加层无处可写。 */
+@@ -400,23 +408,53 @@ static uint64_t tab5_pf_tot_xp_us, tab5_pf_tot_ov_us, tab5_pf_tot_dr_us;
+ static uint32_t tab5_pf_px, tab5_pf_tot_px;                     /* 窗口内推送的像素数 */
+ static uint32_t tab5_pf_rows_max;
+ 
+-/* ── 整帧一次 PPA 的耗时测量（唯一还没验证过的形态，2026-09-25）
++/* ── 整帧一次 PPA 的耗时测量（2026-09-25 起草；2026-10-08 查清为何三轮全部 0x102）
++ *
+  * 背景：按块调用 PPA 是死路（每秒几十次阻塞 op，真机实测 1 帧）。R8T5 的 "fast present"
+  * 是**整帧一次**：整个画面一次转完。这里只测一件事 —— 一次 op 把整块逻辑画面
+- * （1280x720 RGB565 = 1.84MB）转进面板帧缓冲要多久。
++ * （1280x720 RGB565 = 1.84MB）转进目标缓冲要多久。
++ *
++ * ★ 2026-10-08 复核结论：此前"三种 scale 变体全部 err=0x102"**不是硬件结论，是本探针的 bug**。
++ *   本函数当时漏给 `.out.buffer_size`（结构体 `= {0}` 初始化 → 实际传了 0）。
++ *   IDF 5.5 的 components/esp_driver_ppa/src/ppa_srm.c:210 是
++ *     `ESP_RETURN_ON_FALSE(out_pic_len <= config->out.buffer_size, ESP_ERR_INVALID_ARG, ...)`
++ *   且它**排在所有 scale / rotation 校验之前**：720*1280*2 = 1,843,200 > 0 → 三个变体在同一个
++ *   地方以同一个错误码死掉。这也解释了"修好帧缓冲 64→128 对齐后毫无变化"
++ *   （tools/patch-idf-dpi-fb-align.py 那次修复是对的，但卡点根本不在对齐）。
++ *   逐条对着 IDF 源码算过：buffer_size 给对之后，整帧 + 旋转 270° + scale 1.0/1.0 能通过全部校验
++ *   （rotation != 0/180 时 new_block_w = scale_y*in.block_h = 720 ≤ out.pic_w、new_block_h =
++ *   scale_x*in.block_w = 1280 ≤ out.pic_h，都是"刚好相等"）。生产路径的按块 PPA 分支也一直是
++ *   1.0/1.0 并且真的跑起来过（只是慢 25 倍）——"1.0/1.0 会被拒"这个说法是错的，两处注释一并更正。
++ *   外部对照：losoco/retro-go-majula-pulic@st7701（P4 + 640x480 ST7701，IDF 5.3.1）的
++ *   drivers/display/st7701.h 就是一份跑得通的整帧 PPA，它每个 op 都显式给了 out.buffer_size。
++ *
++ * 测法（A/B 两个 op，各一次）：
++ *   #0 出图到**对齐的 PSRAM 暂存**（不被面板扫描）→ PPA 纯吞吐上限
++ *   #1 出图到**面板帧缓冲**（面板正以 ~88MB/s 扫它）→ 我们真正要的数字
++ *   两者之差 = "PPA 与 DPI 抢 PSRAM 带宽"的代价（当年判 25x 慢时所依据的假设，至今未被验证）。
+  * 判据：< 5ms → "模拟器画进逻辑帧缓冲 + 每帧一次 PPA" 这条架构可行；
+  *       > 50ms → PPA 在这块板子上彻底结案，不再碰。
+- * 副作用：会把一帧内容写进面板帧缓冲 → 开机后约 1 秒屏幕闪一下黑，随后 launcher 重画。 */
++ * 副作用（只有 #1）：往面板帧缓冲写一帧黑 → 屏幕闪一下黑 + 可能几十条
++ *   "previous draw operation is not finished"；launcher 随后会重画。
++ * 开关：默认 0。改成 1 编译、刷机、读一行日志，量完改回 0（**不要留在发布版里**）。
++ */
++#define RG_TAB5_PPA_FRAME_PROBE 1
++
++#if RG_TAB5_PPA_FRAME_PROBE
+ static void tab5_ppa_frame_probe(void)
+ {
+     const size_t src_bytes = (size_t)1280 * 720 * 2;
+     /* PPA 要求缓冲 128 字节对齐（不对齐会被拒 —— 我们生产代码里就吃过这个亏）。
+      * heap_caps_malloc 不保证 128 对齐，必须显式 aligned_alloc。 */
+     uint16_t *src = (uint16_t *)heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM);
+-    if (!src) { RG_LOGW("PPA-FRAME: 源缓冲申请失败，跳过\n"); return; }
++    uint16_t *scratch = (uint16_t *)heap_caps_aligned_alloc(128, src_bytes, MALLOC_CAP_SPIRAM);
++    if (!src || !scratch) { RG_LOGW("PPA-FRAME: 缓冲申请失败，跳过\n"); heap_caps_free(src); heap_caps_free(scratch); return; }
+     memset(src, 0, src_bytes);
+-    RG_LOGI("PPA-FRAME: src=%p (低7位=%u)  fb=%p (低7位=%u)\n",
+-            src, (unsigned)((uintptr_t)src & 127), tab5_fb, (unsigned)((uintptr_t)tab5_fb & 127));
++    memset(scratch, 0, src_bytes);
++    RG_LOGI("PPA-FRAME: src=%p (低7位=%u) scratch=%p (低7位=%u) fb=%p (低7位=%u)\n",
++            src, (unsigned)((uintptr_t)src & 127),
++            scratch, (unsigned)((uintptr_t)scratch & 127),
++            tab5_fb, (unsigned)((uintptr_t)tab5_fb & 127));
+ 
+     ppa_client_handle_t cli = NULL;
+     ppa_client_config_t ccfg = {
+@@ -431,51 +469,59 @@ static void tab5_ppa_frame_probe(void)
+         return;
+     }
+ 
+-    /* 三种 scale 组合各试一次 —— 现在源和目的都已 128 对齐，可以干净地判断 PPA 认哪个。
+-     * 前几轮测试都被"缓冲没对齐"污染过，那些结果不能作数。
+-     * 顺序：#0 = 1.0/1.0（纯旋转）；#1 = 交换(1280/720, 720/1280)；#2 = 不交换(720/1280, 1280/720)。 */
+-    static const float probe_sx[3] = {1.0f, (float)TAB5_PHYS_H / 720.0f, (float)TAB5_PHYS_W / 1280.0f};
+-    static const float probe_sy[3] = {1.0f, (float)TAB5_PHYS_W / 1280.0f, (float)TAB5_PHYS_H / 720.0f};
+-    for (int i = 0; i < 3; ++i)
++    /* A/B 两个 op：#0 打到对齐的 PSRAM 暂存（不受面板扫描干扰），#1 打到面板帧缓冲。
++     * 两者之差 = 与 DPI 抢带宽的代价。参数一律显式给全（少一项就会踩上面记的那个坑）。 */
++    const char *probe_name[2] = {"scratch", "dfb"};
++    void *probe_dst[2] = {scratch, tab5_fb};
++    for (int i = 0; i < 2; ++i)
+     {
++        if (!probe_dst[i])
++            continue;
++
+         ppa_srm_oper_config_t op = {0};
+         op.in.buffer = src;
+         op.in.pic_w = 1280; op.in.pic_h = 720;
+         op.in.block_w = 1280; op.in.block_h = 720;
++        op.in.block_offset_x = 0;
++        op.in.block_offset_y = 0;
+         op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+-        op.out.buffer = tab5_fb;
++        op.out.buffer = probe_dst[i];
++        /* ★ 这一项就是三轮 0x102 的根因（漏了它 → out_pic_len <= 0，IDF 直接拒）。 */
++        op.out.buffer_size = (uint32_t)src_bytes;
+         op.out.pic_w = TAB5_PHYS_W; op.out.pic_h = TAB5_PHYS_H;
+-        op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+-        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_270;
+-        /* ⚠ 旋转下 scale 的两个轴是**交换**的（照抄 R8T5：scale_x 用高度比、scale_y 用宽度比）。
+-         * 给 1.0/1.0 会被拒（ESP_ERR_INVALID_ARG 0x102）—— 因为那等于说"输出 1280x720"，
+-         * 而旋转后的输出实际是 720x1280。生产路径 mipi_dsi_tab5.h 里也是 1.0/1.0，同样的问题。 */
+-        op.scale_x = probe_sx[i];
+-        op.scale_y = probe_sy[i];
+         op.out.block_offset_x = 0;
+         op.out.block_offset_y = 0;
++        op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
++        op.rotation_angle = PPA_SRM_ROTATION_ANGLE_270;   /* 逆时针 270° == 顺时针 90° */
++        op.scale_x = 1.0f; op.scale_y = 1.0f;             /* 纯旋转；缩放留给 viewport 那层 */
++        op.rgb_swap = false;
++        op.byte_swap = true;                              /* 源 565 大端 → 面板小端 */
++        op.mode = PPA_TRANS_MODE_BLOCKING;
+ 
+         int64_t t0 = esp_timer_get_time();
+         esp_err_t err = ppa_do_scale_rotate_mirror(cli, &op);
+         int64_t dt = esp_timer_get_time() - t0;
+         /* 只用整数格式化：ESP-IDF 的日志不支持 %lld / %f（用了会把后面的参数全部错位）。 */
+         const int mbs10 = dt > 0 ? (int)(1840000 * 10 / dt) : 0;   /* 1.84MB / dt，×10 留一位小数 */
+-        RG_LOGI("PPA-FRAME: #%d 整帧270度 = %d us (输出 %d.%d MB/s) err=0x%x\n",
+-                i, (int)dt, mbs10 / 10, mbs10 % 10, (unsigned)err);
++        RG_LOGI("PPA-FRAME: 整帧270度 -> %s = %d us (输出 %d.%d MB/s) err=0x%x\n",
++                probe_name[i], dt > 0 ? (int)dt : -1, mbs10 / 10, mbs10 % 10, (unsigned)err);
+     }
+ 
+     ppa_unregister_client(cli);
+     heap_caps_free(src);
++    heap_caps_free(scratch);
+ }
++#endif // RG_TAB5_PPA_FRAME_PROBE
+ 
+ static void tab5_perf_report(void)
+ {
+     /* 整帧 PPA 探针：只跑一次（面板已在扫描，拿的是真实条件下的数字）。
+-     * 2026-09-25 结论：三种 scale 变体全部 err=0x102（ESP_ERR_INVALID_ARG），
+-     * 即使源与目的都已 128 对齐 —— 说明还有别的原因，且**那个 9.4ms 不能采信**。
+-     * 探针已停用（它每次启动都往帧缓冲写整帧，会与面板扫描打架 → 真机实测 51~81 条
+-     * "previous draw operation is not finished" 报错）。留着代码备查。 */
+-#if 0
++     * 2026-10-08 复核：当年"三种 scale 变体全部 err=0x102"是探针漏给 `.out.buffer_size` 造成的，
++     * 不是硬件判死 —— 根因与 A/B 测法见 tab5_ppa_frame_probe 上方注释。
++     * 打开方式：把上面的 RG_TAB5_PPA_FRAME_PROBE 改成 1。副作用：会往帧缓冲写整帧，
++     * 与面板扫描打架 → 真机实测 51~81 条 "previous draw operation is not finished"（可接受，
++     * 量完改回 0 即可）。 */
++#if RG_TAB5_PPA_FRAME_PROBE
+     static bool ppa_frame_probe_done = false;
+     if (!ppa_frame_probe_done && tab5_fb)
+     {

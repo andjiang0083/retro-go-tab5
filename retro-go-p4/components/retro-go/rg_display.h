@@ -136,3 +136,7 @@ void rg_display_set_border_surface(rg_surface_t *surface);
 void rg_display_border_refresh(void);
 void rg_display_set_custom_zoom(double factor);
 double rg_display_get_custom_zoom(void);
+
+/* 按机型切换"画面可用区"（横屏专用档位：无肩键行的机型把上边界抬到 0，让 4x 画面吃满顶部）。
+ * ⚠ 必须在核心的**第一帧之前**调用 —— 视口是在那时按可见区算的。竖屏两档同值 → 恒等。 */
+void rg_display_set_visible_area_for_console(const char *console_id);
