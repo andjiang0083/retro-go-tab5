@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 抓 Tab5 启动日志（复位后读 N 秒）
 # 用法: sh tools/log-tab5.sh [秒数]   默认 12 秒
 #

@@ -1,4 +1,7 @@
 /* RISC-V instruction encoding helpers for gpSP dynarec
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
  * Target: RV32IMAC (ESP32-P4)
  *
  * RISC-V instruction formats:

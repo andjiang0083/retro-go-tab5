@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # This file is injected late into rg_tool.py, you can run arbitrary python code here
 
 # Espressif chip in the device

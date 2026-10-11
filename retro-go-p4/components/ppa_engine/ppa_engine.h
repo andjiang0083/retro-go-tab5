@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 /*
  * PPA Engine - Hardware 2D graphics accelerator wrapper for ESP32-P4
  * Provides easy-to-use APIs for PPA Scale-Rotate-Mirror, Blend, and Fill operations

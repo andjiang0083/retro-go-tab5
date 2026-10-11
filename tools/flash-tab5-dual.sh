@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 一键刷入 Tab5 双方向固件（竖屏保底槽 + 横屏 `_l` 槽）。
 #
 # 用法：tools/flash-tab5-dual.sh [竖屏merged.img] [横屏三件套目录]

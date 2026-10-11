@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """从缝合像素字体（Fusion Pixel Font 12px）生成设备用的 CJK 点阵字库。
 
 为什么用 BDF 而不是 TTF：BDF 是原生点阵，像素完美，不需要栅格化，也不会因

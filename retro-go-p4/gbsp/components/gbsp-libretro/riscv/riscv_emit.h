@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 /* gameplaySP - RISC-V (ESP32-P4) dynamic recompiler emit header
  *
  * Based on mips_emit.h by Exophase <exophase@gmail.com>

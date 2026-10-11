@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """0.4.9 单 app 镜像门禁 —— 刷机前用它断言「要刷的就是刚编的，而且是单 app 表」。
 
 用法:

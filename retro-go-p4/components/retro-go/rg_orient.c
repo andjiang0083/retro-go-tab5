@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 /* 屏幕方向选择（S2）—— 数据层实现。设计见 docs/SPEC-S2-ORIENTATION-SWITCH.md、rg_orient.h 顶部说明。
  *
  * 为什么是"切引导槽"而不是"运行期切驱动"：两份显示驱动差 427 行（842 vs 975），合并=重写，会动到

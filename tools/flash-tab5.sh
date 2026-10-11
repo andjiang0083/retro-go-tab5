@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 刷 Tab5 + 抓一段启动日志（**串口独占**：刷写与抓日志在同一个后台任务里串起来，
 # 绝不让两个任务同时碰 /dev/cu.usbmodem1101）
 # 用法：tools/flash-tab5.sh <merged.bin> [日志秒数]

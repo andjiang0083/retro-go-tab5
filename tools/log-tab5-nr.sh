@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 抓 Tab5 运行中日志（不复位！）
 # 用法: sh tools/log-tab5-nr.sh [秒数]
 # 与 log-tab5.sh 的区别：不做 DTR/RTS 复位时序，仅打开端口读取，避免打断正在运行的游戏。

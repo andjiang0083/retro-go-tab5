@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """把 IDF 的 DPI 帧缓冲分配改成 128 字节对齐（本地 IDF 补丁，幂等）。
 
 背景（2026-09-25 实测）

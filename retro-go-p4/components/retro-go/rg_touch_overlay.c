@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 /* 虚拟按键可视层实现 —— 设计说明见 rg_touch_overlay.h */
 
 #include <math.h>

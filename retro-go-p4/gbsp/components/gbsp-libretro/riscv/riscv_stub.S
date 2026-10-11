@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 # gameplaySP
 #
 # Copyright (C) 2006 Exophase <exophase@gmail.com>

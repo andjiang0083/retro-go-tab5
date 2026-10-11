@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 刷 retro-go（tab5 target）合并镜像到 Tab5
 #
 # 用法: sh tools/flash-retro-go.sh            # 刷最新构建出的 .img

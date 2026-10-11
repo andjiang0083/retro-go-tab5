@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """生成 M5Burner 商店封面（1280×720 = burner.m5stack.com 规格）。
 
 为什么单独一个脚本：

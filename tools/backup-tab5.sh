@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 刷 Tab5 前的一次性备份：整片 16MB + NVS + 当前分区表，全部带 SHA256
 # 用法: sh tools/backup-tab5.sh [输出目录]
 # 目的：刷自检固件/retro-go 之前留下可回退的基线（技能 8.58：改整片镜像类设备必记）

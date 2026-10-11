@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """双方向分区表一致性门禁（Tab5 / S2 横竖屏）。
 
 为什么存在：分区表在这套工程里有**三处副本**，任一处漂移都会造成

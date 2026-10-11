@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """汇总 A/A 噪声底 与 A/B 效果（口径统一：60 x 推送次数/帧 x 每次行数）。
 
 用法:

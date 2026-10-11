@@ -1,0 +1,328 @@
+THIRD-PARTY NOTICES
+========================================================================
+
+本文件随本项目的**二进制分发**（固件镜像 / M5Burner 包 / 线下刷机包）一并提供。
+分发二进制时请勿删除本文件 —— MIT / BSD / Apache-2.0 均要求随附版权声明与许可文本。
+
+This file accompanies binary distributions (firmware images, M5Burner packages,
+offline flash packs). Do not remove it when redistributing: MIT / BSD / Apache-2.0
+all require the copyright notice and licence text to travel with the binary.
+
+------------------------------------------------------------------------
+1. 本项目自身许可 / This project's own licence
+------------------------------------------------------------------------
+  LICENSE  ->  GPL-2.0
+  源码 / Source: https://github.com/andjiang0083/retro-go-tab5
+
+------------------------------------------------------------------------
+2. 随源码仓一并分发的第三方组件 / Third-party components shipped in this repository
+------------------------------------------------------------------------
+  组件 / Component                                       许可 / Licence   许可文件
+  vendor/m5stack_tab5                                  Apache-2.0     vendor/m5stack_tab5/LICENSE
+  vendor/managed_components/espressif__cmake_utilities Apache-2.0     vendor/managed_components/espressif__cmake_utilities/license.txt
+  vendor/managed_components/espressif__esp_codec_dev   Apache-2.0     vendor/managed_components/espressif__esp_codec_dev/LICENSE
+  vendor/managed_components/espressif__esp_codec_dev/device/zl38063 MIT            vendor/managed_components/espressif__esp_codec_dev/device/zl38063/LICENSE.txt
+  vendor/managed_components/espressif__esp_lcd_st7703  Apache-2.0     vendor/managed_components/espressif__esp_lcd_st7703/license.txt
+  vendor/managed_components/espressif__esp_lcd_touch   Apache-2.0     vendor/managed_components/espressif__esp_lcd_touch/license.txt
+  vendor/managed_components/espressif__esp_lcd_touch_gt911 Apache-2.0     vendor/managed_components/espressif__esp_lcd_touch_gt911/license.txt
+  vendor/managed_components/espressif__esp_lcd_touch_st7123 Apache-2.0     vendor/managed_components/espressif__esp_lcd_touch_st7123/license.txt
+  vendor/managed_components/espressif__usb_host_hid    Apache-2.0     vendor/managed_components/espressif__usb_host_hid/LICENSE
+
+  上游项目（非 vendor 目录形式，逐项说明见 CREDITS.md）：见本文末尾附录。
+
+------------------------------------------------------------------------
+3. 许可全文 / Full licence texts
+------------------------------------------------------------------------
+
+### Apache-2.0   (applies to: 8 file(s), e.g. vendor/m5stack_tab5/LICENSE)
+
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+### MIT   (applies to: 1 file(s), e.g. vendor/managed_components/espressif__esp_codec_dev/device/zl38063/LICENSE.txt)
+
+MIT License
+
+Copyright 2018 Microsemi Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+附录 A：CREDITS.md 原文（署名与派生化说明）/ Appendix A: CREDITS.md verbatim
+------------------------------------------------------------------------
+
+# Credits and attribution
+
+This project is a derivative work. Here is exactly whose work it builds on, and under what terms.
+
+## Upstream projects
+
+| Project | Author / origin | License | How it is used here |
+|---|---|---|---|
+| [retro-go](https://github.com/ducalex/retro-go) | Alex Duchesne (ducalex) | GPLv2 | The emulator frontend this repository is a port of. The `retro-go-p4/` tree is derived from it. |
+| [gpSP](https://github.com/libretro/gpsp) | Exophase, maintained by libretro | GPLv2 | The Game Boy Advance CPU/PPU core in `gbsp/`. |
+| [HowBoyAdvance](https://github.com/Irak4t0n/HowBoyAdvance) | Irak4t0n | **the repository ships no licence file** (its own issue [#1](https://github.com/Irak4t0n/HowBoyAdvance/issues/1) asks about this). The derivation chain for the code we use runs through gpSP, which is GPLv2, and this repository remains GPLv2 throughout — we do not label upstream. | The RISC-V dynamic-recompiler backend for gpSP in this port is derived from this ESP32-P4 GBA project. Two backend defects found here were reported upstream: [#2](https://github.com/Irak4t0n/HowBoyAdvance/issues/2) (cycle accounting vs. the interpreter) and [#3](https://github.com/Irak4t0n/HowBoyAdvance/issues/3) (HLE div/rem remainder). |
+| [M5Stack Tab5 BSP](https://github.com/m5stack/M5Stack-IDF) | M5Stack | Apache-2.0 / MIT (see `vendor/m5stack_tab5/LICENSE`) | Board support: display, touch, audio codec, IO expander. Vendored because the port patches its init order. |
+| esp_lcd_st7121 | Espressif Systems (Shanghai) CO LTD | Apache-2.0 — the `SPDX-FileCopyrightText` / `SPDX-License-Identifier` headers inside `vendor/esp_lcd_st7121/*.c` and `*.h` are the authoritative notice | MIPI-DSI panel driver for the Tab5's ST7121 controller. |
+| [ESP-IDF](https://github.com/espressif/esp-idf) | Espressif Systems | Apache-2.0 | The SDK, including the MIPI-DSI, PPA/DMA2D, I2S and SDMMC drivers. |
+
+## Bundled assets (from upstream retro-go)
+
+These are carried over unchanged from upstream and keep their original terms:
+
+- `retro-go-p4/retro-core/components/gnuboy/tests/blargg.zip` and
+  `retro-go-p4/retro-core/components/nofrendo/docs/nes-test-roms-master.zip` — **homebrew test ROMs**, used for core self-tests.
+- `retro-go-p4/prboom-go/components/prboom/data/doom1.wad` — the **shareware** DOOM episode, redistributable under id Software's
+  shareware terms. It is not the full game.
+- `retro-go-p4/themes/default/source/es-theme-gbz35-master.zip` — a theme source archive.
+
+- `retro-go-p4/gbsp/components/gbsp-libretro/bios/open_gba_bios.bin` — an **open-source GBA BIOS replacement**
+  (VBA-M / Normmatt lineage, as used by ReGBA and TempGBA). It is not Nintendo's BIOS: the complete sources it is built from
+  ship alongside it in `bios/source/` with a `Makefile`, so it can be rebuilt from scratch. Credit to the original authors.
+- `retro-go-p4/components/retro-go/targets/t-deck-plus/docs/t-deck-plus_keyboard_raw_mode.bin` — a small keyboard
+  raw-mode capture used as documentation for the T-Deck target. Not a firmware image.
+
+No commercial ROMs are included in this repository, and none should ever be added.
+## Bundled fonts
+
+| Font file | Author / origin | Terms |
+|---|---|---|
+| `retro-go-p4/tools/fonts/DejaVuSans.ttf` | DejaVu project (Bitstream Vera lineage) | Bitstream Vera / DejaVu licence — `retro-go-p4/tools/fonts/COPYRIGHT.TXT` |
+| `retro-go-p4/tools/fonts/OpenSans-{Regular,Semibold,Bold}.ttf` | Google / Ascender | Apache-2.0 — `retro-go-p4/tools/fonts/Apache License.txt` |
+| `retro-go-p4/tools/fonts/Vera-Bold.ttf` | Bitstream | Bitstream Vera licence — `retro-go-p4/tools/fonts/COPYRIGHT.TXT` |
+| `retro-go-p4/assets/cjk12.bin` (generated by `tools/gen_cjk_font.py`) | **Fusion Pixel Font** (TakWolf, https://github.com/TakWolf/fusion-pixel-font) | SIL OFL — `tools/CJK-FONT-LICENSE-OFL.txt` |
+| `retro-go-p4/components/retro-go/fonts/{DejaVu12,DejaVu15,VeraBold11,VeraBold14}.c` (C arrays converted from the TTFs above) | upstream retro-go, derived from DejaVu / Vera | same as their source TTFs |
+
+These ship as *tool* fonts (menu/cover generation) and as the generated CJK bitmap that is compiled into the application image;
+they are not game assets. Their licence files sit next to them — if you trim the tree, keep them.
+
+
+
+## Vendored registry components
+
+`vendor/managed_components/` contains Espressif Component Registry components vendored into the tree because the project's CMake
+lists that directory in `EXTRA_COMPONENT_DIRS` — a clean clone must contain them to build. Each carries its own license file:
+
+| Component | Used for |
+|---|---|
+| `espressif__esp_codec_dev` | Audio codec abstraction (ES8388 path) |
+| `espressif__esp_lcd_touch` | Touch controller abstraction |
+| `espressif__esp_lcd_touch_st7123` | Tab5 touch controller driver |
+| `espressif__esp_lcd_touch_gt911` | Other touch controllers (shared dependency) |
+| `espressif__esp_lcd_st7703` | MIPI-DSI panel driver (shared dependency) |
+| `espressif__cmake_utilities` | CMake helpers |
+| `espressif__usb_host_hid` | USB HID host support |
+
+## Port-specific work in this repository
+
+Board bring-up (display, touch, IO-expander reset ordering, SD, LEDC backlight), the Tab5 target definition, the ES8388 audio
+driver, savestate wiring, the touch virtual gamepad, the RISC-V dynarec integration and stack sizing, and the display-path
+measurements documented in the README are **Copyright (c) 2026 andjiang0083**, released under this repository's
+GPLv2 terms. Upstream components named above remain the copyright of their respective authors.
+
+If you believe your work is used here without proper attribution, please open an issue — it will be fixed promptly.
+

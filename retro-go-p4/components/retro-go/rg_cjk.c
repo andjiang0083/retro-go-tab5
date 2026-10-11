@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 /* 内置 CJK 点阵字库的读取端（生成端见 tools/gen_cjk_font.py）。
  *
  * 字库**直接编进 app 镜像**（CMake 里 target_add_binary_data 把 assets/cjk12.bin 变成

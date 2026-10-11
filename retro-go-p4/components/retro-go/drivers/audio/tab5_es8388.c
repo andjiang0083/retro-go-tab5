@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 /*
  * Tab5 (ESP32-P4) audio driver — ES8388 codec, driven through the official M5Stack BSP.
  *

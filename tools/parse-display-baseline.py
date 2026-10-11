@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """P2-1 基线数据解析：从真机日志里算「每帧平均脏行数」与「推屏 fps」。
 
 数据源（都是固件自己打的，不改一行日志代码）：

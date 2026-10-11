@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 串口抓取（循环版）：retro-go 切换 app 是**软复位**，USB-CDC 端口会消失一下，
 # 一次性挂的 monitor 会在那一刻退出 —— 上一轮 8 下就是这么丢的。
 # 这个版本掉线就重连，一直录到被杀掉为止。OUT 用 >> 追加，跨重连累积。

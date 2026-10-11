@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 串口抓取（诊断用）：等端口出现再挂 monitor，避免刷机后端口短暂消失导致脚本直接退出。
 OUT="${1:-/tmp/touch_cal2.log}"
 cd "$HOME/esp32/retro-go-tab5" || exit 1

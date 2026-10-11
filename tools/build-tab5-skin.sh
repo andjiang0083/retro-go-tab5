@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 构建 Tab5 双形态（多 app 常规包 + 单 app M5Launcher 包）
 # 用法：tools/build-tab5-skin.sh [single-app]
 #       RG_TAB5_ORIENTATION=1 tools/build-tab5-skin.sh    # 出横屏镜像（默认 0 = 竖屏）

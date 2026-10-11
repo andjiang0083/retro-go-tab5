@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """触摸皮肤预览（PC 端重渲染）—— **解析固件真源**，不抄第二份常量
 
 【与固件的关系（这是本脚本存在的全部意义）】

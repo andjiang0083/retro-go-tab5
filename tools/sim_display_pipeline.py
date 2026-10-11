@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """显示流水线仿真（真机前先跑长模拟）
 
 目的：不上真机就判断「队列深度」「DMA2D 忙时丢弃 vs 有界重试」哪个方向对，

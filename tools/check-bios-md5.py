@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """P2-5 门禁：BIOS 头的数组 md5 必须等于 open_gba_bios.bin 的 md5。
 
 用法：

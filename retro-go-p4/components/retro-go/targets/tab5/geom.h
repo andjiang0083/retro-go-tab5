@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (c) 2026 andjiang0083
+ */
 #pragma once
 /* Tab5 屏幕几何的**运行时**真值（0.4.9 单 app 用）。
  *

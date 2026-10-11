@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """port-diff.py — 生成「本移植 vs 上游」的差异清单（docs/UPSTREAM-DIVERGENCE.md）
 
 为什么需要它：

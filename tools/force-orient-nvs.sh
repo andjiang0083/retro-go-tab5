@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 强制写入 Tab5 **单 app 形态**的方向真值（NVS `rgapp/orient`），用于免 UI 验证方向切换。
 #
 # 用法:  tools/force-orient-nvs.sh 0|1 [日志秒数]      # 0=竖屏  1=横屏

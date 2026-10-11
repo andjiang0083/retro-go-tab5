@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # Tab5 retro-go 项目统一构建环境
 # 用法: . tools/idf-env.sh
 #

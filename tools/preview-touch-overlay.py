@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """
 虚拟按键视觉预览（PC 端重渲染）—— 刷机前先看效果，替代"刷完才知道好不好看"。
 

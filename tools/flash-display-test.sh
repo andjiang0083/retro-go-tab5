@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 # 刷 display-test 自检固件到 Tab5
 # 用法: sh tools/flash-display-test.sh
 # 注意：首次刷 bootloader 必须 --force（技能 8.23：rev1.3 与 bootloader 镜像头的 rev 校验）

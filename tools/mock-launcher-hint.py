@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """launcher 首页「加双语提示」的 PC 模拟图（720x1280，与真机同尺寸）。
 
 ⚠ 关键：真机中文字库是 **12x12 点阵**（开机日志 cjk: 3773 glyphs, 12x12 cells），

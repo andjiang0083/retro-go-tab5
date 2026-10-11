@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 andjiang0083
 """
 生成 M5Burner 发布封面（320x200）—— 屏幕内容是**真渲染**（同一套键位表/字形/配方），
 不是假图：直接复用 tools/preview-touch-overlay.py 的渲染函数，所以封面与固件永远一致。

@@ -1,3 +1,8 @@
+/* Modifications copyright (c) 2026 andjiang0083
+ * The upstream file of this name comes from retro-go
+ * (https://github.com/ducalex/retro-go, GPLv2); this port keeps it
+ * under GPL-2.0-only. See CREDITS.md in the repository root.
+ */
 #include "rg_system.h"
 #include "rg_surface.h"
 
