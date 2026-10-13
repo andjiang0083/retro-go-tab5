@@ -1,17 +1,13 @@
-# ⚠ 这**不是** GitHub workflow —— GitHub 只执行 `.github/workflows/` 下的文件。
-#   本文件是 **M5Burner 发布清单**：`~/esp32/tools/ledger.py` 按 `*/publish.yaml` 通配解析它
-#   （条目名↔项目/设备/版本/bin/封面 的台账来源），所以**不要改名**，改名会让台账找不到本项目。
-#   结构校验与发版门禁在 `.github/workflows/build.yml`（CI）与 `tools/check_merged.py`（本地）。
-# retro-go-tab5 — M5Burner 发布清单（发布前由 tools/check_merged.py 校验固件结构）
+# retro-go-tab5 — M5Burner 发布清单（发布前的结构门禁会校验这里的 bin 形态）
 # 修改版本时同步改这里；bin 必须是真 merged（bootloader + 分区表 + app）。
 project: retro-go-tab5
 platform_entries:
   - name: retro-go Tab5
     device: Tab5
     category: Games
-    version: "0.4.9"
-    bin: dist/m5burner-0.4.9/retro-go-tab5-0.4.9-merged.bin
+    version: "0.4.10"
+    bin: dist/m5burner-0.4.10/retro-go-tab5-0.4.10-merged.bin
     cover: releases/cover-1280x720-retro-go-tab5-tab5.png
     project_link: "https://github.com/andjiang0083/retro-go-tab5"
     bin_external: true          # 本仓不携带产物（公开仓）→ 跳过 bin 存在性校验
-    readback: "0.4.9 已合并进 main（PR #9 → bc16364，含 CI 验过的 7b384bc）并发布 tag v0.4.9 → e452025；M5Burner：PUBLIC/PENDING 审核中 versionId=2108966707251146754（bin=retro-go-tab5-0.4.9-merged.bin 2097152B、封面=真机实拍，2026-10-11 01:03 提交，经 /api/v1/users/me/firmwares 回读）；真机验收：单 app 双方向均起（竖屏 linear 1:1 map + rows≈32 / 横屏 90CW map + max=28），panic=0；可复现已验：公开仓 tag v0.4.9 全新克隆重编译 == 发布包（尺寸 2097152B 一致 / 分区表逐项一致 / 三锚点全过 / 单 app 门禁 PASS，2026-10-11）"   # 登录态接口回读：0.4.8 已进审核队列（vid 可查 /api/v1/users/me/firmwares）
+    readback: 2026-10-13 PENDING vid=2110021281479159810   # 登录态回读：v0.4.10 已进审核队列；线上可见版本仍是 0.4.9
