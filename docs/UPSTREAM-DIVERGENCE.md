@@ -267,15 +267,6 @@
 - `components/retro-go/targets/tab5/env.py`
 - `components/retro-go/targets/tab5/touch_layout.h`
 
-### 构建 / 工具 / 文档（7）
-
-- `docs/HANDOFF-2026-10-04-gba-name-entry-input.md`
-- `docs/HANDOFF-2026-10-06-gba-dynarec-divergence.md`
-- `docs/RESOLVED-2026-10-06-gba-input-dynarec.md`
-- `tools/build_sdl2_mac.sh`
-- `tools/play_sdl2_mac.sh`
-- `tools/sdl2-compat/esp_attr.h`
-- `tools/sdl2-compat/malloc.h`
 
 ### 其它（6）
 
@@ -372,6 +363,10 @@ python3 tools/port-diff.py --check    # 与已生成内容比对；不一致 →
 ```
 
 ## 五、人工说明（手写区，脚本保留）
+
+> 2026-10-13：本表曾列出 `docs/HANDOFF-*`、`docs/RESOLVED-*` 与 SDL2 桌面模拟器工具
+> （`tools/build_sdl2_mac.sh`、`tools/sdl2-compat/*` 等）。这些属于开发侧材料，已随公开树清理移除，
+> 故此处一并删去；复跑 `tools/port-diff.py` 会得到与当前树一致的清单。
 
 <!-- 手工说明请写在下面；脚本重新生成时会原样保留这一段 -->
 

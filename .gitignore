@@ -50,3 +50,16 @@ __pycache__/
 # lists it in EXTRA_COMPONENT_DIRS, so a clean clone must contain it to build.
 partitions.csv
 partitions.bin
+
+# ── 公开仓内容边界：开发侧材料不进这里 ───────────────────────
+# 会话存档 / 内部规划·实测·交接文档 / 调试脚本只留在维护者的开发树。
+docs/archive/
+docs/baseline/
+docs/SPEC-*.md
+docs/HANDOFF-*.md
+docs/P3-*.md
+docs/PPA-*.md
+docs/TAB5-PORT-STATUS.md
+docs/GBA-CORE-UPGRADE-ASSESSMENT.md
+*.log
+__pycache__/

@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only
- * Copyright (c) 2026 andjiang0083
- */
 /* Configuration for M5Stack Tab5 (ESP32-P4)
  *
  * 显示：官方 Tab5 BSP（vendor/m5stack_tab5）+ MIPI DSI/ST7123，走 RG_SCREEN_DRIVER 2。
@@ -285,7 +282,7 @@
 /* 2026-10-06 无人值守复现用：真机按键时间轴。验证完毕，默认关闭（要复现去掉注释）。 */
 /* 2026-10-06 验证完成：关闭自动按键脚本（空字符串 = 关闭），恢复真机手动输入 */
 #define RG_TEST_KEYS_DEVICE ""
-#define RG_TEST_NO_AUTOSAVE 0   /* 恢复常规存档行为 */
+#define RG_TEST_NO_AUTOSAVE 0
 /* 2026-10-10 PPA 非阻塞实验用过的静音钩子：**默认 0**（实验期曾置 1）。
  * 保留定义而非删除，是因为 rg_audio.c 里有 `#if RG_TEST_MUTE` 引用 —— 宏不存在会变成
  * 隐式 0，读代码的人分不清"故意的"还是"漏了的"。 */
@@ -305,6 +302,17 @@
 #ifndef RG_GBA_INPUT_TRACE
 #define RG_GBA_INPUT_TRACE 0
 #endif
+
+/* 2026-10-13 输入迟滞测量：每秒一行 ILAT（只加日志、不改行为）。
+ * 测完必须改回 0 —— 它是测量期开关，不是功能开关。见 rg_input.c 的 ILAT 段。 */
+#ifndef RG_INPUT_LAT_DIAG
+#define RG_INPUT_LAT_DIAG 0   /* 候选版：探针关 */
+#endif
+
+/* 2026-10-13 A/B：输入任务优先级 7 = 高于显示任务（共享文件里的默认值是 6 = 现状）。
+ * 只在本目标覆盖 ⇒ claw4 不定义、行为零位移（已用两次构建的 .obj 哈希证明）。
+ * 写数字而非枚举名：config.h 早于 rg_task_priority_t 被包含（见 rg_input.c 的说明）。 */
+#define RG_INPUT_TASK_PRIORITY 7   /* 候选改动：输入优先于显示 */
 
 /* 2026-10-06 临时测试钩子：强制"启动器带了存档位"那条路（真机上没人点启动器）。
  * 与启动器语义等价：加 RG_BOOT_RESUME + 指定 slot。验证完必须改回 0。 */
@@ -332,3 +340,7 @@
  * 免得不插充电器时被噪声抖成闪烁。官方口径：分流电流**为负**表示在充电。 */
 #define RG_TAB5_CHARGE_CURRENT_MA   40
 #endif
+
+#define RG_TEST_KEYS_SEG_MAX 64
+
+#define RG_INPUT_POLL_MS 10

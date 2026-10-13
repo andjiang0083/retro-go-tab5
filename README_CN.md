@@ -239,9 +239,7 @@ vendor/                 构建所需的三方组件（内置副本）
   m5stack_tab5/         M5Stack Tab5 BSP
   esp_lcd_st7121/       面板驱动
 tools/                  构建 / 刷机 / 抓日志的辅助脚本
-docs/                   移植参考文档（中文）+ 触摸布局图
-docs/archive/           留档的过程材料（通宵日志、交接、代码走查、皮肤候选图）——
-                        见 docs/archive/README.md 了解有什么、为什么归档
+docs/                   参考文档、截图与触摸布局图
 ```
 
 ### 哪些是上游代码、哪些是这个移植
@@ -260,12 +258,8 @@ docs/archive/           留档的过程材料（通宵日志、交接、代码�
 
 ## 移植笔记
 
-本移植的开发日志 —— 板级点亮过程、花了很多代价才确认的硬件事实（"不要重新试错"那张表）、显示架构笔记、
-以及真机调试的检查顺序 —— 都在 [docs/TAB5-PORT-STATUS.md](docs/TAB5-PORT-STATUS.md)。
-
-已完成使命的过程材料 —— 竖屏交接、显示带宽那晚的日志、SNES 性能会话、v0.4.1 代码走查、皮肤候选图 ——
-统一收在 [docs/archive/](docs/archive/README.md)，里面有一份"这是什么/为什么归档"的索引；原文同时贴在
-Release notes 里，所以归档不会丢内容。`docs/` 只留仍然描述当前状态的文档。
+- **[docs/UPSTREAM-DIVERGENCE.md](docs/UPSTREAM-DIVERGENCE.md)** —— 机器算出来的"上游 retro-go ↔ 本移植"
+  边界（哪些文件逐字节未动 / 被改过 / 新增 / 未带上）。动上游文件前先读它。
 
 ## 参与共建
 

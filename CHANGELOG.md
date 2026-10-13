@@ -5,6 +5,24 @@ See [CHANGELOG_CN.md](CHANGELOG_CN.md) for the Chinese version.
 
 ---
 
+## v0.4.10 — Input response speedup
+
+### Changed
+
+- **On-screen controls respond noticeably faster.** The input task now runs above the display task, which removes
+  the tail of the touch read being preempted by the per-pixel display push. Measured with a finger held on the
+  screen: a single touch read went from **17.2 ms to 8.2 ms** (worst case 30.1 ms → 8.4 ms, jitter almost gone)
+  and the sampling period from **29.3 ms to 17.8 ms** — the press is confirmed by the core in about **35 ms
+  instead of ~58 ms**.
+- **Frame rate and display throughput are unchanged** (50.4 vs 51.9 ms/s under the same load) — only the order in
+  which input and display get the CPU changed.
+- Scoped to the Tab5 target: the defaults in the shared input code are untouched, so other targets build
+  bit-identical.
+
+### Upgrading
+
+- No layout change — flashing the merged image is all that is needed, and saves and settings live on the SD card.
+
 ## v0.4.9 — Portrait or landscape: one image, both orientations
 
 ### New: orientation switching
@@ -32,8 +50,6 @@ See [CHANGELOG_CN.md](CHANGELOG_CN.md) for the Chinese version.
 
 - README and the screenshot section now carry a **real-hardware landscape photo** (every label and position in it
   was checked against the firmware's own landscape layout table).
-- New `docs/SPEC-0.4.9-SINGLE-APP.md` (design) and `docs/HANDOFF-0.4.9-SINGLE-APP.md` (handoff + on-device
-  acceptance record).
 
 ## v0.4.7 — multi-core expansion, four touch skins, and per-console controls
 

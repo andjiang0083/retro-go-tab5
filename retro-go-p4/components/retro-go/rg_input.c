@@ -1,8 +1,3 @@
-/* Modifications copyright (c) 2026 andjiang0083
- * The upstream file of this name comes from retro-go
- * (https://github.com/ducalex/retro-go, GPLv2); this port keeps it
- * under GPL-2.0-only. See CREDITS.md in the repository root.
- */
 #include "rg_system.h"
 #include "rg_input.h"
 #include "rg_touch_overlay.h"
@@ -12,6 +7,7 @@
 #include <math.h>
 
 #ifdef ESP_PLATFORM
+#include "esp_timer.h"        /* 振动马达关断（RG_VIBRATE_GPIO） */
 #include <driver/gpio.h>
 #include <driver/adc.h>
 // This is a lazy way to silence deprecation notices on some esp-idf versions...
@@ -51,6 +47,10 @@ static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #endif
 #ifdef ESP_PLATFORM
 #include "esp_lcd_touch.h"
+#if defined(RG_TARGET_CLAW4)
+#include "esp_lcd_touch_gt911.h"      /* claw4 的触摸 IC = GT911（厂商面板同款） */
+#include "driver/i2c_master.h"        /* 复用显示驱动建好的 I2C 总线（TCA9555 同一条） */
+#endif
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_touch_st7123.h"
 #endif
@@ -79,17 +79,40 @@ static size_t keymap_touch_count;
 _Static_assert(RG_COUNT(keymap_touch_main) <= RG_COUNT(keymap_touch) &&
                RG_COUNT(keymap_touch_alt) <= RG_COUNT(keymap_touch),
                "keymap_touch 容量不够：touch_layout.h 加键了要一起把 16 调大");
+/* 两张表条数是否必须相等：Tab5 是（同批键的两个方向），claw4 不是（两种机型布局 13/11 键）
+ * ⇒ 用 RG_TOUCH_KEYMAP_ALLOW_DIFFERENT_COUNTS 放行，搬表时按**选中的那张**自己的条数。 */
+#ifndef RG_TOUCH_KEYMAP_ALLOW_DIFFERENT_COUNTS
 _Static_assert(RG_COUNT(keymap_touch_main) == RG_COUNT(keymap_touch_alt),
                "两张键位表条数必须一致（rg_input.c 按同一个 count 搬表）");
+#endif
 
-/* 按当前方向把该用的那张搬进来（幂等；方向在显示初始化时已锁定 ⇒ 只可能选到一张）。 */
+/* 选表判据：默认 = "按运行时方向"（Tab5 双方向，逐字不变）。
+ * target 可覆盖（claw4 方屏无方向，两张表 = 两种机型布局 ⇒ 按当前机型选）。 */
+#ifndef RG_TOUCH_KEYMAP_USE_ALT
+#define RG_TOUCH_KEYMAP_USE_ALT() (rg_orient_active() == RG_ORIENT_LANDSCAPE)
+#endif
+
+/* claw4：主表 = SNES 版（13 键）、备表 = GBA 版（11 键）。
+ * 判据 = 当前核心机型 id（app->configNs，与叠加层铭牌/配色同源）：有 X/Y 的机型（snes）
+ * 用主表；其余（gba/gb/gbc/nes…）用备表 —— 它们都没有 X/Y，L/R 落在菱形位上才顺手
+ * （用户 2026-10-11 定稿：GBA 版 L 占 Y 位、R 占 X 位）。 */
+#if defined(RG_TARGET_CLAW4)
+static bool rg_claw4_use_gba_layout(void)
+{
+    rg_app_t *app = rg_system_get_app();
+    const char *ns = (app && app->configNs) ? app->configNs : "";
+    return strcmp(ns, "snes") != 0;
+}
+#endif
+
+/* 把该用的那张搬进来（幂等）。搬完再也不改 ⇒ 必须在"核心机型已确定"之后第一次调用。 */
 static void touch_keymap_ensure(void)
 {
     if (keymap_touch_count)
         return;
-    const rg_keymap_touch_t *src = (rg_orient_active() == RG_ORIENT_LANDSCAPE)
-                                       ? keymap_touch_alt : keymap_touch_main;
-    keymap_touch_count = RG_COUNT(keymap_touch_main);
+    const bool use_alt = RG_TOUCH_KEYMAP_USE_ALT();
+    const rg_keymap_touch_t *src = use_alt ? keymap_touch_alt : keymap_touch_main;
+    keymap_touch_count = use_alt ? RG_COUNT(keymap_touch_alt) : RG_COUNT(keymap_touch_main);
     memcpy(keymap_touch, src, keymap_touch_count * sizeof(rg_keymap_touch_t));
 }
 #else
@@ -123,6 +146,104 @@ extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
 /* 照抄 BSP 的 ST7123 触摸初始化（bsp_display_indev_init_to_st7123）：
  * 一体化屏的触摸 IC 就是 ST7123，I2C 地址 0x55，x_max/y_max 用面板物理尺寸。
  * 注意 BSP 只对外暴露了 GT911 版本的 bsp_touch_new()，所以这里自己建 panel io。 */
+/* ── 振动马达（claw4 GPIO22，高有效）────────────────────────────────────────
+ * 虚拟键是"没有行程"的按键，触感反馈全靠这一下。用一次性 esp_timer 关断：
+ * 不能在输入任务里 vTaskDelay（会把按键轮询卡停 30ms，手感更差）。 */
+#if defined(RG_VIBRATE_GPIO)
+#ifndef RG_VIBRATE_MS
+#define RG_VIBRATE_MS 30
+#endif
+static esp_timer_handle_t vibrate_timer = NULL;
+static void vibrate_off_cb(void *arg) { (void)arg; gpio_set_level(RG_VIBRATE_GPIO, 0); }
+static void rg_vibrate_pulse(void)
+{
+    if (!vibrate_timer)
+    {
+        const gpio_config_t io = {
+            .pin_bit_mask = 1ULL << RG_VIBRATE_GPIO,
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        gpio_config(&io);
+        const esp_timer_create_args_t targs = {.callback = vibrate_off_cb, .name = "vib-off"};
+        if (esp_timer_create(&targs, &vibrate_timer) != ESP_OK)
+        {
+            vibrate_timer = NULL;
+            return;
+        }
+    }
+    gpio_set_level(RG_VIBRATE_GPIO, 1);
+    esp_timer_stop(vibrate_timer);          /* 连击时重新计时，不叠加 */
+    esp_timer_start_once(vibrate_timer, (uint64_t)RG_VIBRATE_MS * 1000);
+}
+#else
+static void rg_vibrate_pulse(void) {}
+#endif
+
+#if defined(RG_TARGET_CLAW4)
+/* Metalio Claw4 的触摸 IC = **GT911**。参数照官方板级源码
+ * （official/main/boards/metalio-claw-4/metalio-claw-4.cc → InitializeTouch）：
+ *   · I2C 地址先探测 0x5D，失败再试 0x14；
+ *   · 不接 RST（GPIO_NUM_NC）；INT = GPIO33，**低有效**；
+ *   · 200kHz（与电量计 BQ27220 同总线；官方注释：400k 在总线抖动时更容易 clear-bus 失败）；
+ *   · x_max/y_max = 720（方屏）。
+ * ⚠ I2C 控制器**复用显示驱动建好的那条**（claw4_get_i2c_bus）—— 官方板级注释：
+ *   两个 I2C 外设会抢总线，GT911 与 TCA9555 会一起通信失败。 */
+extern i2c_master_bus_handle_t claw4_get_i2c_bus(void);
+static esp_err_t rg_touch_init(void)
+{
+    i2c_master_bus_handle_t bus = claw4_get_i2c_bus();
+    if (!bus)
+        return ESP_ERR_INVALID_STATE;
+
+    uint8_t dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS;
+    if (i2c_master_probe(bus, dev_addr, 100) != ESP_OK)
+    {
+        if (i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 100) == ESP_OK)
+        {
+            dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
+            RG_LOGI("claw4: GT911 在备用地址 0x%02X\n", dev_addr);
+        }
+        else
+        {
+            RG_LOGW("claw4: GT911 无应答（0x%02X/0x%02X），触摸不可用\n",
+                    ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP);
+            return ESP_ERR_NOT_FOUND;
+        }
+    }
+
+    esp_lcd_panel_io_handle_t io = NULL;
+    esp_lcd_panel_io_i2c_config_t io_config = {
+        .dev_addr = dev_addr,
+        .control_phase_bytes = 1,
+        .dc_bit_offset = 0,
+        .lcd_cmd_bits = 16,
+        .flags = {.disable_control_phase = 1},
+    };
+    io_config.scl_speed_hz = 200000;
+    esp_err_t err = esp_lcd_new_panel_io_i2c_v2(bus, &io_config, &io);
+    if (err != ESP_OK)
+        return err;
+
+    const esp_lcd_touch_config_t tp_config = {
+        .x_max = RG_TOUCH_PHYS_W,
+        .y_max = RG_TOUCH_PHYS_H,
+        .rst_gpio_num = -1,          /* 板上未接 */
+        .int_gpio_num = 33,
+        .levels = { .reset = 0, .interrupt = 0 },   /* INT 低有效 */
+        .flags = { .swap_xy = 0, .mirror_x = 0, .mirror_y = 0 },
+    };
+    err = esp_lcd_touch_new_i2c_gt911(io, &tp_config, &touch_handle);
+    if (err != ESP_OK || touch_handle == NULL)
+    {
+        esp_lcd_panel_io_del(io);
+        touch_handle = NULL;
+        return err != ESP_OK ? err : ESP_FAIL;
+    }
+    RG_LOGI("claw4: GT911 就绪 @0x%02X (INT 33, 200kHz)\n", dev_addr);
+    return ESP_OK;
+}
+#else
+/* ── Tab5：ST7123（一体化屏的触摸 IC）────────────────────────────────────── */
 static esp_err_t rg_touch_init(void)
 {
     esp_err_t err = bsp_i2c_init();
@@ -139,6 +260,10 @@ static esp_err_t rg_touch_init(void)
             .disable_control_phase = 1,
         },
     };
+    /* 原为 100000。手指按住屏时 ST7123 要读完整多点报（3 笔事务、6×max_touches 字节），
+     * 实测 100kHz 下单次读 8.2ms。ST7123 支持 400kHz ⇒ 先把总线时钟提上去。
+     * 这一行在 `#else`（非 claw4）分支里 ⇒ claw4 编译期看不到，机器码不受影响。 */
+    /* ⚠ 400kHz 试点已回退(2026-10-13)：提到 400kHz 后触摸与物理按键同时失灵（都挂在这条共享 I2C 总线）⇒ 保持 100kHz。 */
     io_config.scl_speed_hz = 100000;
     err = esp_lcd_new_panel_io_i2c_v2(bsp_i2c_get_handle(), &io_config, &io);
     if (err != ESP_OK)
@@ -160,6 +285,7 @@ static esp_err_t rg_touch_init(void)
     }
     return ESP_OK;
 }
+#endif /* RG_TARGET_CLAW4 */
 
 /* 触摸懒加载 + 重试：
  * Tab5 的 TP_RST 由 I2C 上的 IO 扩展器控制，而扩展器是在**显示初始化**里才被初始化的
@@ -198,6 +324,180 @@ static bool rg_touch_ensure(void) { return false; }
 static bool input_task_running = false;
 static bool input_task_exited = false;   /* 任务真正退出后置真：deinit 要先等它，见 rg_input_deinit */
 static uint32_t gamepad_state = -1; // _Atomic
+
+/* ── 输入采样周期（每目标可覆盖；默认 10 = 现状）─────────────────────────────
+ * 去抖是"连续 N 次采样"（RG_GAMEPAD_DEBOUNCE_PRESS/RELEASE），所以
+ *   按下/松开的确认延迟 ≈ N × 采样周期
+ * ⇒ 周期减半，确认延迟就减半。代价是触摸读的次数翻倍（实测单次读 ~0.7ms）。
+ * 默认 10 = 现状 ⇒ 不覆盖它的目标（claw4）编译产物逐字节不变。 */
+#ifndef RG_INPUT_POLL_MS
+#define RG_INPUT_POLL_MS 10
+#endif
+
+#ifndef RG_INPUT_LAT_DIAG
+#define RG_INPUT_LAT_DIAG 0
+#endif
+
+/* ── 输入迟滞探针（RG_INPUT_LAT_DIAG：只加日志、不改行为）─────────────────────
+ * 把"手指落下 → 核心读到"拆成四段，输入任务每秒打一行 ILAT（单位 µs）：
+ *   ① read：触摸原始读耗时（esp_lcd_touch_read_data + get_coordinates），有无触点都记
+ *   ② per ：输入任务一次循环的实际周期（读耗时 + rg_task_delay(10)）
+ *   ③ prs ：原始读看到某键 → 去抖确认（RG_GAMEPAD_DEBOUNCE_PRESS 次采样）
+ *   ④ frm ：去抖确认 → 核心第一次在帧里读到该键（帧量化）
+ *   e2e   = ③+④（手指被原始读到 → 核心读到）
+ * 为什么非要量 per：去抖是"连续 N 次采样"，而采样周期 = 10ms + 读耗时
+ * ⇒ 读得慢会被 N 倍放大。②③④ 一起看才知道多出来的时间落在哪一段。
+ * 关掉（默认）时这一段完全不参与编译。 */
+#if RG_INPUT_LAT_DIAG
+#define ILAT_KEYS 16
+/* ILAT_CAP 从 256 缩到 64（2026-10-13）：tab5 内部 RAM 贴着 DMA 池上限，
+ * 5 段 × 256 项的直方图 ≈ 5.1KB .bss 会让启动期 "Could not reserve internal/DMA pool" 而
+ * 启动循环（实测 80 次/150s）。64 项/秒足够算 p50/p95（解析器跨秒聚合中位数）。
+ * 这一段在 #if RG_INPUT_LAT_DIAG 内 ⇒ 缩它不影响 claw4 的构建（claw4 该宏为 0）。 */
+#define ILAT_CAP  64
+/* n/avg/pct 一律用 unsigned：P4 工具链里 uint32_t = unsigned long，
+ * 直接喂 %u 会撞 -Werror=format（实测第一轮构建就在这里挂掉）。 */
+typedef struct { unsigned n; uint32_t v[ILAT_CAP]; } ilat_hist_t;
+static ilat_hist_t ilat_read, ilat_per, ilat_prs, ilat_frm, ilat_e2e;
+static uint32_t ilat_prev_raw = 0;        /* 上一次原始读到的键（找边沿用） */
+static uint32_t ilat_evt_armed = 0;       /* 已看到原始边沿、等确认的键 */
+static uint32_t ilat_frame_armed = 0;     /* 已确认、等帧读到的键 */
+static int64_t ilat_evt_us[ILAT_KEYS];    /* 各键"原始看到"时刻 */
+static int64_t ilat_conf_us[ILAT_KEYS];   /* 各键"去抖确认"时刻 */
+/* ⑤ 总线逐笔计时（TCHBUS 行，每秒 1 次；只读、不改任何状态）
+ * 目的：定位"手指按住时那 8ms 花在哪" —— 每笔事务的固定开销，还是 report 的字节数。
+ * 用触摸自己的 panel io 走驱动的同一批寄存器：
+ *   adv=0x0010(1B) / mt=0x0009(1B) / rep=0x0014(6×max_touches B) / rep1=0x0014(6B，只读 1 个点)
+ * 每秒只跑 1 次 ⇒ 对总线扰动可忽略（真读 38–57 次/秒）。 */
+static unsigned ilat_bus_sum[4], ilat_bus_cnt[4], ilat_bus_max[4];
+static void ilat_bus_add(int i, int64_t us)
+{
+    if (us < 0) us = 0;
+    ilat_bus_sum[i] += (unsigned)us;
+    ilat_bus_cnt[i]++;
+    if ((unsigned)us > ilat_bus_max[i]) ilat_bus_max[i] = (unsigned)us;
+}
+
+static void ilat_add(ilat_hist_t *h, uint32_t us)
+{
+    if (h->n < ILAT_CAP) h->v[h->n++] = us;
+}
+static int ilat_cmp(const void *a, const void *b)
+{
+    const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
+static unsigned ilat_avg(const ilat_hist_t *h)
+{
+    uint64_t s = 0;
+    for (uint32_t i = 0; i < h->n; ++i) s += h->v[i];
+    return h->n ? (unsigned)(s / h->n) : 0;
+}
+static unsigned ilat_pct(ilat_hist_t *h, int pct)   /* 就地排序 ⇒ 先取 avg 再取分位 */
+{
+    if (!h->n) return 0;
+    qsort(h->v, h->n, sizeof(uint32_t), ilat_cmp);
+    return h->v[(h->n - 1) * pct / 100];
+}
+static void ilat_note_raw(uint32_t raw)
+{
+    const uint32_t newb = raw & ~ilat_prev_raw;
+    const uint32_t gone = ilat_prev_raw & ~raw;
+    const int64_t now = rg_system_timer();
+    for (int i = 0; i < ILAT_KEYS; ++i)
+        if (newb & (1u << i)) { ilat_evt_us[i] = now; ilat_evt_armed |= (1u << i); }
+    ilat_evt_armed &= ~gone;   /* 抬指撤掉待确认，避免"按→松→再按"串台 */
+    ilat_prev_raw = raw;
+}
+static void ilat_note_confirmed(uint32_t confirmed)
+{
+    const int64_t now = rg_system_timer();
+    for (int i = 0; i < ILAT_KEYS; ++i)
+        if ((confirmed & (1u << i)) && (ilat_evt_armed & (1u << i)))
+        {
+            ilat_add(&ilat_prs, (uint32_t)(now - ilat_evt_us[i]));
+            ilat_evt_armed &= ~(1u << i);
+            ilat_frame_armed |= (1u << i);
+            ilat_conf_us[i] = now;
+        }
+}
+static void ilat_note_frame(uint32_t visible)
+{
+    const int64_t now = rg_system_timer();
+    for (int i = 0; i < ILAT_KEYS; ++i)
+        if ((visible & (1u << i)) && (ilat_frame_armed & (1u << i)))
+        {
+            ilat_add(&ilat_frm, (uint32_t)(now - ilat_conf_us[i]));
+            ilat_add(&ilat_e2e, (uint32_t)(now - ilat_evt_us[i]));
+            ilat_frame_armed &= ~(1u << i);
+        }
+}
+static void ilat_bus_probe(void)
+{
+#if !defined(RG_TARGET_CLAW4) && defined(RG_GAMEPAD_TOUCH_MAP)
+    if (!touch_handle || !touch_handle->io)
+        return;
+    esp_lcd_panel_io_handle_t io = touch_handle->io;
+    uint8_t b = 0, mt = 0, rep[60];
+    const int64_t t0 = rg_system_timer();
+    if (esp_lcd_panel_io_rx_param(io, 0x0010, &b, 1) != ESP_OK) return;   /* adv_info */
+    const int64_t t1 = rg_system_timer();
+    if (esp_lcd_panel_io_rx_param(io, 0x0009, &mt, 1) != ESP_OK) return;  /* max_touches */
+    const int64_t t2 = rg_system_timer();
+    const uint8_t n = (mt > 10) ? 10 : (mt ? mt : 1);
+    (void)esp_lcd_panel_io_rx_param(io, 0x0014, rep, (uint8_t)(6 * n));   /* 完整 report */
+    const int64_t t3 = rg_system_timer();
+    (void)esp_lcd_panel_io_rx_param(io, 0x0014, rep, 6);                  /* 只读 1 个点 */
+    const int64_t t4 = rg_system_timer();
+    ilat_bus_add(0, t1 - t0);
+    ilat_bus_add(1, t2 - t1);
+    ilat_bus_add(2, t3 - t2);
+    ilat_bus_add(3, t4 - t3);
+#endif
+}
+static void ilat_flush(void)   /* 每段统一 n/avg/p50/p95，便于切词解析 */
+{
+    RG_LOGI("ILAT read=%u/%u/%u/%u per=%u/%u/%u/%u prs=%u/%u/%u/%u frm=%u/%u/%u/%u e2e=%u/%u/%u/%u\n",
+            ilat_read.n, ilat_avg(&ilat_read), ilat_pct(&ilat_read, 50), ilat_pct(&ilat_read, 95),
+            ilat_per.n,  ilat_avg(&ilat_per),  ilat_pct(&ilat_per, 50),  ilat_pct(&ilat_per, 95),
+            ilat_prs.n,  ilat_avg(&ilat_prs),  ilat_pct(&ilat_prs, 50),  ilat_pct(&ilat_prs, 95),
+            ilat_frm.n,  ilat_avg(&ilat_frm),  ilat_pct(&ilat_frm, 50),  ilat_pct(&ilat_frm, 95),
+            ilat_e2e.n,  ilat_avg(&ilat_e2e),  ilat_pct(&ilat_e2e, 50),  ilat_pct(&ilat_e2e, 95));
+    ilat_read.n = ilat_per.n = ilat_prs.n = ilat_frm.n = ilat_e2e.n = 0;
+    RG_LOGI("TCHBUS adv=%u/%u mt=%u/%u rep=%u/%u rep1=%u/%u n=%u\n",
+            ilat_bus_cnt[0] ? ilat_bus_sum[0] / ilat_bus_cnt[0] : 0u, ilat_bus_max[0],
+            ilat_bus_cnt[1] ? ilat_bus_sum[1] / ilat_bus_cnt[1] : 0u, ilat_bus_max[1],
+            ilat_bus_cnt[2] ? ilat_bus_sum[2] / ilat_bus_cnt[2] : 0u, ilat_bus_max[2],
+            ilat_bus_cnt[3] ? ilat_bus_sum[3] / ilat_bus_cnt[3] : 0u, ilat_bus_max[3], ilat_bus_cnt[0]);
+    for (int i = 0; i < 4; ++i) ilat_bus_sum[i] = ilat_bus_cnt[i] = ilat_bus_max[i] = 0;
+}
+static void ilat_tick(void)
+{
+    static int64_t ilat_next = 0;
+    const int64_t now = rg_system_timer();
+    if (!ilat_next) { ilat_next = now + 1000000; return; }
+    if (now < ilat_next) return;
+    ilat_next += 1000000;
+    ilat_bus_probe();
+    ilat_flush();
+}
+#else
+#define ilat_note_raw(x)       do { } while (0)
+#define ilat_note_confirmed(x) do { } while (0)
+#define ilat_note_frame(x)     do { } while (0)
+#define ilat_tick()            do { } while (0)
+#endif
+
+/* 输入任务优先级。**默认 = 现状**（与 rg_display 同为 RG_TASK_PRIORITY_6）。
+ * 为什么做成"每目标可覆盖宏"而不是直接改大：rg_input.c 是两台机器共享的文件，而 claw4 的
+ * 手感是已验收的成果 —— 直接改会同时移动两台机器的行为。规矩：共享文件里的**行为**改动
+ * 一律走「默认 = 现状」的宏，只有明确要量测的目标才在自己 config.h 里覆盖。
+ * ⚠ config.h 在 rg_system.h 里**先于** rg_task_priority_t 枚举被包含 ⇒ 覆盖点要写数字（7），
+ *   不能写 RG_TASK_PRIORITY_7。
+ * 当前覆盖点：targets/tab5/config.h（2026-10-13 输入迟滞 A/B）。 */
+#ifndef RG_INPUT_TASK_PRIORITY
+#define RG_INPUT_TASK_PRIORITY RG_TASK_PRIORITY_6
+#endif
 
 /* 当前按下的键（含触摸虚拟键）。可视层用它做"按下高亮"：
  * 只读输入任务维护的全局量，不做事件泵（显示路径每帧要调几十次）。 */
@@ -487,10 +787,20 @@ static bool swap_btn_down = false;
  * 设了它就**替换**键盘/触摸状态（替换而非叠加，才能复现"这一段完全没按"）。
  * 为什么需要它：这段输入是"给机器自己用"的 —— 只有把按键在真机上按时间轴打进去，
  * 才能在没人碰屏幕的情况下复现/验证"某个静态画面里按键不生效"这类问题。 */
+/* 时间轴最多几段。这张表是**静态**的（每段 12B），512 段 = 6KB 内部 RAM ——
+ * 对 tab5 是致命的：它的 16MB/single-app 形态里启动期要预留
+ * CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768 的内部 DMA 池，launcher.bin 已 2,001,808B /
+ * 分区 2,031,616B，内部 RAM 余量不足 ⇒ 时间轴一非空（优化器就不再把这整段当死代码删掉），
+ * app_main 之前就 abort("Could not reserve internal/DMA pool")，150 秒里重启 80 次。
+ * 每目标可覆盖：默认 512 = 现状；只有明确要跑长脚本的目标在自己 config.h 里改小。 */
+#ifndef RG_TEST_KEYS_SEG_MAX
+#define RG_TEST_KEYS_SEG_MAX 512
+#endif
+
 static uint32_t rg_test_script_keys(uint32_t state)
 {
     static bool parsed, enabled;
-    static struct { float t0, t1; uint32_t keys; } segs[512];
+    static struct { float t0, t1; uint32_t keys; } segs[RG_TEST_KEYS_SEG_MAX];
     static int seg_count;
 
     if (!parsed)
@@ -505,7 +815,7 @@ static uint32_t rg_test_script_keys(uint32_t state)
             return state;
         enabled = true;
         char *buf = strdup(env), *save = NULL;
-        for (char *tok = strtok_r(buf, ";", &save); tok && seg_count < 512; tok = strtok_r(NULL, ";", &save))
+        for (char *tok = strtok_r(buf, ";", &save); tok && seg_count < RG_TEST_KEYS_SEG_MAX; tok = strtok_r(NULL, ";", &save))
         {
             char *colon = strchr(tok, ':');
             if (!colon) continue;
@@ -646,14 +956,31 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
      * 于是"手指抬起"这一拍整个分支都被跳过 —— 任何写在分支里的"抬指复位"
      * 都永远跑不到。2026-09-29 真机反馈"再按切换键换不回来"的根因就在这里。 */
     bool any_touch = false;
+#if RG_INPUT_LAT_DIAG
+    const int64_t ilat_t0 = rg_system_timer();
+#endif
     if (rg_touch_ensure() && esp_lcd_touch_read_data(touch_handle) == ESP_OK)
     {
         uint16_t px[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
         uint16_t py[CONFIG_ESP_LCD_TOUCH_MAX_POINTS] = {0};
         uint8_t count = 0;
-        if (esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS))
+        bool ilat_got_xy = esp_lcd_touch_get_coordinates(touch_handle, px, py, NULL, &count, CONFIG_ESP_LCD_TOUCH_MAX_POINTS);
+#if RG_INPUT_LAT_DIAG
+        ilat_add(&ilat_read, (uint32_t)(rg_system_timer() - ilat_t0));
+#endif
+        if (ilat_got_xy)
         {
             any_touch = (count > 0);
+#if defined(RG_VIBRATE_GPIO)
+            /* 触感反馈：无触点 → 有触点的那一拍给一次短脉冲（连击重新计时）。 */
+            static bool was_touching = false;
+            if (any_touch != was_touching)
+            {
+                if (any_touch)
+                    rg_vibrate_pulse();
+                was_touching = any_touch;
+            }
+#endif
 #if RG_TOUCH_OVERLAY
             /* "看得见"和"点得到"必须同源，两个条件都要满足：
              *   ① 用户没关掉按键（visible）—— 否则黑边上一按就触发，用户以为触摸坏了；
@@ -702,6 +1029,21 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
             /* 手指离开方向键区（或整体抬指）→ 清掉滞回状态，下次按下按"进入"门槛判 */
             if (!dpad_touched)
                 rg_dpad_reset();
+
+#if defined(RG_TARGET_CLAW4)
+            /* ⚠ 临时探针（P2 幽灵触点定位用，定位完删）：看 GT911 到底报了什么点、
+             * 又映射成了哪些键。限速 2 次/秒，只在"有触点上报"的拍子打。 */
+            {
+                static int64_t probe_last = 0;
+                const int64_t now_us = esp_timer_get_time();
+                if (now_us - probe_last > 500000)
+                {
+                    probe_last = now_us;
+                    RG_LOGI("claw4-probe: count=%u px0=%d py0=%d state=0x%08x\n",
+                            (unsigned)count, (int)px[0], (int)py[0], (unsigned)state);
+                }
+            }
+#endif
 
 #if RG_TOUCH_OVERLAY
             /* ── X/Y ↔ L/R 调换按钮（L/R 中间那颗）─────────────────────────────
@@ -862,6 +1204,10 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
     }
 #endif
 
+#if RG_INPUT_LAT_DIAG
+    ilat_note_raw(state);
+#endif
+
     if (out)
         *out = state;
     return true;
@@ -881,6 +1227,15 @@ static void input_task(void *arg)
 
     while (input_task_running)
     {
+#if RG_INPUT_LAT_DIAG
+        {
+            static int64_t ilat_prev_loop = 0;
+            const int64_t ilat_now = rg_system_timer();
+            if (ilat_prev_loop) ilat_add(&ilat_per, (uint32_t)(ilat_now - ilat_prev_loop));
+            ilat_prev_loop = ilat_now;
+            ilat_tick();
+        }
+#endif
         if (rg_input_read_gamepad_raw(&state))
         {
             for (int i = 0; i < RG_KEY_COUNT; ++i)
@@ -898,6 +1253,9 @@ static void input_task(void *arg)
                 }
             }
             gamepad_state = local_gamepad_state;
+#if RG_INPUT_LAT_DIAG
+            ilat_note_confirmed(local_gamepad_state);
+#endif
         }
 
         if (rg_system_timer() >= next_battery_update)
@@ -950,7 +1308,7 @@ static void input_task(void *arg)
             next_battery_update = rg_system_timer() + 2 * 1000000; // update every 2 seconds
         }
 
-        rg_task_delay(10);
+        rg_task_delay(RG_INPUT_POLL_MS);
     }
 
     input_task_running = false;
@@ -1063,7 +1421,7 @@ void rg_input_init(void)
     rg_input_read_gamepad_raw(NULL);
 
     // Start background polling
-    rg_task_create("rg_input", &input_task, NULL, 3 * 1024, RG_TASK_PRIORITY_6, 1);
+    rg_task_create("rg_input", &input_task, NULL, 3 * 1024, RG_INPUT_TASK_PRIORITY, 1);
     while (gamepad_state == -1)
         rg_task_yield();
     RG_LOGI("Input ready. state=" PRINTF_BINARY_16 "\n", PRINTF_BINVAL_16(gamepad_state));
@@ -1098,6 +1456,30 @@ void rg_input_deinit(void)
     RG_LOGI("Input terminated.\n");
 }
 
+/* ── 测量钩子：合成 A 键（默认关）─────────────────────────────
+ * 用途：给「帧率 A/B」一个**可复现的负载源**。用户定义的路径：启动器里按 A 进游戏，
+ * 游戏内 A = 跳 ⇒ 每 RG_TEST_AUTOPRESS_A_MS 合成一次（脉宽 PULSE_MS），于是"一直跳"
+ * 这个负载不需要人在旁边按。默认 0 ⇒ 对 Tab5 与正常构建零影响。
+ * 只在开机 DELAY_MS 之后才开始（启动器早期有"幽灵输入"历史，别掺进去）。 */
+#ifndef RG_TEST_AUTOPRESS_A_MS
+#define RG_TEST_AUTOPRESS_A_MS 0        /* >0：每 N ms 合成一次按键（负载） */
+#endif
+#ifndef RG_TEST_AUTOPRESS_PULSE_MS
+#define RG_TEST_AUTOPRESS_PULSE_MS 120
+#endif
+#ifndef RG_TEST_AUTOPRESS_DELAY_MS
+#define RG_TEST_AUTOPRESS_DELAY_MS 12000
+#endif
+#ifndef RG_TEST_AUTOPRESS_KEY_MASK
+#define RG_TEST_AUTOPRESS_KEY_MASK RG_KEY_A   /* 合成哪个键（负载默认 A=跳） */
+#endif
+#ifndef RG_TEST_AUTOPRESS_MENU_AT_MS
+#define RG_TEST_AUTOPRESS_MENU_AT_MS 0   /* >0：在 t=该毫秒时合成一次 MENU（开菜单/触发 GUI 路径） */
+#endif
+#ifndef RG_TEST_AUTOPRESS_MENU2_AT_MS
+#define RG_TEST_AUTOPRESS_MENU2_AT_MS 0  /* >0：再合成一次 MENU（关菜单）——判据看之后 FPS 是否恢复 */
+#endif
+
 uint32_t rg_input_read_gamepad(void)
 {
 #ifdef RG_TARGET_SDL2
@@ -1114,6 +1496,49 @@ uint32_t rg_input_read_gamepad(void)
                 exit(0);
         }
     }
+#endif
+#if (RG_TEST_AUTOPRESS_A_MS > 0) || (RG_TEST_AUTOPRESS_MENU_AT_MS > 0) || (RG_TEST_AUTOPRESS_MENU2_AT_MS > 0)
+    {
+        static int64_t ap_t0 = 0;
+        const int64_t ap_now = rg_system_timer();          /* 微秒 */
+        if (ap_t0 == 0) ap_t0 = ap_now;
+        const int64_t el_ms = (ap_now - ap_t0) / 1000;
+        /* MENU 单次/二次注入：把"按 MENU 卡死"变成可自动复现、可自动验证的用例。
+         * 判据 = 第二次 MENU 之后 FPS 是否恢复（菜单开/关会恢复；真卡死不会）。 */
+#if RG_TEST_AUTOPRESS_MENU_AT_MS > 0
+        if (el_ms >= RG_TEST_AUTOPRESS_MENU_AT_MS && el_ms < RG_TEST_AUTOPRESS_MENU_AT_MS + RG_TEST_AUTOPRESS_PULSE_MS)
+        {
+            static bool ap_m1 = false;
+            if (!ap_m1) { ap_m1 = true; RG_LOGW("autopress: MENU#1 合成（t=%dms）\n", (int)el_ms); }
+            return gamepad_state | RG_KEY_MENU;
+        }
+#endif
+#if RG_TEST_AUTOPRESS_MENU2_AT_MS > 0
+        if (el_ms >= RG_TEST_AUTOPRESS_MENU2_AT_MS && el_ms < RG_TEST_AUTOPRESS_MENU2_AT_MS + RG_TEST_AUTOPRESS_PULSE_MS)
+        {
+            static bool ap_m2 = false;
+            if (!ap_m2) { ap_m2 = true; RG_LOGW("autopress: MENU#2 合成（t=%dms）—— 之后 FPS 若回不到 50+ 即为卡死\n", (int)el_ms); }
+            return gamepad_state | RG_KEY_MENU;
+        }
+#endif
+#if RG_TEST_AUTOPRESS_A_MS > 0
+        if (el_ms >= RG_TEST_AUTOPRESS_DELAY_MS &&
+            (el_ms % RG_TEST_AUTOPRESS_A_MS) < RG_TEST_AUTOPRESS_PULSE_MS)
+        {
+            static int64_t ap_last_log = -100000;
+            if (el_ms - ap_last_log > 10000)
+            {
+                ap_last_log = el_ms;
+                RG_LOGW("autopress: 合成 A 键中（每 %dms 一次，脉宽 %dms）\n",
+                        (int)RG_TEST_AUTOPRESS_A_MS, (int)RG_TEST_AUTOPRESS_PULSE_MS);
+            }
+            return gamepad_state | (RG_TEST_AUTOPRESS_KEY_MASK);
+        }
+#endif
+    }
+#endif
+#if RG_INPUT_LAT_DIAG
+    ilat_note_frame(gamepad_state == (uint32_t)-1 ? 0 : gamepad_state);
 #endif
     return gamepad_state;
 }
