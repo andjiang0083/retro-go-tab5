@@ -265,7 +265,9 @@ static inline uint16_t claw4_swap16(uint16_t v)
 #define CLAW4_XPOSE_WORDS 0
 #endif
 #ifndef CLAW4_XPOSE_SELFCHECK
-#define CLAW4_XPOSE_SELFCHECK 0   /* 临时自检：前 8 个块与老路径逐字节比对 */
+#define CLAW4_XPOSE_SELFCHECK 1   /* spike/claw4-ppa：实验形态强制打开——与 CPU 路径逐字节比对。
+                                        *   目的：为查 `PPA convert failed: ESP_FAIL (w=720 rows=32 y>=128)` x3 提供字节级证据；
+                                        *   ⚠ 仅 spike 分支，勿合回主线（会拖帧）。 */
 #endif
 
 /* 允许别名访问的 32 位类型：按字写 PSRAM 时避免严格别名 UB。 */

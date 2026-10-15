@@ -1,0 +1,110 @@
+# .github/workflows/build-claw4-ppa.yml — spike/claw4-ppa 专属实验门禁
+#
+# 只服务一件事：为 `PPA convert failed: ESP_FAIL (w=720 rows=32 y>=128)` x3 的排查
+# 提供**可重复编译 + 字节级守门已打开**的证据。不碰主线：只监听 spike/claw4-ppa。
+#
+# 与 build-claw4.yml 的关系：构建/环境/三点 nibble 门禁完全复用同一套已实测形态
+# （干净克隆 fetch-depth:0+tags、install-esp-idf-action 后显式补 PATH）。
+# **不在此另立标准**——nibble 期望值仍从唯一真源 targets/claw4/sdkconfig 推导。
+#
+# spike 分支独有的门禁（第 3 步）：断言 CLAW4_XPOSE_SELFCHECK==1，
+# 保证"实验形态真的是编译进去的"，而不是靠注释声称。
+#
+# ⚠ 本分支禁止合回 claw4：SELFCHECK=1 会拖帧，仅用于取证。
+# ⚠ 无硬件 ⇒ CI 不验证帧率/颜色观感，真机判据由人工按 spike 记录执行。
+# 禁止：continue-on-error / 跳过步骤 / 放宽门禁换绿。
+
+name: build-claw4-ppa
+
+on:
+  push:
+    branches: [spike/claw4-ppa]
+  pull_request:
+    branches: [spike/claw4-ppa]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: build-claw4-ppa-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IDF_VERSION: "v5.5.2"   # 与 tools/idf-env.sh（~/esp/esp-idf-v5.5 = 5.5.2）一致
+
+jobs:
+  build-claw4-ppa:
+    name: PPA spike build + selfcheck gate (Claw4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ESP-IDF ${{ env.IDF_VERSION }}
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: ${{ env.IDF_VERSION }}
+
+      - name: Assert ESP-IDF environment
+        run: |
+          set -euo pipefail
+          [ -n "${IDF_PATH:-}" ] || { echo "::error::IDF_PATH 未被导出"; exit 1; }
+          [ -x "$IDF_PATH/tools/idf.py" ] || { echo "::error::idf.py 不存在"; exit 1; }
+          PATCH=$(sed -n 's/.*set(IDF_VERSION_PATCH \([0-9]*\)).*/\1/p' "$IDF_PATH/tools/cmake/version.cmake")
+          [ "$PATCH" = "2" ] || { echo "::error::期望 5.5.2，实际 patch=$PATCH"; exit 1; }
+          for d in tools components/partition_table components/app_update components/espcoredump; do
+            echo "$IDF_PATH/$d" >> "$GITHUB_PATH"
+          done
+
+      # ── spike 独有：守门必须真的打开（防止"注释说开了、代码没开"）──
+      - name: Spike gate — XPOSE_SELFCHECK must be 1
+        run: |
+          set -euo pipefail
+          F=retro-go-p4/components/retro-go/drivers/display/mipi_dsi_claw4.h
+          V=$(sed -n 's/.*#define CLAW4_XPOSE_SELFCHECK \([01]\).*/\1/p' "$F")
+          echo "CLAW4_XPOSE_SELFCHECK=$V"
+          [ "$V" = "1" ] || { echo "::error::spike 分支必须 SELFCHECK=1（字节级守门），实际=$V"; exit 1; }
+          echo "✓ 实验形态已编译进去"
+
+      - name: Build claw4 merged image (launcher + gbsp)
+        working-directory: retro-go-p4
+        run: |
+          set -euo pipefail
+          rm -f partitions.csv partitions.bin
+          python3 rg_tool.py --target claw4 --no-networking build-img launcher gbsp 2>&1 | tee ../build-claw4-ppa.log
+
+      - name: Structure gate (claw4 flash-size nibble)
+        working-directory: retro-go-p4
+        run: |
+          set -euo pipefail
+          IMG=$(ls retro-go_*_claw4.img 2>/dev/null | head -n1)
+          [ -n "$IMG" ] || { echo "::error::没找到 merged 镜像"; exit 1; }
+          python3 - "$IMG" <<'PYEOF'
+          import sys, hashlib, re
+          img = sys.argv[1]
+          data = open(img,'rb').read()
+          def nib(off): return (data[off+3] >> 4) & 0xF
+          nibs = {hex(o): nib(o) for o in (0x2000, 0x10000, 0x100000)}
+          assert len(set(nibs.values())) == 1, f"三段 nibble 不一致: {nibs}"
+          SC = "components/retro-go/targets/claw4/sdkconfig"   # 唯一真源
+          m = re.search(r'CONFIG_ESPTOOLPY_FLASHSIZE="(\d+)MB"', open(SC, encoding='utf-8', errors='replace').read())
+          assert m, f"{SC} 未声明 FLASHSIZE"
+          NIB = {"1":0,"2":1,"4":2,"8":3,"16":4,"32":5,"64":6,"128":7}
+          exp = NIB[m.group(1)]
+          assert nibs['0x2000'] == exp, f"nibble={nibs['0x2000']}，声明 {m.group(1)}MB（期望 {exp}）"
+          assert data[0x8000:0x8002] == b'\xaa\x50', "分区表 magic @0x8000 缺失"
+          assert len(data) >= 1048576, f"镜像过小 {len(data)} B"
+          print(f"OK spike nibble={exp}({m.group(1)}MB) / aa50 / sha256={hashlib.sha256(data).hexdigest()[:12]}")
+          PYEOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: claw4-ppa-spike-image
+          path: |
+            retro-go-p4/retro-go_*_claw4.img
+            build-claw4-ppa.log
+          if-no-files-found: error
