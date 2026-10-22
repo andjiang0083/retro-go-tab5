@@ -58,11 +58,11 @@ jobs:
 
       # ── 架构门禁（不依赖 ESP-IDF，秒级）────────────────────────────────
       # 放在装 IDF **之前**：违例秒级红，不烧 CI 分钟，也不会被"构建失败先把人引开"。
-      # 两个脚本各自带负例验证（塞板名/改名 ⇒ 必红），见 tools/ 下脚本头注释。
-      - name: Architecture gates (board isolation + display contract)
+      # R1「共享层不许出现板名」隔离门禁已随 Claw4 迁出退役（单板仓无意义）；
+      # 保留显示驱动契约（3 份驱动 × 8 个 lcd_* + 签名钉），与 architecture-gates.yml 同源。
+      - name: Display contract gate
         run: |
           set -euo pipefail
-          python3 tools/check-board-isolation.py
           python3 tools/check-display-contract.py
 
       # ── 1. ESP-IDF v5.5.2（官方 action，基于 EIM）───────────────────────
