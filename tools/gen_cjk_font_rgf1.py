@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""重新生成 claw4 内置 CJK 点阵字库 cjk12.bin（RGF1 格式）。
+"""重新生成内置 CJK 点阵字库 cjk12.bin（RGF1 格式）。
 
 为什么要它：assets/cjk12.bin 是**上游翻译表字符的子集**，本地新增的中文
 （新手引导卡、launcher 新翻译）不在其中——缺字是**静默跳过**（画成空白），

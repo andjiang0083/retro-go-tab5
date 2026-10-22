@@ -11,29 +11,17 @@ and a GBA core that JIT-compiles ARM/Thumb into native RISC-V so the CPU-emulati
 
 Built and tested on real hardware. Contributions very welcome — see [Contributing](#contributing).
 
-## Two targets from one tree ｜ 一棵树两个 target
+## Target ｜ 目标板
 
-This repository builds **two ESP32-P4 handhelds from one source tree**; each build picks one board with
-`--target`. The platform layer (display, audio, input, storage) and all 11 emulator cores are shared code.
+This repository builds **one board**: the M5Stack Tab5, with `--target tab5`.
 
 | Target | Device | Panel | Touch pad | Build |
 |---|---|---|---|---|
 | `tab5` | M5Stack Tab5 | 1280×720 MIPI-DSI, native portrait, runtime portrait/landscape (v0.4.9+) | 13-key pad drawn in the letterbox margins, incl. the X/Y ↔ L/R swap key | `RG_TAB5_ORIENTATION=0 python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher gbsp` |
-| `claw4` | Metalio Claw4 | 720×720 square, single orientation | 11-key pad in the 240 px band below the 720×480 game area (13-key SNES layout) | `python3 rg_tool.py --target claw4 --no-networking build-img launcher gbsp` |
 
-![GBA running on a real Metalio Claw4, held in hand: the 720x480 game screen on top and the 11-key touch pad in the band below](docs/images/claw4-gba-castlevania-device.jpg)
-
-*Metalio Claw4 (ESP32-P4, 720×720 square panel): GBA at 3× integer scale pinned to the top (720×480), with
-the 11-key touch pad in the 240 px band below — D-pad diamond on the left, SELECT/START/MENU stacked on the
-centre line, R/L/A/B diamond on the right. Shot on real hardware, 2026-10-12.*
-*Metalio Claw4（ESP32-P4 · 720×720 方屏）：GBA 3× 整数缩放贴顶（720×480），下方 240px 带内是 11 键触摸手柄 ——
-左侧十字菱形、中线竖排 SELECT/START/MENU、右侧菱形 R/L/A/B。2026-10-12 真机拍摄。*
-
-Claw4 specifics: square panel ⇒ a single orientation (no orientation prompt or setting), no wireless radio,
-a settings menu trimmed to what the hardware can do (no clock / time zone / CRC-cache entries), Chinese UI
-by default, and audio/backlight/battery wired to that board's own parts.
-Claw4 说明：方屏 ⇒ 只有一个方向（无方向弹窗与设置项）；无无线；设置菜单按硬件能力精简（无时钟/时区/封面缓存等项）；
-界面默认中文；音频/背光/电量接的是该板自己的器件。
+> The Metalio Claw4 (720×720 square panel) port that used to share this tree has moved to its own
+> repository and continues as a frozen fork of this codebase.
+> ｜ 原先同树的 Metalio Claw4（720×720 方屏）已迁出到独立仓，以本代码库的冻结分支继续。
 
 ## Download & install — pick the right file
 

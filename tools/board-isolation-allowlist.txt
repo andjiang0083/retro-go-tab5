@@ -1,6 +1,0 @@
-# R1 隔离门禁的棘轮上限：共享层允许残留的违例（只许减少，新增即红）
-# 格式：相对路径|类型(cond/sym)|上限|理由
-# 每清一处就把上限下调（--update）；想上调必须显式 --force（= 承认架构倒退）
-config.h|cond|2|
-rg_audio.c|sym|9|
-rg_display.c|sym|1|

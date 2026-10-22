@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""显示驱动契约门禁 —— 守"四份驱动各自把 8 个 lcd_* 都定义了、且都调用了契约自检"。
+"""显示驱动契约门禁 —— 守"三份驱动各自把 8 个 lcd_* 都定义了、且都调用了契约自检"。
 
 为什么需要它（而不是只靠源码头里的 _Static_assert）：
   编译期断言只能钉**签名**（类型不符 ⇒ 红）。它**钉不住"有没有定义"** —— 因为
@@ -10,8 +10,8 @@
   ⇒ 存在性交给本门禁：机器可判、能变红、跑在 CI 里。
 
 判据（任一不满足 ⇒ 退出码 1）：
-  1. 四份驱动文件各自**恰好定义一次**这 8 个符号；
-  2. 四份文件都调用了 `RG_DISPLAY_CONTRACT();`（签名钉，别被删掉）。
+  1. 三份驱动文件各自**恰好定义一次**这 8 个符号；
+  2. 三份文件都调用了 `RG_DISPLAY_CONTRACT();`（签名钉，别被删掉）。
 自检：打印"实际检查了几个符号"，防止"0 项检查也算 PASS"的假绿。
 
 用法：python3 tools/check-display-contract.py [仓库根]
@@ -34,7 +34,6 @@ SYMBOLS = [
 DRIVERS = [
     'retro-go-p4/components/retro-go/drivers/display/mipi_dsi_tab5.h',
     'retro-go-p4/components/retro-go/drivers/display/mipi_dsi_tab5_p.h',
-    'retro-go-p4/components/retro-go/drivers/display/mipi_dsi_claw4.h',
     'retro-go-p4/components/retro-go/drivers/display/tab5_dispatch.h',
 ]
 
@@ -71,4 +70,4 @@ if fail:
         print("  " + f)
     sys.exit(1)
 
-print("PASS: 四份驱动各自的 8 个 lcd_* 定义齐全，且都挂了签名钉")
+print("PASS: 三份驱动各自的 8 个 lcd_* 定义齐全，且都挂了签名钉")

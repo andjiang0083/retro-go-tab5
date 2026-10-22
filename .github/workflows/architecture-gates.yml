@@ -1,29 +1,25 @@
-# 架构门禁（不需 ESP-IDF，秒级）：两道
-#   R1 隔离门禁    —— 共享层不许出现"板名条件块 / 板专属标识符"（棘轮，只许减少）
-#   显示驱动契约  —— 四份驱动各自的 8 个 lcd_* 定义齐全 + 挂了签名钉
-# 为什么单独一个 workflow：tab5 的 build.yml 与 claw4 的 build-claw4.yml 各自守自己的构建，
-# 而这两道是**跨板架构门禁**，与具体 target 无关，且不该拖到构建之后才红。
+# 架构门禁（不需 ESP-IDF，秒级）：显示驱动契约
+#   显示驱动契约 —— 三份 Tab5 驱动各自的 8 个 lcd_* 定义齐全 + 挂了签名钉
+# 为什么单独一个 workflow：build.yml 守的是"能不能编 + 产物对不对"，
+# 而这道是**接口契约**，与具体构建形态无关，且不该拖到构建之后才红。
+#
+# 退役说明（2026-10-22）：本仓只维护 Tab5 之后，R1「共享层不许出现板名」隔离门禁失去意义
+# （它是双板时代防漂移的棘轮），已随 tools/check-board-isolation.py 一并退役；
+# Claw4 独立仓若要继续该门禁，从 git 历史里取回即可。
 name: architecture gates
 
 on:
   push:
-    branches: ['main', 'trunk', 'p2/**', 'claw4*', 'release/**']
+    branches: ['main', 'trunk', 'p2/**', 'release/**']
   pull_request:
   workflow_dispatch:
 
 jobs:
   gates:
-    name: Isolation + display contract
+    name: Display contract
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: R1 隔离门禁（共享层不许出现板名）
-        run: python3 tools/check-board-isolation.py
-
-      - name: R1 现状清单（无条件打印，便于人看棘轮）
-        if: always()
-        run: python3 tools/check-board-isolation.py --list
-
-      - name: 显示驱动契约门禁（四份驱动 × 8 个 lcd_*）
+      - name: 显示驱动契约门禁（三份驱动 × 8 个 lcd_*）
         run: python3 tools/check-display-contract.py .

@@ -11,23 +11,15 @@ retro-go 是一个轻量多机种模拟器前端，本仓库是它的移植：�
 
 全部在真机上验证过。**非常欢迎一起共建** —— 见 [参与共建](#参与共建)。
 
-## 一棵树两个 target ｜ Two targets from one tree
+## 目标板
 
-本仓库用**同一份源码构建两台 ESP32-P4 掌机**，每次构建用 `--target` 选其中一台。平台层
-（显示/音频/输入/存储）与全部 11 个机种核心都是共享代码。
+本仓只构建**一台机器**：M5Stack Tab5，构建目标固定为 `tab5`。
 
-| Target | 设备 | 屏幕 | 触摸手柄 | 构建 |
+| 目标 | 设备 | 面板 | 触摸手柄 | 构建 |
 |---|---|---|---|---|
-| `tab5` | M5Stack Tab5 | 1280×720 MIPI-DSI，原生竖屏，v0.4.9 起横竖屏运行时可切 | 13 键，画在四周留白处，含 X/Y ↔ L/R 调换键 | `RG_TAB5_ORIENTATION=0 python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher gbsp` |
-| `claw4` | Metalio Claw4 | 720×720 方屏，只有一个方向 | 11 键，在 720×480 游戏区下方 240px 带内（SNES 布局为 13 键） | `python3 rg_tool.py --target claw4 --no-networking build-img launcher gbsp` |
+| `tab5` | M5Stack Tab5 | 1280×720 MIPI-DSI，原生竖屏，运行时可切横竖（v0.4.9+） | 画在留白区的 13 键，含 X/Y ↔ L/R 调换键 | `RG_TAB5_ORIENTATION=0 python3 rg_tool.py --target tab5 --no-networking --single-app build-img launcher gbsp` |
 
-![真机实拍：Metalio Claw4 手持，上半屏 720×480 游戏画面，下半屏 11 键触摸手柄](docs/images/claw4-gba-castlevania-device.jpg)
-
-*Metalio Claw4（ESP32-P4 · 720×720 方屏）：GBA 3× 整数缩放贴顶（720×480），下方 240px 带内是 11 键触摸手柄 ——
-左侧十字菱形、中线竖排 SELECT/START/MENU、右侧菱形 R/L/A/B。2026-10-12 真机拍摄。*
-
-Claw4 说明：方屏 ⇒ 只有一个方向（无方向弹窗与设置项）；无无线；设置菜单按硬件能力精简（无时钟/时区/封面缓存等项）；
-界面默认中文；音频/背光/电量接的是该板自己的器件。
+> 原先与本仓同树的 Metalio Claw4（720×720 方屏）已迁出到独立仓，以本代码库的冻结分支继续。
 
 ## 下载与安装 —— 先选对文件
 
