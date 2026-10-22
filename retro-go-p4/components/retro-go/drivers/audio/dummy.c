@@ -16,7 +16,7 @@ static bool driver_deinit(void)
 
 static bool driver_submit(const rg_audio_frame_t *frames, size_t count)
 {
-    /* claw4：本 sink 靠 sleep 模拟真实播放节奏。一旦采样率不可用（0/负），
+    /* 本 sink 靠 sleep 模拟真实播放节奏。一旦采样率不可用（0/负），
      * 1000000.f/rate = inf ⇒ busyUntil 变无穷 ⇒ 下一次提交 rg_usleep(巨大值) ⇒
      * 核心永久睡死（实测症状：游戏首次产出音频的瞬间画面定格、BUSY 变 0%、
      * 无崩溃无复位）。这里三重护栏：rate 无效不等待、单次等待夹 20ms、时长夹 20ms。 */

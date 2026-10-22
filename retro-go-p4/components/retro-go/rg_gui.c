@@ -124,17 +124,6 @@ void rg_gui_init(void)
 #ifndef RG_GUI_DEFAULT_LANGUAGE
 #define RG_GUI_DEFAULT_LANGUAGE RG_LANG_EN   /* 未配置的目标保持英文（主干行为零变化） */
 #endif
-#ifdef RG_GUI_FORCE_LANGUAGE
-    /* claw4 暂无语言设置 UI ⇒ NVS 里存过英文的老机器会永远英文。
-     * 一次性迁移：把存量 Language 翻成本目标默认语言，用 LangForced 标记防反复覆盖
-     * （将来加了 UI，用户改过就写 LangForced=已选+1 来接管）。
-     * ★ 只有显式定义 RG_GUI_FORCE_LANGUAGE 的目标生效——其他目标零 NVS 动作。 */
-    if (rg_settings_get_number(NS_GLOBAL, "LangForced", 0) != RG_GUI_FORCE_LANGUAGE + 1)
-    {
-        rg_settings_set_number(NS_GLOBAL, SETTING_LANGUAGE, RG_GUI_FORCE_LANGUAGE);
-        rg_settings_set_number(NS_GLOBAL, "LangForced", RG_GUI_FORCE_LANGUAGE + 1);
-    }
-#endif
     rg_gui_set_language_id(rg_settings_get_number(NS_GLOBAL, SETTING_LANGUAGE, RG_GUI_DEFAULT_LANGUAGE));
     rg_gui_set_font(rg_settings_get_number(NS_GLOBAL, SETTING_FONTTYPE, RG_FONT_VERA_11));
     rg_gui_set_theme(rg_settings_get_string(NS_GLOBAL, SETTING_THEME, NULL));
@@ -983,47 +972,6 @@ intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, 
 
     // We create a copy of options because the callbacks might modify it (ie option->value)
     rg_gui_option_t options[options_count + 1];
-#ifdef RG_GUI_OPTION_VALUE_CAP   /* 能力宏（claw4 定义 64）：槽容量显式，防回调写穿；不定义 = 上游原码 */
-    /* ★ claw4 选项对话框堆越界根治（2026-10-14/15，2026-10-16 因回滚丢失后重新捞回）：
-     * option->value 是指针，回调（launcher/核心几十处）全部用裸 strcpy/sprintf
-     * 往里写、零容量检查——上游隐形契约是"每槽32字节"。中文 UTF-8 值（模式名、
-     * "显示/隐藏"等）+ update_cb 换串极易超过32 ⇒ strcpy 写穿槽尾、砸坏相邻
-     * TLSF 块头 ⇒ "打开选项菜单/调音量→稍后 malloc 崩"（受害者遍布各任务；
-     * 真机 2026-10-16 复现：GBC 里 menu→选项→音量→调节→B ⇒ abort）。
-     * 修复：①槽容量显式提到 RG_OPTION_VALUE_CAP=64（够任何回调串）；
-     *       ②初始拷贝显式钳位 ≤CAP-1，双保险；③推进与预留同一公式（固定步长）。
-     * ⚠ 共享文件铁律：非 claw4 目标（tab5…）走下面的 #else = 上游原码，零位移。 */
-    enum { RG_OPTION_VALUE_CAP = RG_GUI_OPTION_VALUE_CAP };
-    size_t text_need = 16;   // 裕量，避免 0 长 calloc
-    for (size_t i = 0; i < options_count; ++i)
-        if (options_const[i].value)
-            text_need += RG_OPTION_VALUE_CAP;   // 每槽固定 CAP，回调可自由换串
-    char *text_buffer = calloc(text_need, 1);
-    char *text_buffer_ptr = text_buffer;
-
-    memcpy(options, options_const, sizeof(options));
-
-    for (size_t i = 0; i < options_count; i++)
-    {
-        rg_gui_option_t *option = &options[i];
-        if (!option->label)
-            option->label = "";
-        if (option->value && text_buffer)
-        {
-            // 钳位拷贝：绝不让初始串越过本槽 CAP 边界
-            size_t len = strlen(option->value);
-            if (len > RG_OPTION_VALUE_CAP - 1)
-                len = RG_OPTION_VALUE_CAP - 1;
-            memcpy(text_buffer_ptr, option->value, len);
-            text_buffer_ptr[len] = '\0';
-            option->value = text_buffer_ptr;
-        }
-        if (option->update_cb)
-            option->update_cb(option, RG_DIALOG_INIT);
-        if (option->value && text_buffer)
-            text_buffer_ptr += RG_OPTION_VALUE_CAP;   // 固定步长=预留公式，永不漂
-    }
-#else
     char *text_buffer = calloc(options_count, 32);
     char *text_buffer_ptr = text_buffer;
 
@@ -1041,7 +989,6 @@ intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, 
         if (option->value && text_buffer)
             text_buffer_ptr += RG_MAX(strlen(option->value), 31) + 1;
     }
-#endif
 
     rg_gui_draw_status_bars();
     rg_gui_draw_dialog(title, options, sel);
@@ -1111,13 +1058,6 @@ intptr_t rg_gui_dialog(const char *title, const rg_gui_option_t *options_const, 
                 if (sel >= options_count)
                     sel = 0;
             }
-#ifdef RG_GUI_DIALOG_PROBE
-            /* 临时探针（claw4）：把"光标停在哪一项"变成机读，用来盲开菜单的自动化。
-             * 只在 claw4 编译；Tab5 预处理输出零位移。验完撤。 */
-            RG_LOGW("dlgprobe: \"%s\" sel=%d/%u joy=0x%x -> \"%s\"\n",
-                    title, (int)sel, (unsigned)options_count, (unsigned)joystick,
-                    options[sel].label ? options[sel].label : "(null)");
-#endif
             if (sel_old != -1 && options[sel_old].update_cb)
                 options[sel_old].update_cb(&options[sel_old], RG_DIALOG_FOCUS_LOST);
             if (options[sel].update_cb)
@@ -1851,9 +1791,7 @@ void rg_gui_options_menu(void)
     const rg_gui_option_t misc_options[] = {
         {0, _("Font type"),     "-", RG_DIALOG_FLAG_NORMAL, &font_type_cb},
         {0, _("Theme"),         "-", RG_DIALOG_FLAG_NORMAL, &theme_cb},
-#ifndef RG_GUI_HIDE_CLOCK   /* claw4 无网络无 RTC，时间不准 ⇒ 时钟与时区一起隐藏（用户拍板 2026-10） */
         {0, _("Show clock"),    "-", RG_DIALOG_FLAG_NORMAL, &show_clock_cb},
-#endif
         #if defined(RG_GAMEPAD_TOUCH_MAP) && RG_TOUCH_OVERLAY
         /* "Touch buttons"（关闭虚拟按键）暂时屏蔽：蓝牙手柄支持之前，触摸是这台设备
          * 唯一的输入源，关掉就等于把用户困住（见 rg_touch_overlay.c 强制 visible=true 的注释）。
@@ -1861,9 +1799,7 @@ void rg_gui_options_menu(void)
         {0, _("Touch opacity"),  "-", RG_DIALOG_FLAG_NORMAL, &touch_opacity_cb},
         {0, _("Touch skin"),     "-", RG_DIALOG_FLAG_NORMAL, &touch_skin_cb},
         #endif
-#ifndef RG_GUI_HIDE_CLOCK   /* 时钟都隐藏了，时区没有存在的意义 */
         {0, _("Timezone"),      "-", RG_DIALOG_FLAG_NORMAL, &timezone_cb},
-#endif
         {0, _("Language"),      "-", RG_DIALOG_FLAG_NORMAL, &language_cb},
         #ifdef RG_GPIO_LED // Only show disk LED option if disk LED GPIO pin is defined
         {0, _("LED options"),   NULL, RG_DIALOG_FLAG_NORMAL, &led_indicator_cb},
@@ -1939,22 +1875,12 @@ void rg_gui_about_menu(void)
         {0, _("Version"), (char *)app->version, RG_DIALOG_FLAG_MESSAGE, NULL},
         {0, _("Date"), (char *)app->buildDate, RG_DIALOG_FLAG_MESSAGE, NULL},
         {0, _("Target"), (char *)RG_TARGET_NAME, RG_DIALOG_FLAG_MESSAGE, NULL},
-#ifndef RG_GUI_HIDE_WEBSITE
         {0, _("Website"), (char *)RG_PROJECT_WEBSITE, RG_DIALOG_FLAG_MESSAGE, NULL},
-#endif
         RG_DIALOG_SEPARATOR,
         {4, _("Options"), NULL, have_option_btn ? RG_DIALOG_FLAG_HIDDEN : RG_DIALOG_FLAG_NORMAL , NULL},
         // {1, _("View credits", NULL, RG_DIALOG_FLAG_NORMAL, NULL},
-#ifndef RG_GUI_HIDE_DEBUG_MENU
         {2, _("Debug menu"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
-#endif
         {3, _("Reset settings"), NULL, RG_DIALOG_FLAG_NORMAL, NULL},
-#ifdef RG_GUI_LANG_IN_ABOUT_MENU
-        /* 语言放一级菜单最后（claw4 拍板）：触摸机藏进 Options 二级=没有入口。
-         * language_cb 自带三选弹窗+落盘；LangForced 迁移标记已在，用户改过不会被首刷覆盖。
-         * ★ 其他目标未定义该宏 ⇒ About 菜单逐字不变（tab5 的 Language 仍在 Options）。 */
-        {0, _("Language"), "-", RG_DIALOG_FLAG_NORMAL, &language_cb},
-#endif
         RG_DIALOG_END,
     };
 

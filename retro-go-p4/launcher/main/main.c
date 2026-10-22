@@ -18,8 +18,6 @@
 #include "rg_orient.h"            /* S2 屏幕方向：NVS 契约 + 引导槽切换 */
 
 /* S2「屏幕方向」功能开关：**默认 1** = 保留 Tab5 的形态（首次启动弹窗 + 设置里可重选）。
- * 方屏单方向 target（targets/claw4）在自己的 config.h 里置 0 —— 它只有一个方向，
- * 弹窗里选"横屏"会指向并不存在的 `_l` 分区槽，纯误导（用户 2026-10-11 定："去掉这个"）。
  * 置 0 时：不弹窗、设置菜单里不出现该项；rg_orient.c 仍编译（rg_system.c 的按标签找 app 要用）。 */
 #ifndef RG_ORIENT_SWITCH
 #define RG_ORIENT_SWITCH 1
@@ -535,9 +533,7 @@ static void options_handler(rg_gui_option_t *dest)
 
 static void about_handler(rg_gui_option_t *dest)
 {
-#ifndef RG_GUI_HIDE_CRC_CACHE   /* claw4 隐藏（用户拍板）：封面按 CRC 匹配是后台自动的事，不该出现在用户菜单 */
     *dest++ = (rg_gui_option_t){0, _("Build CRC cache"), NULL, RG_DIALOG_FLAG_NORMAL, &prebuild_cache_cb};
-#endif
     #if defined(RG_ENABLE_NETWORKING) && RG_UPDATER_ENABLE && !defined(RG_SINGLE_APP)
     // 单 app 形态没有第二个 app 分区给 updater 落新固件，所以这一项不显示（见 rg_system.c 的
     // update_boot_config）。升级改用 M5Burner / esptool 整包刷。
@@ -554,7 +550,7 @@ static void about_handler(rg_gui_option_t *dest)
  * 为什么需要：真机上没人点屏幕，而"选 app(gbsp) → 再选 ROM"要两次输入；
  * 直接 rg_system_switch_app 一步进游戏，之后按键时间轴才有意义。验证完删除。 */
 #ifndef RG_TEST_BOOTROM_NS
-#define RG_TEST_BOOTROM_NS "gba"     /* 自动进哪台机（claw4 无人值守测量用）：gba→gbsp；gb/gbc→retro-core */
+#define RG_TEST_BOOTROM_NS "gba"     /* 自动进哪台机（无人值守测量用）：gba→gbsp；gb/gbc→retro-core */
 #endif
 #ifndef RG_TEST_BOOTROM_EXT
 #define RG_TEST_BOOTROM_EXT RG_TEST_BOOTROM_NS   /* 扩展名过滤，默认与机型同名 */
@@ -668,7 +664,7 @@ void app_main(void)
  * 未定义该宏的 target（如 Tab5）走到的分支与改动前逐字相同。 */
 #ifdef RG_TEST_BOOTROM
     /* 固件自报构建开关：镜像名分不出配置（同名不同内容），让机器自己说 */
-    RG_LOGW("claw4-build: BOOTROM=%d\n", (int)RG_TEST_BOOTROM);
+    RG_LOGW("test-build: BOOTROM=%d\n", (int)RG_TEST_BOOTROM);
 #endif
 #if ((defined(RG_GBA_DIAG) && RG_GBA_DIAG) || (defined(RG_TEST_BOOTROM) && RG_TEST_BOOTROM)) && !defined(RG_TARGET_SDL2)
     rg_test_auto_boot_rom();   /* 测试钩子：直接进游戏，跳过 ROM 选择界面 */

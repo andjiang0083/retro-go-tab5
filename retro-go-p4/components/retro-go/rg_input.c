@@ -78,25 +78,15 @@ static size_t keymap_touch_count;
 _Static_assert(RG_COUNT(keymap_touch_main) <= RG_COUNT(keymap_touch) &&
                RG_COUNT(keymap_touch_alt) <= RG_COUNT(keymap_touch),
                "keymap_touch 容量不够：touch_layout.h 加键了要一起把 16 调大");
-/* 两张表条数是否必须相等：Tab5 是（同批键的两个方向），claw4 不是（两种机型布局 13/11 键）
- * ⇒ 用 RG_TOUCH_KEYMAP_ALLOW_DIFFERENT_COUNTS 放行，搬表时按**选中的那张**自己的条数。 */
-#ifndef RG_TOUCH_KEYMAP_ALLOW_DIFFERENT_COUNTS
+/* 两张表条数必须相等：Tab5 的两张表 = 同一批键的两个方向（竖屏 main / 横屏 alt），
+ * 搬表按同一个 count 走。 */
 _Static_assert(RG_COUNT(keymap_touch_main) == RG_COUNT(keymap_touch_alt),
                "两张键位表条数必须一致（rg_input.c 按同一个 count 搬表）");
-#endif
 
-/* 选表判据：默认 = "按运行时方向"（Tab5 双方向，逐字不变）。
- * target 可覆盖（claw4 方屏无方向，两张表 = 两种机型布局 ⇒ 按当前机型选）。 */
-#ifndef RG_TOUCH_KEYMAP_USE_ALT
+/* 选表判据：按运行时方向（竖屏 = main 表，横屏 = alt 表）。 */
 #define RG_TOUCH_KEYMAP_USE_ALT() (rg_orient_active() == RG_ORIENT_LANDSCAPE)
-#endif
 
-/* 板级选表实现（板名与机型判据都留在板级文件里）。
- * 默认不定义 ⇒ 走下面的"上游原码"路径（Tab5 等：装过即早返回，路径与位移零变化）；
- * claw4 在 targets/claw4/config.h 里定义成 "targets/claw4/touch_keymap.h"。 */
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK
-#include RG_TOUCH_KEYMAP_BOARD_HOOK
-#else
+/* 装表：装过即早返回（上游原码路径，逐字不变）。 */
 static void touch_keymap_ensure(void)
 {
     if (keymap_touch_count)
@@ -106,7 +96,6 @@ static void touch_keymap_ensure(void)
     keymap_touch_count = use_alt ? RG_COUNT(keymap_touch_alt) : RG_COUNT(keymap_touch_main);
     memcpy(keymap_touch, src, keymap_touch_count * sizeof(rg_keymap_touch_t));
 }
-#endif
 #else
 static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
 static const size_t keymap_touch_count = RG_COUNT(keymap_touch);
@@ -138,7 +127,7 @@ extern i2c_master_bus_handle_t bsp_i2c_get_handle(void);
 /* 照抄 BSP 的 ST7123 触摸初始化（bsp_display_indev_init_to_st7123）：
  * 一体化屏的触摸 IC 就是 ST7123，I2C 地址 0x55，x_max/y_max 用面板物理尺寸。
  * 注意 BSP 只对外暴露了 GT911 版本的 bsp_touch_new()，所以这里自己建 panel io。 */
-/* ── 振动马达（claw4 GPIO22，高有效）────────────────────────────────────────
+/* ── 振动马达（可选：target 定义 RG_VIBRATE_GPIO，高有效）────────────────────
  * 虚拟键是"没有行程"的按键，触感反馈全靠这一下。用一次性 esp_timer 关断：
  * 不能在输入任务里 vTaskDelay（会把按键轮询卡停 30ms，手感更差）。 */
 #if defined(RG_VIBRATE_GPIO)
@@ -171,11 +160,6 @@ static void rg_vibrate_pulse(void)
 static void rg_vibrate_pulse(void) {}
 #endif
 
-#ifdef RG_TOUCH_IC_BOARD_HOOK
-/* 板级触摸 IC 初始化（claw4 = GT911，见 targets/claw4/touch_ic.h）。
- * 默认不定义 ⇒ 走下面 #else 的内置实现（Tab5 = ST7123 一体屏）。 */
-#include RG_TOUCH_IC_BOARD_HOOK
-#else
 /* ── Tab5：ST7123（一体化屏的触摸 IC）────────────────────────────────────── */
 static esp_err_t rg_touch_init(void)
 {
@@ -194,8 +178,7 @@ static esp_err_t rg_touch_init(void)
         },
     };
     /* 原为 100000。手指按住屏时 ST7123 要读完整多点报（3 笔事务、6×max_touches 字节），
-     * 实测 100kHz 下单次读 8.2ms。ST7123 支持 400kHz ⇒ 先把总线时钟提上去。
-     * 这一行在 `#else`（非 claw4）分支里 ⇒ claw4 编译期看不到，机器码不受影响。 */
+     * 实测 100kHz 下单次读 8.2ms。ST7123 支持 400kHz ⇒ 先把总线时钟提上去。 */
     /* ⚠ 400kHz 试点已回退(2026-10-13)：提到 400kHz 后触摸与物理按键同时失灵（都挂在这条共享 I2C 总线）⇒ 保持 100kHz。 */
     io_config.scl_speed_hz = 100000;
     err = esp_lcd_new_panel_io_i2c_v2(bsp_i2c_get_handle(), &io_config, &io);
@@ -218,7 +201,6 @@ static esp_err_t rg_touch_init(void)
     }
     return ESP_OK;
 }
-#endif /* RG_TOUCH_IC_BOARD_HOOK */
 
 /* 触摸懒加载 + 重试：
  * Tab5 的 TP_RST 由 I2C 上的 IO 扩展器控制，而扩展器是在**显示初始化**里才被初始化的
@@ -262,7 +244,7 @@ static uint32_t gamepad_state = -1; // _Atomic
  * 去抖是"连续 N 次采样"（RG_GAMEPAD_DEBOUNCE_PRESS/RELEASE），所以
  *   按下/松开的确认延迟 ≈ N × 采样周期
  * ⇒ 周期减半，确认延迟就减半。代价是触摸读的次数翻倍（实测单次读 ~0.7ms）。
- * 默认 10 = 现状 ⇒ 不覆盖它的目标（claw4）编译产物逐字节不变。 */
+ * 默认 10 = 现状 ⇒ 不覆盖它的构建产物逐字节不变。 */
 #ifndef RG_INPUT_POLL_MS
 #define RG_INPUT_POLL_MS 10
 #endif
@@ -286,7 +268,7 @@ static uint32_t gamepad_state = -1; // _Atomic
 /* ILAT_CAP 从 256 缩到 64（2026-10-13）：tab5 内部 RAM 贴着 DMA 池上限，
  * 5 段 × 256 项的直方图 ≈ 5.1KB .bss 会让启动期 "Could not reserve internal/DMA pool" 而
  * 启动循环（实测 80 次/150s）。64 项/秒足够算 p50/p95（解析器跨秒聚合中位数）。
- * 这一段在 #if RG_INPUT_LAT_DIAG 内 ⇒ 缩它不影响 claw4 的构建（claw4 该宏为 0）。 */
+ * 这一段在 #if RG_INPUT_LAT_DIAG 内 ⇒ 缩它不影响不量测的构建（该宏为 0）。 */
 #define ILAT_CAP  64
 /* n/avg/pct 一律用 unsigned：P4 工具链里 uint32_t = unsigned long，
  * 直接喂 %u 会撞 -Werror=format（实测第一轮构建就在这里挂掉）。 */
@@ -367,7 +349,7 @@ static void ilat_note_frame(uint32_t visible)
 }
 static void ilat_bus_probe(void)
 {
-#if !defined(RG_TOUCH_IC_BOARD_HOOK) && defined(RG_GAMEPAD_TOUCH_MAP)   /* 内置触摸 IC 的机种（Tab5 等）*/
+#if defined(RG_GAMEPAD_TOUCH_MAP)   /* 内置触摸 IC 的机种（Tab5）*/
     if (!touch_handle || !touch_handle->io)
         return;
     esp_lcd_panel_io_handle_t io = touch_handle->io;
@@ -422,9 +404,8 @@ static void ilat_tick(void)
 #endif
 
 /* 输入任务优先级。**默认 = 现状**（与 rg_display 同为 RG_TASK_PRIORITY_6）。
- * 为什么做成"每目标可覆盖宏"而不是直接改大：rg_input.c 是两台机器共享的文件，而 claw4 的
- * 手感是已验收的成果 —— 直接改会同时移动两台机器的行为。规矩：共享文件里的**行为**改动
- * 一律走「默认 = 现状」的宏，只有明确要量测的目标才在自己 config.h 里覆盖。
+ * 为什么做成"每目标可覆盖宏"而不是直接改大：改共享文件的**行为**会同时移动所有构建的手感 ——
+ * 规矩：共享文件里的行为改动一律走「默认 = 现状」的宏，只有明确要量测的地方才在自己 config.h 里覆盖。
  * ⚠ config.h 在 rg_system.h 里**先于** rg_task_priority_t 枚举被包含 ⇒ 覆盖点要写数字（7），
  *   不能写 RG_TASK_PRIORITY_7。
  * 当前覆盖点：targets/tab5/config.h（2026-10-13 输入迟滞 A/B）。 */
@@ -1443,15 +1424,6 @@ void rg_input_deinit(void)
 
 uint32_t rg_input_read_gamepad(void)
 {
-    /* 每帧入口挂钩：机型表可能变（claw4：GB/GBC 用 AB v2 表；核心 configNs 是 init 之后才写入的）。
-     * 单表目标是空宏；Tab5 走 #else 原码（装过即早返回）⇒ 行为与位移都不变。 */
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK
-    /* ⚠ 本块整体在"板级 hook"守卫内：非 claw4 目标在这里**一个字都不加**（上游原码逐字不变）。
-     * 为什么必须挂在每帧入口：核心的 app->configNs 是 rg_system_init 之后才写入的，
-     * 只在 init 调一次会把表锁错（GB 里仍是 GBA 键位，2026-10-16 真机实测）。 */
-    if (touch_keymap_ensure())
-        UPDATE_GLOBAL_MAP(keymap_touch);   /* 换了表就同步"设备可产键"掩码（宏定义在本文件后半，故在调用点用） */
-#endif
 #ifdef RG_TARGET_SDL2
     /* macOS：只有主线程能泵 Cocoa 事件（子线程会触发 NSApplication 异常 → abort） */
     if (rg_sdl2_can_pump_events())

@@ -1,12 +1,10 @@
 #if defined(RG_TARGET_TAB5)
 #include "targets/tab5/config.h"
-#elif defined(RG_TARGET_CLAW4)
-#include "targets/claw4/config.h"
 #elif defined(RG_TARGET_SDL2)
 #include "targets/sdl2/config.h"
 #else
-#error "不支持的 RG_TARGET_*：本仓只维护 tab5 / claw4（+ sdl2 宿主预览）。" \
-       "构建用 rg_tool.py --target tab5|claw4。下列上游 target 的目录仍在树内（作参考与回移起点），" \
+#error "不支持的 RG_TARGET_*：本仓只维护 tab5（+ sdl2 宿主预览）。" \
+       "构建用 rg_tool.py --target tab5。下列上游 target 的目录仍在树内（作参考与回移起点），" \
        "但本仓从未构建/验证过它们，故不再静默兜底编成 ODROID-GO（那会让报错看起来与目标板毫无关系）：" \
        "odroid-go / mrgc-g32 / mrgc-gbm / qtpy-gamer / retro-esp32 / retro-ruler-V1 / esplay-micro /" \
        "esplay-s3 / esp32s3-devkit-c / fri3d-2024 / byteboi-rev1 / rachel-esp32 / nullnano / t-deck-plus /" \

@@ -127,8 +127,8 @@ void rg_display_push_failed(int top, int lines)
 #define FLOAT_TO_INT(x) ((int)((x) + 0.1f))
 
 static const char *SETTING_BACKLIGHT = "DispBacklight";
-/* 背光默认档（0..100）。可被 target 覆盖：claw4 的 NV3051F 面板 DCS 亮度上限较低，
- * 软件默认给 100 才够亮（真机 2026-10-11 反馈"屏幕有点暗"）。 */
+/* 背光默认档（0..100）。可被 target 覆盖（不同面板的 DCS 亮度上限不同，
+ * 亮不亮要按真机反馈定）。 */
 #ifndef RG_DISPLAY_DEFAULT_BACKLIGHT
 #define RG_DISPLAY_DEFAULT_BACKLIGHT 80
 #endif
@@ -166,10 +166,6 @@ static inline void lcd_send_buffer(uint16_t *buffer, size_t length);
  * 契约：下面所有 lcd_* 调用点一字不改 —— 分发层把它们定义成 static inline 转发器。
  * 单方向构建（双 app 形态 / 或单一方向的实验档）走的也是这里，结果与改造前逐字一致。 */
 #include "drivers/display/tab5_dispatch.h"
-#elif RG_SCREEN_DRIVER == RG_DISPLAY_DRIVER_CLAW4
-/* Metalio Claw4（方屏 720×720，单方向、线性 1:1）：一份驱动，**不需要分发层**。
- * 同样契约：本文件里所有 lcd_* 调用点一字不改。 */
-#include "drivers/display/mipi_dsi_claw4.h"
 #elif RG_SCREEN_DRIVER == RG_DISPLAY_DRIVER_SDL2
 #include "drivers/display/sdl2.h"
 #else

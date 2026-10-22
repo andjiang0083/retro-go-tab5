@@ -79,11 +79,6 @@ void rg_surface_free(rg_surface_t *surface)
 {
     if (!surface)
         return;
-#ifdef RG_SURF_LIFE_PROBE
-    /* 临时探针（claw4）：surface 生命周期机读 —— 找出"释放后仍被使用"的那一个 */
-    RG_LOGW("surf-free : %p %dx%d fmt=%d data=%p\n", (void *)surface, surface->width, surface->height,
-            surface->format, surface->data);
-#endif
     if (surface->free_data)
         free(surface->data);
     if (surface->free_palette)

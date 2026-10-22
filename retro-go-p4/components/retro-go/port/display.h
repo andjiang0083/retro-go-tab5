@@ -8,13 +8,12 @@
  * 所以这里的做法是：**同一套原型声明**，谁实现谁就把它们定义出来 —— 少一个函数、
  * 或参数类型不一致，**编译期就报错**（不再是靠人读注释/runtime 才知道对不上）。
  *
- * 谁要实现（四份，几何/后端各不同，接口相同）：
+ * 谁要实现（三份，几何/后端各不同，接口相同）：
  *   drivers/display/mipi_dsi_tab5.h      Tab5 横屏后端（被 tab5_l_api.c 包一层）
  *   drivers/display/mipi_dsi_tab5_p.h    Tab5 竖屏后端（被 tab5_p_api.c 包一层）
  *   drivers/display/tab5_dispatch.h      Tab5 单 app：运行时选上面两份（转发器）
- *   drivers/display/mipi_dsi_claw4.h     Metalio Claw4 方屏（单方向、线性 1:1）
  *
- * ⚠ 本头文件**只能被"确实定义了这 8 个函数"的 TU 包含**（现在是上面四份各自包含）——
+ * ⚠ 本头文件**只能被"确实定义了这 8 个函数"的 TU 包含**（现在是上面三份各自包含）——
  *   它声明的是 `static` 函数，在没有定义的 TU 里包含会得到"声明了但未定义"的编译错误。
  *   这正是契约的一部分：想让别的目标也纳入契约，就先把那 8 个函数补齐。
  *
@@ -32,7 +31,6 @@
 #define RG_DISPLAY_DRIVER_TAB5_L     2    /* Tab5 横屏后端（90° 映射） */
 #define RG_DISPLAY_DRIVER_TAB5_P     3    /* Tab5 竖屏后端（线性） */
 #define RG_DISPLAY_DRIVER_TAB5_BOTH  4    /* Tab5 单 app：两份都编，运行时由分发层选 */
-#define RG_DISPLAY_DRIVER_CLAW4      5    /* Metalio Claw4 方屏（单方向、线性 1:1） */
 #define RG_DISPLAY_DRIVER_SDL2       99   /* 宿主（macOS/Linux 预览） */
 #define RG_DISPLAY_DRIVER_DUMMY      100  /* 无显示（"以上都不是"） */
 
@@ -42,8 +40,8 @@
  * 展开点就找不到标识符 ⇒ **编译期直接红**。
  * 代价为零：纯静态断言，不生成任何代码（已用"剥 DWARF 后 .obj 逐字节相同"验证过）。
  *
- * 用法（四份驱动都在文件末尾调用）：`RG_DISPLAY_CONTRACT();`
- * ⚠ 漏调用宏就失去检查 —— P2 的隔离门禁脚本会 grep 这四份文件必须含该调用。 */
+ * 用法（三份驱动都在文件末尾调用）：`RG_DISPLAY_CONTRACT();`
+ * ⚠ 漏调用宏就失去检查 —— tools/check-display-contract.py 会 grep 这三份文件必须含该调用。 */
 #define RG_DISPLAY_CONTRACT()                                                                     \
     _Static_assert(__builtin_types_compatible_p(__typeof__(lcd_init), void (void)),               \
                    "显示驱动契约：缺 lcd_init 或签名应为 void(void)");                            \

@@ -1041,7 +1041,7 @@ static const char *translations[][RG_LANG_MAX] =
         [RG_LANG_ZH] = "此程序没有可调整的选项。",
     },
     // end of rg_system.c
-    // begin of launcher (claw4 中文支持, 2026-10): FR 暂复制英文，待补
+    // begin of launcher (中文支持, 2026-10): FR 暂复制英文，待补
     {
         [RG_LANG_EN] = "Loading...",
         [RG_LANG_FR] = "Loading...",

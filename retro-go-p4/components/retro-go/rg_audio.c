@@ -16,9 +16,6 @@
 #endif
 
 extern const rg_audio_driver_t rg_audio_driver_dummy;
-#if RG_AUDIO_USE_CLAW4_BT
-extern const rg_audio_driver_t rg_audio_driver_claw4_bt;
-#endif
 #if RG_AUDIO_USE_TAB5_CODEC
 extern const rg_audio_driver_t rg_audio_driver_tab5_es8388;
 #endif
@@ -32,11 +29,6 @@ extern const rg_audio_driver_t rg_audio_driver_sdl2;
 
 static const rg_audio_sink_t sinks[] = {
     {&rg_audio_driver_dummy,  0, "Dummy"  },
-#if RG_AUDIO_USE_CLAW4_BT
-    /* claw4：I2S→板载蓝牙音频芯片（UART2 AT 控制）。放在 Dummy 之后 ⇒ 命中的是 sinks[1 % count]，
-     * 即"有真音频设备就不再用 Dummy"。官方 MetalioClaw4 的全部参数见 drivers/audio/claw4_bt_audio.c 头注释。 */
-    {&rg_audio_driver_claw4_bt, 0, "Claw4 BT Audio"},
-#endif
 #if RG_AUDIO_USE_TAB5_CODEC
     {&rg_audio_driver_tab5_es8388, 0, "ES8388"},
 #endif
@@ -90,7 +82,7 @@ static const char *get_last_driver_error(void)
 
 void rg_audio_init(int sampleRate)
 {
-    /* claw4：config 未定义音频采样率时调用方可能传 0 ⇒ Dummy sink 会除零变成 inf 睡死。
+    /* 调用方可能传 0（config 未定义音频采样率）⇒ Dummy sink 会除零变成 inf 睡死。
      * 统一兜底，非法值一律按 GBA 原生的 32768Hz 处理（日志可查）。 */
     if (sampleRate <= 0)
     {
@@ -98,8 +90,8 @@ void rg_audio_init(int sampleRate)
         sampleRate = 32768;
     }
 #ifdef RG_AUDIO_FORCE_SAMPLE_RATE
-    /* claw4：音频芯片（I2S 从机）采样率固定，核心若按自己的原生率喂数据就会慢放/快放。
-     * 这里按 target 声明强制对齐（Tab5/其它 target 未定义此宏 ⇒ 逻辑与产物逐字节不变）。 */
+    /* 采样率固定的音频芯片（I2S 从机）要求核心按同一率喂数据，否则会慢放/快放。
+     * 这里按 target 声明强制对齐（未定义此宏的 target ⇒ 逻辑与产物逐字节不变）。 */
     if (sampleRate != RG_AUDIO_FORCE_SAMPLE_RATE)
     {
         RG_LOGI("rg_audio: 采样率按 target 强制 %dHz → %dHz\n", sampleRate, RG_AUDIO_FORCE_SAMPLE_RATE);
@@ -258,15 +250,15 @@ int rg_audio_get_volume(void)
 
 void rg_audio_set_volume(int percent)
 {
-    /* claw4：音频尚未接入（sink=Dummy / 已 deinit），而 GUI 对话框（rg_gui.c）和退出到启动器
+    /* 音频尚未接入（sink=Dummy / 已 deinit）时，GUI 对话框（rg_gui.c）和退出到启动器
      * 的路径仍会调这三个函数 ⇒ 断言会把「按菜单键退出」变成 panic→重启→自动进游戏的循环。
-     * 未就绪时安静忽略：对已就绪的情形（Tab5 等）行为完全不变（原本断言恒真）。 */
+     * 未就绪时安静忽略：对已就绪的情形行为完全不变（原本断言恒真）。 */
     if (audio.driver == NULL)
     {
-        static bool claw4_audio_warned;
-        if (!claw4_audio_warned)
+        static bool audio_warned;
+        if (!audio_warned)
         {
-            claw4_audio_warned = true;
+            audio_warned = true;
             RG_LOGW("rg_audio: 未就绪（音频未实现或已 deinit），忽略本次音量/静音/采样率调用\n");
         }
         return;
@@ -285,15 +277,15 @@ bool rg_audio_get_mute(void)
 
 void rg_audio_set_mute(bool mute)
 {
-    /* claw4：音频尚未接入（sink=Dummy / 已 deinit），而 GUI 对话框（rg_gui.c）和退出到启动器
+    /* 音频尚未接入（sink=Dummy / 已 deinit）时，GUI 对话框（rg_gui.c）和退出到启动器
      * 的路径仍会调这三个函数 ⇒ 断言会把「按菜单键退出」变成 panic→重启→自动进游戏的循环。
-     * 未就绪时安静忽略：对已就绪的情形（Tab5 等）行为完全不变（原本断言恒真）。 */
+     * 未就绪时安静忽略：对已就绪的情形行为完全不变（原本断言恒真）。 */
     if (audio.driver == NULL)
     {
-        static bool claw4_audio_warned;
-        if (!claw4_audio_warned)
+        static bool audio_warned;
+        if (!audio_warned)
         {
-            claw4_audio_warned = true;
+            audio_warned = true;
             RG_LOGW("rg_audio: 未就绪（音频未实现或已 deinit），忽略本次音量/静音/采样率调用\n");
         }
         return;
@@ -316,15 +308,15 @@ int rg_audio_get_sample_rate(void)
 
 void rg_audio_set_sample_rate(int sampleRate)
 {
-    /* claw4：音频尚未接入（sink=Dummy / 已 deinit），而 GUI 对话框（rg_gui.c）和退出到启动器
+    /* 音频尚未接入（sink=Dummy / 已 deinit）时，GUI 对话框（rg_gui.c）和退出到启动器
      * 的路径仍会调这三个函数 ⇒ 断言会把「按菜单键退出」变成 panic→重启→自动进游戏的循环。
-     * 未就绪时安静忽略：对已就绪的情形（Tab5 等）行为完全不变（原本断言恒真）。 */
+     * 未就绪时安静忽略：对已就绪的情形行为完全不变（原本断言恒真）。 */
     if (audio.driver == NULL)
     {
-        static bool claw4_audio_warned;
-        if (!claw4_audio_warned)
+        static bool audio_warned;
+        if (!audio_warned)
         {
-            claw4_audio_warned = true;
+            audio_warned = true;
             RG_LOGW("rg_audio: 未就绪（音频未实现或已 deinit），忽略本次音量/静音/采样率调用\n");
         }
         return;

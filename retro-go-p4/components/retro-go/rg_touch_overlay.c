@@ -55,26 +55,12 @@
 /* 0.4.9：灯位改成**运行时**表达式（同一个镜像两个方向），调用点一字不改。
  * 判据 = 逻辑画面是不是横的（等价于原来那个 #if）。 */
 #define RG_BATT_LED_IS_LANDSCAPE (rg_geom()->w > rg_geom()->h)
-/* ⚠ 以下四个几何量允许 target 覆盖（#ifndef 守卫）：Metalio Claw4 是方屏
- * （720x720，无横竖之分），灯位钉在**屏幕左下角**，由 targets/claw4/touch_layout.h
- * 直接给出 CX/CY/R/RING + RG_BATT_LED_FIXED 1。Tab5 不定义它们 ⇒ 走这里的原值，
- * 行为逐字不变。 */
-#ifndef RG_BATT_LED_CX
+/* 以下四个几何量是**兜底值**：真实位置由皮肤布局推导（rg_touch_skin_led_cy），
+ * 横屏则用下面的定点表达式（见 rg_overlay_try_panel）。 */
 #define RG_BATT_LED_CX       (RG_BATT_LED_IS_LANDSCAPE ? 140 : 360)
-#endif
-#ifndef RG_BATT_LED_CY
 #define RG_BATT_LED_CY       (RG_BATT_LED_IS_LANDSCAPE ? 675 : 1025)    /* 竖屏兜底值：真实位置由 rg_touch_skin_led_cy() 推导（见 led_cy_cur） */
-#endif
-#ifndef RG_BATT_LED_R
 #define RG_BATT_LED_R        12
-#endif
-#ifndef RG_BATT_LED_RING
 #define RG_BATT_LED_RING     3
-#endif
-/* 1 = 灯位钉死、**不**按控制区顶推导（claw4）；默认 0 = Tab5 的"竖屏跟着布局推导"。 */
-#ifndef RG_BATT_LED_FIXED
-#define RG_BATT_LED_FIXED    0
-#endif
 /* 灯条带 Y 范围不再写死：跟着 led_cy_cur 走（见 rg_batt_led_get_band），
  * 行号还要按 4 取整（帧缓冲一行 1440B，128B 边界 = 每 4 行，msync 要求对齐）。 */
 #define RG_BATT_LED_BAND_PAD 2
@@ -166,11 +152,6 @@ static void rg_overlay_sync_viewport(void)
 
 static rg_overlay_btn_t *btns;
 static size_t btn_count;
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK   /* 板级多表选表（claw4）⇒ 可视层要跟着键位代际号重建 */
-/* 板级多表选表：已建"画出来的按键"对应的键位表代际号（init 与重建处都更新）。
- * 守卫内声明 ⇒ 无此能力的 target 预处理输出零位移。 */
-static uint32_t btns_built_gen;
-#endif
 static bool ready;
 static bool visible = true;
 static int alpha_pct = 100;
@@ -682,12 +663,7 @@ void rg_overlay_init(void)
 
     load_glyphs();
 
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK   /* 板级多表选表（claw4）⇒ 可视层要跟着键位代际号重建 */
-    /* 板级多表选表：留满上限 ⇒ 换键位表时可就地重建精灵，不会越界（无此能力的 target 走下面上游原码） */
-    btns = rg_alloc(sizeof(rg_overlay_btn_t) * RG_OVERLAY_MAX_BUTTONS, MEM_SLOW);
-#else
     btns = rg_alloc(sizeof(rg_overlay_btn_t) * n, MEM_SLOW);
-#endif
     if (!btns)
     {
         RG_LOGE("touch overlay: no memory for %u buttons\n", (unsigned)n);
@@ -791,19 +767,6 @@ void rg_overlay_init(void)
     RG_LOGI("touch overlay ready: %u buttons, visible=%d, alpha=%d%%, X/Y<->L/R swapped=%d, skin=%s, built in %d ms\n",
             (unsigned)btn_count, visible, alpha_pct, swap_yx, rg_touch_skin_short_name(skin_idx),
             (int)((rg_system_timer() - t_start) / 1000));
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK   /* 板级多表选表（claw4）⇒ 可视层要跟着键位代际号重建 */
-    {   /* claw4 取证：init 这一刻"画出来"的按键坐标。若与 ovl-relayout 那行不同，
-         *   说明换表前的画面是旧表（用户真机症状的机读证据）。 */
-        char dump[288]; int off = 0; dump[0] = 0;
-        for (size_t i = 0; i < btn_count && off < (int)sizeof(dump) - 24; ++i)
-            off += snprintf(dump + off, sizeof(dump) - off, "[%d:%d,%d]",
-                            (int)btns[i].key, btns[i].x + btns[i].w / 2, btns[i].y + btns[i].h / 2);
-        RG_LOGI("ovl-btns(init): console=%s n=%u %s\n", console_id, (unsigned)btn_count, dump);
-    }
-    /* 记下"已建到哪一代"：init 建的这批就是当前代 ⇒ 不会为了同一代白重建一次
-     * （真换了表时 gen 会再 +1，那时才需要重建）。 */
-    btns_built_gen = rg_input_touch_keymap_gen();
-#endif
 }
 
 bool rg_overlay_is_ready(void)
@@ -870,22 +833,10 @@ static int panel_vp_x = -1, panel_vp_w = -1, panel_vp_top = -1;
  * 定义在**文件顶部**（见 rg_overlay_sync_viewport 附近）：布局自检那个更早的函数也要用它，
  * 放这里会"未声明先用"。 */
 
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK   /* 板级多表选表（claw4）⇒ 可视层要跟着键位代际号重建 */
-/* 板级多表选表：键位表换代 ⇒ 重建"画出来的按键"（定义在下方，这里前置声明） */
-static void overlay_relayout_if_keymap_changed(void);
-#endif
-
 static void rg_overlay_try_panel(void)
 {
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK   /* 板级多表选表（claw4）⇒ 可视层要跟着键位代际号重建 */
-    /* 先补建按键精灵：输入层每帧可能已换表，可视层不跟就会"画旧表、点新表" */
-    overlay_relayout_if_keymap_changed();
     if (!btns)
         return;
-#else
-    if (!btns)
-        return;
-#endif
     /* 该不该装：**判"在不在游戏里"**，别拿 rg_display_get_width/height 去比 720x1280 ——
      * 那两个是**逻辑视口**尺寸（Tab5 上逻辑屏就是 720x480），比 1280 永远不成立。
      * 真机现象就是"面板一直不装、守卫静默挡掉、无日志"。
@@ -919,10 +870,8 @@ static void rg_overlay_try_panel(void)
     /* 灯位从布局推导（与面板同源）。条带跟着它走，所以灯动条带也动。 */
     /* 灯位从布局推导（与面板同源）。**横屏例外**：横屏的灯钉在左下角（RG_BATT_LED_CY），
      * 套竖屏那套"在控制区里居中"的推导会把它算到游戏画面附近去（用户 2026-10-08 指定左下角）。 */
-#if !RG_BATT_LED_FIXED
     if (RG_SCREEN_WIDTH <= RG_SCREEN_HEIGHT)
         led_cy_cur = rg_touch_skin_led_cy(ctrl_top_cur, RG_BATT_LED_R);
-#endif
     /* 这一行是"面板到底装上了没"的唯一判据（真机日志）：装上=控制区有底图；
      * 没有这行=被上面的判据挡了（btns 空 / 启动器），或面板生成失败。
      * 中间三个数是**本次安装用的视口**：GBA x=0 w=720 top=480 / GB x=120 w=480 top=456 /
@@ -932,75 +881,6 @@ static void rg_overlay_try_panel(void)
             rg_display_get_width(), rg_display_get_height());
 }
 
-#ifdef RG_TOUCH_KEYMAP_BOARD_HOOK   /* 板级多表选表（claw4）⇒ 可视层要跟着键位代际号重建 */
-/* ── claw4：键位表换代 → 重建按键精灵（2026-10-16 真机根因修复）─────────────────
- * btns[] 里的精灵（位置 + 标签 + 配色，全是 4x4 超采样预渲染）只在 rg_overlay_init
- * 建一次；而选表在输入层是**每帧重算**。两者错开的症状：画面上的 A/B 还在旧表位置，
- * 但旧位置其实已经打不到东西（命中层读的是新表）——用户真机看到的就是这个。
- * 判据 = rg_input 的表代际号；换了就整批重建 + 面板底图（按机型生成的铭牌/点缀色）重装。
- * 整块在能力宏守卫内 ⇒ 无此能力的 target 预处理输出零位移（铁律）。 */
-static void overlay_relayout_if_keymap_changed(void)
-{
-    if (!ready || !btns)
-        return;
-    const uint32_t gen = rg_input_touch_keymap_gen();
-    if (gen == btns_built_gen)
-        return;
-
-    size_t n = 0;
-    const rg_keymap_touch_t *map = rg_input_get_touch_keymap(&n);
-    if (!map || !n)
-        return;
-
-    /* 机型 id 也是这一刻才一定有值（configNs 在 rg_system_init 之后才写入） */
-    {
-        const rg_app_t *app = rg_system_get_app();
-        if (app && app->configNs && app->configNs[0])
-        {
-            strncpy(console_id, app->configNs, sizeof(console_id) - 1);
-            console_id[sizeof(console_id) - 1] = 0;
-        }
-    }
-
-    /* 旧精灵先还回去：build_button 每次都新分配 mask，不清会逐代泄漏 */
-    for (size_t i = 0; i < btn_count; ++i)
-    {
-        if (btns[i].mask)     { free(btns[i].mask);     btns[i].mask = NULL; }
-        if (btns[i].mask_alt) { free(btns[i].mask_alt); btns[i].mask_alt = NULL; }
-    }
-
-    btn_count = 0;
-    char dump[288];
-    int off = 0;
-    dump[0] = 0;
-    for (size_t i = 0; i < n && btn_count < RG_OVERLAY_MAX_BUTTONS; ++i)
-    {
-        if (rg_touch_key_hidden(console_id, map[i].key))
-            continue;
-        rg_overlay_btn_t *b = &btns[btn_count++];
-        b->key = rg_overlay_map_key(map[i].key);
-        b->w = map[i].w;
-        b->h = map[i].h;
-        b->x = map[i].x - map[i].w / 2;
-        b->y = map[i].y - map[i].h / 2;
-        if (b->mask) { free(b->mask); b->mask = NULL; }
-        build_button(b, overlay_key_color(b->key), NULL);
-        if (off < (int)sizeof(dump) - 24)
-            off += snprintf(dump + off, sizeof(dump) - off, "[%d:%d,%d]",
-                            (int)b->key, b->x + b->w / 2, b->y + b->h / 2);
-    }
-
-    variants_pending = true;   /* 调换用的"另一套"掩码也随重建（首次点到才建） */
-    btns_built_gen = gen;
-    dirty_panel_strip = true;  /* 下一帧整条控制区重铺：旧按键的像素得擦掉 */
-    panel_installed = false;   /* 面板底图按机型生成（铭牌/点缀色）⇒ 一并重装 */
-
-    /* 这行是"视觉层跟没跟上输入层"的唯一判据：console 与各键中心坐标都在里面
-     * （GB/GBC 应有 A 596,548 / B 484,640；GBA 应是 632,600 / 560,672）。 */
-    RG_LOGI("ovl-relayout: 键位表换代(%u) 重建按键 n=%u console=%s %s\n",
-            (unsigned)gen, (unsigned)btn_count, console_id, dump);
-}
-#endif
 
 void rg_overlay_refresh_panel(void)
 {
